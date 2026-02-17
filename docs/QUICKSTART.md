@@ -27,6 +27,12 @@ Startup runs `doctor` checks automatically. To run explicitly:
 node ./cli/sentinel.js doctor
 ```
 
+Set production mode for safer runtime defaults:
+
+```bash
+NODE_ENV=production node ./cli/sentinel.js start
+```
+
 Optional safe startup flags:
 
 ```bash
@@ -60,6 +66,16 @@ runtime:
       allowlist:
         - api.example.com
       block_private_networks: true
+```
+
+Body and scan safety defaults:
+
+```yaml
+proxy:
+  max_body_bytes: 1048576 # 1MB default
+
+pii:
+  regex_safety_cap_bytes: 51200 # 50KB regex budget
 ```
 
 ## 5. Configure PII provider mode

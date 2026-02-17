@@ -44,4 +44,14 @@ describe('doctor checks', () => {
     expect(report.ok).toBe(false);
     expect(report.checks.some((check) => check.id === 'rapidapi-endpoint' && check.status === 'fail')).toBe(true);
   });
+
+  test('warns when NODE_ENV is not production', () => {
+    const report = runDoctorChecks(configForMode('local'), { NODE_ENV: 'development' });
+    expect(report.checks.some((check) => check.id === 'node-env' && check.status === 'warn')).toBe(true);
+  });
+
+  test('passes NODE_ENV check when set to production', () => {
+    const report = runDoctorChecks(configForMode('local'), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'node-env' && check.status === 'pass')).toBe(true);
+  });
 });

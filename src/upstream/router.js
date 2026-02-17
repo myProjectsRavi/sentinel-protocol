@@ -132,44 +132,95 @@ async function validateCustomTargetUrl(customUrl, customTargetsConfig = {}) {
   const allowlist = normalizeAllowlist(customTargetsConfig.allowlist);
   validateAllowlist(urlObj, allowlist);
 
+  let resolvedIp = null;
+  let resolvedFamily = null;
+
   if (customTargetsConfig.block_private_networks !== false) {
     if (isLocalHostname(urlObj.hostname)) {
       throw new Error(`Blocked private/local custom target hostname: ${urlObj.hostname}`);
     }
 
-    if (net.isIP(urlObj.hostname) && isPrivateAddress(urlObj.hostname)) {
-      throw new Error(`Blocked private custom target IP: ${urlObj.hostname}`);
-    }
-
-    try {
-      const resolved = await dns.lookup(urlObj.hostname, { all: true, verbatim: true });
-      if (resolved.some((entry) => isPrivateAddress(entry.address))) {
-        throw new Error(`Blocked custom target hostname resolving to private IP: ${urlObj.hostname}`);
+    const literalFamily = net.isIP(urlObj.hostname);
+    if (literalFamily) {
+      if (isPrivateAddress(urlObj.hostname)) {
+        throw new Error(`Blocked private custom target IP: ${urlObj.hostname}`);
       }
-    } catch (error) {
-      if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+      resolvedIp = urlObj.hostname;
+      resolvedFamily = literalFamily;
+    } else {
+      try {
+        const resolved = await dns.lookup(urlObj.hostname, { all: true, verbatim: true });
+        if (resolved.some((entry) => isPrivateAddress(entry.address))) {
+          throw new Error(`Blocked custom target hostname resolving to private IP: ${urlObj.hostname}`);
+        }
+        if (!resolved[0]) {
+          throw new Error(`Unable to resolve custom target hostname: ${urlObj.hostname}`);
+        }
+        resolvedIp = resolved[0].address;
+        resolvedFamily = resolved[0].family;
+      } catch (error) {
+        if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+          throw new Error(`Unable to resolve custom target hostname: ${urlObj.hostname}`);
+        }
+        if (error.message && error.message.startsWith('Blocked custom target')) {
+          throw error;
+        }
+        throw new Error(`Failed to validate custom target hostname: ${urlObj.hostname}`);
+      }
+    }
+  } else {
+    const literalFamily = net.isIP(urlObj.hostname);
+    if (literalFamily) {
+      resolvedIp = urlObj.hostname;
+      resolvedFamily = literalFamily;
+    } else {
+      try {
+        const resolved = await dns.lookup(urlObj.hostname, { all: true, verbatim: true });
+        if (!resolved[0]) {
+          throw new Error(`Unable to resolve custom target hostname: ${urlObj.hostname}`);
+        }
+        resolvedIp = resolved[0].address;
+        resolvedFamily = resolved[0].family;
+      } catch {
         throw new Error(`Unable to resolve custom target hostname: ${urlObj.hostname}`);
       }
-      if (error.message && error.message.startsWith('Blocked custom target')) {
-        throw error;
-      }
-      throw new Error(`Failed to validate custom target hostname: ${urlObj.hostname}`);
     }
   }
 
-  return urlObj.toString();
+  return {
+    url: urlObj.toString(),
+    hostname: urlObj.hostname,
+    hostHeader: urlObj.host,
+    resolvedIp,
+    resolvedFamily,
+  };
 }
 
 async function resolveProvider(req, config = {}) {
   const target = String(req.headers['x-sentinel-target'] || 'openai').toLowerCase();
 
   if (target === 'anthropic') {
-    return { provider: 'anthropic', baseUrl: process.env.SENTINEL_ANTHROPIC_URL || 'https://api.anthropic.com' };
+    const baseUrl = process.env.SENTINEL_ANTHROPIC_URL || 'https://api.anthropic.com';
+    const parsed = new URL(baseUrl);
+    return {
+      provider: 'anthropic',
+      baseUrl,
+      upstreamHostname: parsed.hostname,
+      upstreamHostHeader: parsed.host,
+      resolvedIp: null,
+      resolvedFamily: null,
+    };
   }
   if (target === 'google') {
+    const baseUrl = process.env.SENTINEL_GOOGLE_URL || 'https://generativelanguage.googleapis.com';
+    const parsed = new URL(baseUrl);
     return {
       provider: 'google',
-      baseUrl: process.env.SENTINEL_GOOGLE_URL || 'https://generativelanguage.googleapis.com',
+      baseUrl,
+      upstreamHostname: parsed.hostname,
+      upstreamHostHeader: parsed.host,
+      resolvedIp: null,
+      resolvedFamily: null,
     };
   }
   if (target === 'custom') {
@@ -179,10 +230,26 @@ async function resolveProvider(req, config = {}) {
     }
     const customTargetConfig = config.runtime?.upstream?.custom_targets || {};
     const validatedTarget = await validateCustomTargetUrl(customUrl, customTargetConfig);
-    return { provider: 'custom', baseUrl: validatedTarget };
+    return {
+      provider: 'custom',
+      baseUrl: validatedTarget.url,
+      upstreamHostname: validatedTarget.hostname,
+      upstreamHostHeader: validatedTarget.hostHeader,
+      resolvedIp: validatedTarget.resolvedIp,
+      resolvedFamily: validatedTarget.resolvedFamily,
+    };
   }
 
-  return { provider: 'openai', baseUrl: process.env.SENTINEL_OPENAI_URL || 'https://api.openai.com' };
+  const baseUrl = process.env.SENTINEL_OPENAI_URL || 'https://api.openai.com';
+  const parsed = new URL(baseUrl);
+  return {
+    provider: 'openai',
+    baseUrl,
+    upstreamHostname: parsed.hostname,
+    upstreamHostHeader: parsed.host,
+    resolvedIp: null,
+    resolvedFamily: null,
+  };
 }
 
 module.exports = {

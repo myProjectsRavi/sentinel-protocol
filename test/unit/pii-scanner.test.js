@@ -21,4 +21,15 @@ describe('PII scanner', () => {
     expect(result.findings.some((item) => item.id === 'openai_api_key')).toBe(true);
     expect(result.redactedText).toContain('[REDACTED_OPENAI_API_KEY]');
   });
+
+  test('enforces regex safety cap for oversized input', () => {
+    const scanner = new PIIScanner({
+      maxScanBytes: 200000,
+      regexSafetyCapBytes: 1024,
+    });
+
+    const oversized = `${'a'.repeat(1500)} openai key: sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdef`;
+    const result = scanner.scan(oversized);
+    expect(result.scanTruncated).toBe(true);
+  });
 });

@@ -6,6 +6,21 @@ const {
   shouldRetryError,
 } = require('../resilience/retry');
 const { Readable } = require('stream');
+const dns = require('dns');
+const net = require('net');
+const { Agent } = require('undici');
+
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'trailers',
+  'transfer-encoding',
+  'upgrade',
+]);
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -13,19 +28,50 @@ function sleep(ms) {
   });
 }
 
-function buildForwardHeaders(originalHeaders, bodyLength) {
+function normalizeHeaderValue(value) {
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
+  return value;
+}
+
+function parseConnectionHeaderTokens(value) {
+  if (!value) {
+    return new Set();
+  }
+  const raw = String(value);
+  return new Set(
+    raw
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function buildForwardHeaders(originalHeaders, bodyLength, hostHeader) {
   const headers = { ...originalHeaders };
+  const connectionTokens = parseConnectionHeaderTokens(headers.connection);
   delete headers.host;
-  delete headers.connection;
   delete headers['content-length'];
+
   for (const key of Object.keys(headers)) {
-    if (key.toLowerCase().startsWith('x-sentinel-')) {
+    const lowered = key.toLowerCase();
+    if (lowered.startsWith('x-sentinel-')) {
+      delete headers[key];
+      continue;
+    }
+    if (HOP_BY_HOP_HEADERS.has(lowered) || connectionTokens.has(lowered)) {
       delete headers[key];
     }
   }
 
+  headers.host = hostHeader;
   if (bodyLength > 0) {
     headers['content-length'] = String(bodyLength);
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    headers[key] = normalizeHeaderValue(value);
   }
 
   return headers;
@@ -52,6 +98,36 @@ class UpstreamClient {
     this.retryConfig = options.retryConfig;
     this.circuitBreakers = options.circuitBreakers;
     this.telemetry = options.telemetry;
+    this.dispatchers = new Map();
+  }
+
+  getPinnedDispatcher({ upstreamHostname, resolvedIp, resolvedFamily }) {
+    if (!upstreamHostname || !resolvedIp) {
+      return null;
+    }
+
+    const key = `${upstreamHostname}|${resolvedIp}|${resolvedFamily || net.isIP(resolvedIp) || 0}`;
+    if (this.dispatchers.has(key)) {
+      return this.dispatchers.get(key);
+    }
+
+    const family = Number(resolvedFamily || net.isIP(resolvedIp) || 0);
+    const dispatcher = new Agent({
+      connect: {
+        lookup: (hostname, options, callback) => {
+          if (hostname === upstreamHostname) {
+            callback(null, resolvedIp, family || undefined);
+            return;
+          }
+          dns.lookup(hostname, options, callback);
+        },
+        // Preserve SNI/certificate validation for HTTPS while pinning DNS resolution.
+        servername: upstreamHostname,
+      },
+    });
+
+    this.dispatchers.set(key, dispatcher);
+    return dispatcher;
   }
 
   async forwardRequest(params) {
@@ -59,11 +135,16 @@ class UpstreamClient {
       provider,
       baseUrl,
       req,
+      forwardHeaders: providedForwardHeaders,
       pathWithQuery,
       method,
       bodyBuffer,
       correlationId,
       wantsStream,
+      resolvedIp,
+      resolvedFamily,
+      upstreamHostname: providedUpstreamHostname,
+      upstreamHostHeader: providedUpstreamHostHeader,
     } = params;
 
     const gate = this.circuitBreakers.canRequest(provider);
@@ -97,12 +178,23 @@ class UpstreamClient {
     const maxAttempts = retryEnabled ? 1 + Number(this.retryConfig.max_attempts || 0) : 1;
     const eligibleMethod = methodRetryEligible(method, this.retryConfig, req.headers);
 
-    const forwardHeaders = buildForwardHeaders(req.headers, bodyBuffer.length);
     const url = `${baseUrl}${pathWithQuery}`;
+    const parsedUrl = new URL(url);
+    const upstreamHostname = providedUpstreamHostname || parsedUrl.hostname;
+    const upstreamHostHeader = providedUpstreamHostHeader || parsedUrl.host;
+    const forwardHeaders = buildForwardHeaders(
+      providedForwardHeaders || req.headers,
+      bodyBuffer.length,
+      upstreamHostHeader
+    );
+    const dispatcher = this.getPinnedDispatcher({
+      upstreamHostname,
+      resolvedIp,
+      resolvedFamily,
+    });
     const safeUpstreamUrl = (() => {
       try {
-        const parsed = new URL(url);
-        return `${parsed.origin}${parsed.pathname}`;
+        return `${parsedUrl.origin}${parsedUrl.pathname}`;
       } catch {
         return baseUrl;
       }
@@ -130,6 +222,7 @@ class UpstreamClient {
           headers: forwardHeaders,
           body: method === 'GET' || method === 'HEAD' ? undefined : bodyBuffer,
           signal: controller,
+          ...(dispatcher ? { dispatcher } : {}),
         });
 
         const status = response.status;

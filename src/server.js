@@ -23,11 +23,39 @@ const {
   ensureSentinelHome,
 } = require('./utils/paths');
 
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'trailers',
+  'transfer-encoding',
+  'upgrade',
+]);
+
 function safeJsonParse(text) {
   try {
     return JSON.parse(text);
   } catch {
     return null;
+  }
+}
+
+function tryParseJson(text) {
+  try {
+    return {
+      ok: true,
+      value: JSON.parse(text),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      value: null,
+      error,
+    };
   }
 }
 
@@ -55,6 +83,25 @@ function responseHeaderDiagnostics(res, diagnostics) {
   res.setHeader('x-sentinel-correlation-id', diagnostics.correlationId);
 }
 
+function scrubForwardHeaders(inputHeaders = {}) {
+  const headers = { ...inputHeaders };
+  const connectionTokens = new Set(
+    String(headers.connection || '')
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  for (const key of Object.keys(headers)) {
+    const lowered = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lowered) || connectionTokens.has(lowered)) {
+      delete headers[key];
+    }
+  }
+
+  return headers;
+}
+
 class SentinelServer {
   constructor(config, options = {}) {
     ensureSentinelHome();
@@ -76,7 +123,10 @@ class SentinelServer {
 
     this.rateLimiter = new InMemoryRateLimiter();
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
-    this.piiScanner = new PIIScanner({ maxScanBytes: config.pii.max_scan_bytes });
+    this.piiScanner = new PIIScanner({
+      maxScanBytes: config.pii.max_scan_bytes,
+      regexSafetyCapBytes: config.pii.regex_safety_cap_bytes,
+    });
     this.telemetry = createTelemetry({
       enabled: config.runtime?.telemetry?.enabled !== false,
       serviceVersion: '0.2.0',
@@ -139,9 +189,26 @@ class SentinelServer {
     this.app.use(
       express.raw({
         type: '*/*',
-        limit: '20mb',
+        limit: Number(this.config.proxy.max_body_bytes || 1048576),
       })
     );
+
+    this.app.use((error, req, res, next) => {
+      if (!error) {
+        next();
+        return;
+      }
+
+      if (error.type === 'entity.too.large') {
+        res.status(413).json({
+          error: 'REQUEST_BODY_TOO_LARGE',
+          message: 'Request body exceeds proxy.max_body_bytes',
+        });
+        return;
+      }
+
+      next(error);
+    });
 
     this.app.get('/_sentinel/health', (req, res) => {
       res.status(200).json({ status: 'ok' });
@@ -191,10 +258,18 @@ class SentinelServer {
 
       let provider;
       let baseUrl;
+      let resolvedIp = null;
+      let resolvedFamily = null;
+      let upstreamHostname = null;
+      let upstreamHostHeader = null;
       try {
         const resolved = await resolveProvider(req, this.config);
         provider = resolved.provider;
         baseUrl = resolved.baseUrl;
+        resolvedIp = resolved.resolvedIp || null;
+        resolvedFamily = resolved.resolvedFamily || null;
+        upstreamHostname = resolved.upstreamHostname || null;
+        upstreamHostHeader = resolved.upstreamHostHeader || null;
       } catch (error) {
         const diagnostics = {
           errorSource: 'sentinel',
@@ -214,7 +289,33 @@ class SentinelServer {
       }
 
       const contentType = String(req.headers['content-type'] || '').toLowerCase();
-      let bodyJson = contentType.includes('application/json') && bodyText.length > 0 ? safeJsonParse(bodyText) : null;
+      let bodyJson = null;
+      if (contentType.includes('application/json') && bodyText.length > 0) {
+        const parsedBody = tryParseJson(bodyText);
+        if (!parsedBody.ok) {
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          finalizeRequestTelemetry({
+            decision: 'invalid_json',
+            status: 400,
+            providerName: provider,
+            error: parsedBody.error,
+          });
+          return res.status(400).json({
+            error: 'INVALID_JSON_BODY',
+            message: 'Request body is not valid JSON.',
+            correlation_id: correlationId,
+          });
+        }
+        bodyJson = parsedBody.value;
+      }
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
 
@@ -441,6 +542,7 @@ class SentinelServer {
       }
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
+      const forwardHeaders = scrubForwardHeaders(req.headers);
       const wantsStream =
         String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
         (bodyJson && bodyJson.stream === true);
@@ -455,6 +557,11 @@ class SentinelServer {
         bodyBuffer,
         correlationId,
         wantsStream,
+        resolvedIp,
+        resolvedFamily,
+        upstreamHostname,
+        upstreamHostHeader,
+        forwardHeaders,
       });
 
       const durationMs = Date.now() - start;

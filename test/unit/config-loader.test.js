@@ -61,4 +61,17 @@ describe('config loader and migration', () => {
       loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
     }).toThrow(/allowlist/);
   });
+
+  test('fails validation on unknown keys to avoid silent typos', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.pii_enable = true;
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/Unknown key: config.pii_enable/);
+  });
 });

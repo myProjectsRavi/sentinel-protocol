@@ -1,4 +1,4 @@
-const { validateCustomTargetUrl } = require('../../src/upstream/router');
+const { validateCustomTargetUrl, resolveProvider } = require('../../src/upstream/router');
 
 describe('custom target SSRF protections', () => {
   test('rejects when custom targets are disabled', async () => {
@@ -38,7 +38,13 @@ describe('custom target SSRF protections', () => {
         allowlist: ['127.0.0.1'],
         block_private_networks: false,
       })
-    ).resolves.toContain('127.0.0.1:9000');
+    ).resolves.toMatchObject({
+      url: 'http://127.0.0.1:9000/',
+      hostname: '127.0.0.1',
+      hostHeader: '127.0.0.1:9000',
+      resolvedIp: '127.0.0.1',
+      resolvedFamily: 4,
+    });
   });
 
   test('rejects URL with credentials', async () => {
@@ -49,5 +55,35 @@ describe('custom target SSRF protections', () => {
         block_private_networks: true,
       })
     ).rejects.toThrow(/must not include credentials/);
+  });
+
+  test('resolveProvider returns pinned metadata for custom targets', async () => {
+    const req = {
+      headers: {
+        'x-sentinel-target': 'custom',
+        'x-sentinel-custom-url': 'http://127.0.0.1:9100',
+      },
+    };
+
+    const result = await resolveProvider(req, {
+      runtime: {
+        upstream: {
+          custom_targets: {
+            enabled: true,
+            allowlist: ['127.0.0.1'],
+            block_private_networks: false,
+          },
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      provider: 'custom',
+      baseUrl: 'http://127.0.0.1:9100/',
+      upstreamHostname: '127.0.0.1',
+      upstreamHostHeader: '127.0.0.1:9100',
+      resolvedIp: '127.0.0.1',
+      resolvedFamily: 4,
+    });
   });
 });

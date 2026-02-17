@@ -153,6 +153,24 @@ describe('sentinel integration', () => {
     expect(response.headers['x-sentinel-warning']).toBeDefined();
   });
 
+  test('returns generic invalid JSON error without echoing payload', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'monitor' }));
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send('{"text":"my ssn is 123-45-6789"');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('INVALID_JSON_BODY');
+    expect(response.body.message).toBe('Request body is not valid JSON.');
+    expect(JSON.stringify(response.body)).not.toContain('123-45-6789');
+  });
+
   test('rapidapi mode falls back to local scanner when key is missing', async () => {
     upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
     sentinel = new SentinelServer(
@@ -267,6 +285,36 @@ describe('sentinel integration', () => {
     expect(response.status).toBe(200);
     expect(response.body.leakedRapidApiKeyHeader).toBe(false);
     expect(response.body.leakedInternalRouteHeader).toBe(false);
+  });
+
+  test('scrubs hop-by-hop headers and overrides host header', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.status(200).json({
+        host: req.headers.host,
+        connection: req.headers.connection || null,
+        keepAlive: req.headers['keep-alive'] || null,
+        transferEncoding: req.headers['transfer-encoding'] || null,
+      });
+    });
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'monitor' }));
+    const server = sentinel.start();
+    const upstreamHost = new URL(upstream.url).host;
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .set('host', 'evil.example.com')
+      .set('connection', 'upgrade')
+      .set('keep-alive', 'timeout=10')
+      .send({ text: 'hello world' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.host).toBe(upstreamHost);
+    expect(String(response.body.connection || '').toLowerCase()).not.toContain('upgrade');
+    expect(response.body.keepAlive).toBeNull();
+    expect(response.body.transferEncoding).toBeNull();
   });
 
   test('returns timeout diagnostics when upstream hangs', async () => {

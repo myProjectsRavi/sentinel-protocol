@@ -115,6 +115,7 @@ function toRegex(value) {
 class PIIScanner {
   constructor(options = {}) {
     this.maxScanBytes = options.maxScanBytes ?? 262144;
+    this.regexSafetyCapBytes = options.regexSafetyCapBytes ?? 51200;
     this.patterns = PATTERN_DEFINITIONS.map((item) => ({
       ...item,
       regex: toRegex(item.regex),
@@ -133,10 +134,16 @@ class PIIScanner {
     }
 
     const maxBytes = options.maxScanBytes ?? this.maxScanBytes;
+    const regexSafetyCapBytes = options.regexSafetyCapBytes ?? this.regexSafetyCapBytes;
     const inputBytes = Buffer.byteLength(input, 'utf8');
-    const scanTruncated = inputBytes > maxBytes;
-    const text = scanTruncated ? Buffer.from(input).subarray(0, maxBytes).toString('utf8') : input;
+    const truncatedByScanBudget = inputBytes > maxBytes;
+    const scanBudgetText = truncatedByScanBudget ? Buffer.from(input).subarray(0, maxBytes).toString('utf8') : input;
+    const truncatedByRegexSafetyCap = Buffer.byteLength(scanBudgetText, 'utf8') > regexSafetyCapBytes;
+    const text = truncatedByRegexSafetyCap
+      ? Buffer.from(scanBudgetText).subarray(0, regexSafetyCapBytes).toString('utf8')
+      : scanBudgetText;
     const lowered = text.toLowerCase();
+    const scanTruncated = truncatedByScanBudget || truncatedByRegexSafetyCap;
 
     let redactedText = text;
     const findings = [];

@@ -58,11 +58,21 @@ function runDoctorChecks(config, env = process.env) {
   const mode = String(config?.pii?.provider_mode || 'local').toLowerCase();
   const rapidapi = config?.pii?.rapidapi || {};
   const fallbackToLocal = rapidapi.fallback_to_local !== false;
+  const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
 
   checks.push({
     id: 'pii-provider-mode',
     status: 'pass',
     message: `PII provider mode is '${mode}'.`,
+  });
+
+  checks.push({
+    id: 'node-env',
+    status: nodeEnv === 'production' ? 'pass' : 'warn',
+    message:
+      nodeEnv === 'production'
+        ? 'NODE_ENV is production.'
+        : 'NODE_ENV is not set to production. Use NODE_ENV=production for safer and faster runtime behavior.',
   });
 
   if (mode === 'local') {

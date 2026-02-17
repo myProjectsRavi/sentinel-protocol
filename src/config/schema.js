@@ -2,6 +2,53 @@ const VALID_MODES = new Set(['monitor', 'warn', 'enforce']);
 const VALID_ACTIONS = new Set(['allow', 'block', 'warn']);
 const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
 const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
+const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'rules', 'whitelist', 'logging']);
+const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
+const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream']);
+const TELEMETRY_KEYS = new Set(['enabled']);
+const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets']);
+const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
+const CIRCUIT_BREAKER_KEYS = new Set([
+  'enabled',
+  'window_size',
+  'min_failures_to_evaluate',
+  'failure_rate_threshold',
+  'consecutive_timeout_threshold',
+  'open_seconds',
+  'half_open_success_threshold',
+]);
+const CUSTOM_TARGET_KEYS = new Set(['enabled', 'allowlist', 'block_private_networks']);
+const PII_KEYS = new Set([
+  'enabled',
+  'provider_mode',
+  'max_scan_bytes',
+  'regex_safety_cap_bytes',
+  'severity_actions',
+  'rapidapi',
+]);
+const PII_SEVERITY_KEYS = new Set(['critical', 'high', 'medium', 'low']);
+const RAPIDAPI_KEYS = new Set([
+  'endpoint',
+  'host',
+  'timeout_ms',
+  'request_body_field',
+  'fallback_to_local',
+  'allow_non_rapidapi_host',
+  'api_key',
+  'extra_body',
+]);
+const RULE_KEYS = new Set(['name', 'match', 'action', 'message']);
+const RULE_MATCH_KEYS = new Set([
+  'method',
+  'domain',
+  'path_contains',
+  'body_contains',
+  'tool_name',
+  'body_size_mb',
+  'requests_per_minute',
+]);
+const WHITELIST_KEYS = new Set(['domains']);
+const LOGGING_KEYS = new Set(['level', 'audit_file']);
 
 class ConfigValidationError extends Error {
   constructor(message, details = []) {
@@ -14,6 +61,17 @@ class ConfigValidationError extends Error {
 function assertType(condition, message, details) {
   if (!condition) {
     details.push(message);
+  }
+}
+
+function assertNoUnknownKeys(object, allowedKeys, pathLabel, details) {
+  if (!object || typeof object !== 'object' || Array.isArray(object)) {
+    return;
+  }
+  for (const key of Object.keys(object)) {
+    if (!allowedKeys.has(key)) {
+      details.push(`Unknown key: ${pathLabel}.${key}`);
+    }
   }
 }
 
@@ -36,10 +94,12 @@ function validateRules(rules, details) {
     if (!rule || typeof rule !== 'object') {
       return;
     }
+    assertNoUnknownKeys(rule, RULE_KEYS, prefix, details);
 
     assertType(typeof rule.name === 'string' && rule.name.length > 0, `${prefix}.name must be a non-empty string`, details);
     assertType(rule.match && typeof rule.match === 'object', `${prefix}.match must be an object`, details);
     assertType(typeof rule.action === 'string' && VALID_ACTIONS.has(rule.action), `${prefix}.action must be one of: allow, block, warn`, details);
+    assertNoUnknownKeys(rule.match, RULE_MATCH_KEYS, `${prefix}.match`, details);
   });
 }
 
@@ -49,6 +109,7 @@ function applyDefaults(config) {
   normalized.proxy.host = normalized.proxy.host || '127.0.0.1';
   normalized.proxy.port = Number(normalized.proxy.port || 8787);
   normalized.proxy.timeout_ms = Number(normalized.proxy.timeout_ms || 30000);
+  normalized.proxy.max_body_bytes = Number(normalized.proxy.max_body_bytes ?? 1048576);
 
   normalized.runtime = normalized.runtime || {};
   normalized.runtime.fail_open = Boolean(normalized.runtime.fail_open);
@@ -83,6 +144,7 @@ function applyDefaults(config) {
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
   normalized.pii.max_scan_bytes = Number(normalized.pii.max_scan_bytes ?? 262144);
+  normalized.pii.regex_safety_cap_bytes = Number(normalized.pii.regex_safety_cap_bytes ?? 51200);
   normalized.pii.severity_actions = normalized.pii.severity_actions || {};
   normalized.pii.severity_actions.critical = normalized.pii.severity_actions.critical || 'block';
   normalized.pii.severity_actions.high = normalized.pii.severity_actions.high || 'block';
@@ -120,14 +182,28 @@ function validateConfigShape(config) {
   }
 
   validateRequiredKeys(config, details);
+  assertNoUnknownKeys(config, ROOT_KEYS, 'config', details);
 
   assertType(Number.isInteger(config.version), '`version` must be an integer', details);
   assertType(VALID_MODES.has(config.mode), '`mode` must be one of: monitor, warn, enforce', details);
 
+  const proxy = config.proxy || {};
+  assertNoUnknownKeys(proxy, PROXY_KEYS, 'proxy', details);
+  assertType(typeof proxy.host === 'string' && proxy.host.length > 0, '`proxy.host` must be a non-empty string', details);
+  assertType(Number.isInteger(proxy.port) && proxy.port > 0, '`proxy.port` must be integer > 0', details);
+  assertType(Number.isInteger(proxy.timeout_ms) && proxy.timeout_ms > 0, '`proxy.timeout_ms` must be integer > 0', details);
+  assertType(
+    proxy.max_body_bytes === undefined || (Number.isInteger(proxy.max_body_bytes) && proxy.max_body_bytes > 0),
+    '`proxy.max_body_bytes` must be integer > 0',
+    details
+  );
+
   const runtime = config.runtime || {};
+  assertNoUnknownKeys(runtime, RUNTIME_KEYS, 'runtime', details);
   assertType(typeof runtime.fail_open === 'boolean', '`runtime.fail_open` must be boolean', details);
   const telemetry = runtime.telemetry || {};
   if (runtime.telemetry !== undefined) {
+    assertNoUnknownKeys(telemetry, TELEMETRY_KEYS, 'runtime.telemetry', details);
     assertType(typeof telemetry.enabled === 'boolean', '`runtime.telemetry.enabled` must be boolean', details);
   }
   assertType(
@@ -137,15 +213,20 @@ function validateConfigShape(config) {
   );
 
   const retry = runtime.upstream?.retry || {};
+  const upstream = runtime.upstream || {};
+  assertNoUnknownKeys(upstream, UPSTREAM_KEYS, 'runtime.upstream', details);
+  assertNoUnknownKeys(retry, RETRY_KEYS, 'runtime.upstream.retry', details);
   assertType(typeof retry.enabled === 'boolean', '`runtime.upstream.retry.enabled` must be boolean', details);
   assertType(Number.isInteger(retry.max_attempts) && retry.max_attempts >= 0, '`runtime.upstream.retry.max_attempts` must be integer >= 0', details);
 
   const cb = runtime.upstream?.circuit_breaker || {};
+  assertNoUnknownKeys(cb, CIRCUIT_BREAKER_KEYS, 'runtime.upstream.circuit_breaker', details);
   assertType(typeof cb.enabled === 'boolean', '`runtime.upstream.circuit_breaker.enabled` must be boolean', details);
   assertType(Number.isInteger(cb.open_seconds) && cb.open_seconds > 0, '`runtime.upstream.circuit_breaker.open_seconds` must be integer > 0', details);
 
   const customTargets = runtime.upstream?.custom_targets;
   if (customTargets !== undefined) {
+    assertNoUnknownKeys(customTargets, CUSTOM_TARGET_KEYS, 'runtime.upstream.custom_targets', details);
     assertType(typeof customTargets.enabled === 'boolean', '`runtime.upstream.custom_targets.enabled` must be boolean', details);
     assertType(Array.isArray(customTargets.allowlist), '`runtime.upstream.custom_targets.allowlist` must be an array', details);
     assertType(
@@ -162,6 +243,7 @@ function validateConfigShape(config) {
 
   const pii = config.pii || {};
   if (pii !== undefined) {
+    assertNoUnknownKeys(pii, PII_KEYS, 'pii', details);
     assertType(typeof pii.enabled === 'boolean', '`pii.enabled` must be boolean', details);
     assertType(typeof pii.provider_mode === 'string', '`pii.provider_mode` must be string', details);
     if (typeof pii.provider_mode === 'string' && !VALID_PII_PROVIDER_MODES.has(String(pii.provider_mode).toLowerCase())) {
@@ -172,9 +254,17 @@ function validateConfigShape(config) {
       '`pii.max_scan_bytes` must be > 0',
       details
     );
+    assertType(
+      pii.regex_safety_cap_bytes === undefined ||
+        (Number.isFinite(Number(pii.regex_safety_cap_bytes)) && Number(pii.regex_safety_cap_bytes) > 0),
+      '`pii.regex_safety_cap_bytes` must be > 0',
+      details
+    );
+    assertNoUnknownKeys(pii.severity_actions, PII_SEVERITY_KEYS, 'pii.severity_actions', details);
 
     const rapidapi = pii.rapidapi || {};
     if (pii.rapidapi !== undefined) {
+      assertNoUnknownKeys(rapidapi, RAPIDAPI_KEYS, 'pii.rapidapi', details);
       assertType(rapidapi.endpoint === undefined || typeof rapidapi.endpoint === 'string', '`pii.rapidapi.endpoint` must be string', details);
       assertType(rapidapi.host === undefined || typeof rapidapi.host === 'string', '`pii.rapidapi.host` must be string', details);
       assertType(
@@ -208,6 +298,8 @@ function validateConfigShape(config) {
   }
 
   assertType(Array.isArray(config.whitelist?.domains), '`whitelist.domains` must be an array', details);
+  assertNoUnknownKeys(config.whitelist, WHITELIST_KEYS, 'whitelist', details);
+  assertNoUnknownKeys(config.logging, LOGGING_KEYS, 'logging', details);
 
   if (details.length > 0) {
     throw new ConfigValidationError('Configuration validation failed', details);

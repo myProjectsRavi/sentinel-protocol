@@ -31,6 +31,7 @@ class PIIProviderEngine {
   scanLocal(text) {
     return this.localScanner.scan(text, {
       maxScanBytes: this.config.max_scan_bytes,
+      regexSafetyCapBytes: this.config.regex_safety_cap_bytes,
     });
   }
 

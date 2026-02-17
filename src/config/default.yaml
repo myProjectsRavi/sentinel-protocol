@@ -5,6 +5,7 @@ proxy:
   host: 127.0.0.1
   port: 8787
   timeout_ms: 30000
+  max_body_bytes: 1048576
 
 runtime:
   fail_open: false
@@ -33,6 +34,7 @@ pii:
   enabled: true
   provider_mode: local
   max_scan_bytes: 262144
+  regex_safety_cap_bytes: 51200
   severity_actions:
     critical: block
     high: block
