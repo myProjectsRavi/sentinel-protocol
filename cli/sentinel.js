@@ -90,7 +90,7 @@ program
       });
 
       startMCPServer(loaded.config);
-      console.log('Sentinel MCP server started on stdio');
+      console.error('Sentinel MCP server started on stdio');
     } catch (error) {
       console.error(error.message);
       process.exitCode = 1;

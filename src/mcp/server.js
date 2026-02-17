@@ -1,4 +1,5 @@
 const readline = require('readline');
+const util = require('util');
 
 const { PIIScanner } = require('../engines/pii-scanner');
 const { PolicyEngine } = require('../engines/policy-engine');
@@ -154,12 +155,63 @@ class SentinelMCPServer {
     this.config = config;
     this.input = io.input || process.stdin;
     this.output = io.output || process.stdout;
-    this.governance = new SentinelMCPGovernance(config);
+    this.governance = null;
     this.rl = null;
+    this.allowStdoutWrite = false;
+    this.restoreIoGuards = null;
   }
 
   send(message) {
-    this.output.write(`${JSON.stringify(message)}\n`);
+    const payload = `${JSON.stringify(message)}\n`;
+    if (this.output === process.stdout && this.restoreIoGuards) {
+      this.allowStdoutWrite = true;
+      try {
+        process.stdout.write(payload);
+      } finally {
+        this.allowStdoutWrite = false;
+      }
+      return;
+    }
+    this.output.write(payload);
+  }
+
+  enableStdioGuards() {
+    if (this.output !== process.stdout || this.restoreIoGuards) {
+      return;
+    }
+
+    const original = {
+      log: console.log,
+      info: console.info,
+      warn: console.warn,
+      debug: console.debug,
+      stdoutWrite: process.stdout.write,
+    };
+
+    const writeStderr = (...args) => {
+      const line = util.format(...args);
+      process.stderr.write(`${line}\n`);
+    };
+
+    console.log = (...args) => writeStderr(...args);
+    console.info = (...args) => writeStderr(...args);
+    console.warn = (...args) => writeStderr(...args);
+    console.debug = (...args) => writeStderr(...args);
+
+    process.stdout.write = (...args) => {
+      if (this.allowStdoutWrite) {
+        return original.stdoutWrite.apply(process.stdout, args);
+      }
+      return process.stderr.write.apply(process.stderr, args);
+    };
+
+    this.restoreIoGuards = () => {
+      console.log = original.log;
+      console.info = original.info;
+      console.warn = original.warn;
+      console.debug = original.debug;
+      process.stdout.write = original.stdoutWrite;
+    };
   }
 
   sendError(id, code, message) {
@@ -269,6 +321,8 @@ class SentinelMCPServer {
   }
 
   start() {
+    this.enableStdioGuards();
+    this.governance = new SentinelMCPGovernance(this.config);
     this.rl = readline.createInterface({
       input: this.input,
       crlfDelay: Infinity,
@@ -285,6 +339,13 @@ class SentinelMCPServer {
         return;
       }
       await this.handleRequest(request);
+    });
+
+    this.rl.on('close', () => {
+      if (this.restoreIoGuards) {
+        this.restoreIoGuards();
+        this.restoreIoGuards = null;
+      }
     });
   }
 }

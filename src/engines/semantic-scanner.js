@@ -147,11 +147,16 @@ class SemanticScanner {
         continue;
       }
 
-      findings.push({
+      const finding = {
         id: `semantic_${type}`,
         severity: 'medium',
         value,
-      });
+      };
+      if (Number.isInteger(entity.start) && Number.isInteger(entity.end) && entity.end > entity.start) {
+        finding.start = entity.start;
+        finding.end = entity.end;
+      }
+      findings.push(finding);
       highest = maxSeverity(highest, 'medium');
 
       if (Number.isInteger(entity.start) && Number.isInteger(entity.end) && entity.end > entity.start) {

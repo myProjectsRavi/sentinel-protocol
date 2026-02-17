@@ -2,12 +2,35 @@ const { RapidApiPIIClient } = require('./rapidapi-client');
 const { SEVERITY_RANK } = require('../engines/pii-scanner');
 const { SemanticScanner } = require('../engines/semantic-scanner');
 
+function normalizeValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function findingKey(finding) {
+  const id = String(finding?.id || 'unknown');
+  const severity = String(finding?.severity || 'low');
+  const hasRange =
+    Number.isInteger(finding?.start) && Number.isInteger(finding?.end) && Number(finding.end) >= Number(finding.start);
+  const value = normalizeValue(finding?.value);
+
+  if (hasRange && value) {
+    return `${id}:${severity}:range:${finding.start}-${finding.end}:value:${value}`;
+  }
+  if (hasRange) {
+    return `${id}:${severity}:range:${finding.start}-${finding.end}`;
+  }
+  if (value) {
+    return `${id}:${severity}:value:${value}`;
+  }
+  return `${id}:${severity}:raw:${JSON.stringify(finding)}`;
+}
+
 function mergeFindings(primary, secondary) {
   const out = [];
   const seen = new Set();
   const all = [...(primary || []), ...(secondary || [])];
   for (const finding of all) {
-    const key = `${finding.id}:${finding.value}:${finding.severity}`;
+    const key = findingKey(finding);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(finding);
