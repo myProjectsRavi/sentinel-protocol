@@ -1,4 +1,5 @@
 const fs = require('fs');
+const { StringDecoder } = require('string_decoder');
 const blessed = require('blessed');
 
 const { STATUS_FILE_PATH, AUDIT_LOG_PATH } = require('../utils/paths');
@@ -28,12 +29,14 @@ class LogTailer {
     this.entries = [];
     this.carry = '';
     this.dropUntilNewline = false;
+    this.decoder = new StringDecoder('utf8');
   }
 
   resetCursor() {
     this.cursor = 0;
     this.carry = '';
     this.dropUntilNewline = false;
+    this.decoder = new StringDecoder('utf8');
   }
 
   appendEntry(entry) {
@@ -44,12 +47,18 @@ class LogTailer {
     }
   }
 
-  consumeChunk(chunkText) {
-    if (!chunkText) {
+  consumeChunk(chunk) {
+    if (!chunk) {
       return;
     }
 
-    let text = `${this.carry}${chunkText}`;
+    const chunkBuffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    const decoded = this.decoder.write(chunkBuffer);
+    if (!decoded) {
+      return;
+    }
+
+    let text = `${this.carry}${decoded}`;
     this.carry = '';
 
     if (this.dropUntilNewline) {
@@ -113,7 +122,7 @@ class LogTailer {
           break;
         }
         this.cursor += bytesRead;
-        this.consumeChunk(buffer.subarray(0, bytesRead).toString('utf8'));
+        this.consumeChunk(buffer.subarray(0, bytesRead));
       }
     } catch {
       // Keep last good snapshot if file is temporarily unreadable.

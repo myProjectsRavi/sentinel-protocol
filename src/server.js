@@ -763,6 +763,9 @@ class SentinelServer {
       this.server.close(resolve);
     });
 
+    await this.upstreamClient.close();
+    await this.auditLogger.close({ timeoutMs: 5000 });
+
     if (fs.existsSync(PID_FILE_PATH)) {
       fs.unlinkSync(PID_FILE_PATH);
     }

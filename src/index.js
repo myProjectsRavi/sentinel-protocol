@@ -4,6 +4,7 @@ const { loadAndValidateConfig } = require('./config/loader');
 const { SentinelServer } = require('./server');
 const { RuntimeOverrideManager } = require('./runtime/override');
 const { runDoctorChecks, formatDoctorReport } = require('./runtime/doctor');
+const logger = require('./utils/logger');
 const {
   DEFAULT_CONFIG_PATH,
   STATUS_FILE_PATH,
@@ -12,6 +13,60 @@ const {
   ensureSentinelHome,
 } = require('./utils/paths');
 const { StatusStore } = require('./status/store');
+
+const DEFAULT_SIGNAL_SHUTDOWN_TIMEOUT_MS = 15000;
+let activeSignalCleanup = null;
+
+function installSignalHandlers(server, options = {}) {
+  const shutdownTimeoutMs = Number(options.shutdownTimeoutMs || DEFAULT_SIGNAL_SHUTDOWN_TIMEOUT_MS);
+  let shuttingDown = false;
+
+  const handleSignal = async (signalName) => {
+    if (shuttingDown) {
+      console.error(`Received ${signalName} during shutdown. Forcing exit.`);
+      process.exit(1);
+      return;
+    }
+
+    shuttingDown = true;
+    console.error(`Received ${signalName}, shutting down...`);
+    logger.warn('Sentinel shutdown signal received', {
+      signal: signalName,
+      shutdown_timeout_ms: shutdownTimeoutMs,
+    });
+
+    const forceExitTimer = setTimeout(() => {
+      console.error(`Forced shutdown after ${shutdownTimeoutMs}ms timeout.`);
+      process.exit(1);
+    }, shutdownTimeoutMs);
+    forceExitTimer.unref?.();
+
+    try {
+      await server.stop();
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(forceExitTimer);
+      console.error(`Shutdown failed: ${error.message}`);
+      process.exit(1);
+    }
+  };
+
+  const onSigint = () => {
+    void handleSignal('SIGINT');
+  };
+  const onSigterm = () => {
+    void handleSignal('SIGTERM');
+  };
+
+  process.on('SIGINT', onSigint);
+  process.on('SIGTERM', onSigterm);
+
+  return () => {
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
+  };
+}
 
 function loadConfigForStart(options = {}) {
   const loaded = loadAndValidateConfig({
@@ -45,18 +100,23 @@ function startServer(options = {}) {
   const server = new SentinelServer(loaded.config, {
     dryRun: Boolean(options.dryRun),
     failOpen: Boolean(options.failOpen || process.env.SENTINEL_FAIL_OPEN === 'true'),
-    portOverride: options.port ? Number(options.port) : undefined,
+    portOverride:
+      options.port !== undefined && options.port !== null && options.port !== ''
+        ? Number(options.port)
+        : undefined,
   });
 
   server.start();
 
-  const shutdown = async () => {
-    await server.stop();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  if (options.installSignalHandlers !== false) {
+    if (typeof activeSignalCleanup === 'function') {
+      activeSignalCleanup();
+      activeSignalCleanup = null;
+    }
+    activeSignalCleanup = installSignalHandlers(server, {
+      shutdownTimeoutMs: options.shutdownTimeoutMs,
+    });
+  }
 
   return { server, loaded, doctor: doctorReport };
 }
@@ -148,4 +208,5 @@ module.exports = {
   setEmergencyOpen,
   doctorServer,
   loadConfigForStart,
+  installSignalHandlers,
 };

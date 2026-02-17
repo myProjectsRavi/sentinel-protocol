@@ -44,15 +44,18 @@ program
   .option('--mode <mode>', 'Mode override (monitor|warn|enforce)')
   .option('--dry-run', 'Force monitor behavior')
   .option('--fail-open', 'Degrade blocking decisions to pass-through monitor mode')
+  .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
   .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
   .action((options) => {
     try {
+      const shutdownTimeoutMs = Number(options.shutdownTimeoutMs);
       const result = startServer({
         configPath: options.config,
         port: options.port,
         modeOverride: options.mode,
         dryRun: options.dryRun,
         failOpen: options.failOpen,
+        shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,
         runDoctor: !options.skipDoctor,
       });
 

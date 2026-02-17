@@ -401,6 +401,17 @@ class UpstreamClient {
       responseHeaders: {},
     };
   }
+
+  async close() {
+    const closers = [];
+    for (const dispatcher of this.dispatchers.values()) {
+      if (dispatcher && typeof dispatcher.close === 'function') {
+        closers.push(dispatcher.close().catch(() => {}));
+      }
+    }
+    this.dispatchers.clear();
+    await Promise.allSettled(closers);
+  }
 }
 
 module.exports = {

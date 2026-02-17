@@ -13,6 +13,12 @@ This project ships a reproducible benchmark harness to measure Sentinel overhead
 npm run benchmark
 ```
 
+Reliability (stress + chaos scenarios):
+
+```bash
+npm run reliability
+```
+
 Custom run parameters:
 
 ```bash
@@ -22,6 +28,7 @@ node ./scripts/benchmark-overhead.js --duration 20 --connections 100 --pipelinin
 The script writes JSON reports to:
 
 - `metrics/benchmark-YYYY-MM-DD.json`
+- `metrics/reliability-<timestamp>.json`
 
 ## What It Measures
 
@@ -52,3 +59,7 @@ Outputs include:
 - Run with `NODE_ENV=production` for realistic results.
 - Benchmark host and network conditions affect absolute numbers.
 - Compare deltas across versions, not raw values from different machines.
+- Reliability gates currently cover:
+1. Stress run without transport errors/timeouts.
+2. Chaos-503 scenario where circuit breaker opens and fast-fails.
+3. Chaos-timeout scenario where timeout streak opens breaker and fast-fails.

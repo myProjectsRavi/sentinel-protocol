@@ -46,4 +46,30 @@ describe('monitor tui helpers', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test('LogTailer preserves multibyte utf-8 text split across chunks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-tui-utf8-'));
+    const logPath = path.join(tmpDir, 'audit.jsonl');
+
+    try {
+      const entry = {
+        id: 77,
+        reason: 'blocked 🔒 東京',
+      };
+      fs.writeFileSync(logPath, `${JSON.stringify(entry)}\n`, 'utf8');
+
+      const tailer = new LogTailer(logPath, {
+        maxEntries: 10,
+        // Intentionally small to force chunk splits in multibyte sequences.
+        readChunkBytes: 7,
+        initialReadBytes: 1024,
+      });
+
+      const entries = tailer.tick();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].reason).toBe('blocked 🔒 東京');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

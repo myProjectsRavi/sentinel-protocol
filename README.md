@@ -123,4 +123,5 @@ See docs:
 - `docs/POLICY-GUIDE.md`
 - `docs/DEMO_VIDEO_SCRIPT.md`
 - `docs/INTEGRATIONS.md`
+- `docs/RELIABILITY_PROOF.md`
 - `BENCHMARKS.md`
