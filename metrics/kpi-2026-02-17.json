@@ -1,0 +1,15 @@
+{
+  "timestamp_utc": "2026-02-17T05:58:11Z",
+  "repo": "myProjectsRavi/sentinel-protocol",
+  "package": "sentinel-protocol",
+  "baseline_targets": {
+    "stars": 150,
+    "weekly_active_installs": 25,
+    "testimonials": 5
+  },
+  "current": {
+    "stars": 0,
+    "weekly_downloads_npm": 0,
+    "testimonials": 0
+  }
+}

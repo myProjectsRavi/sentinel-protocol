@@ -6,7 +6,7 @@
   "main": "src/index.js",
   "type": "commonjs",
   "bin": {
-    "sentinel": "./cli/sentinel.js"
+    "sentinel": "cli/sentinel.js"
   },
   "engines": {
     "node": ">=20"

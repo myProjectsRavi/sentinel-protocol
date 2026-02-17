@@ -6,3 +6,4 @@ coverage/
 *.pid
 *.bak
 .tmp/
+*.tgz
