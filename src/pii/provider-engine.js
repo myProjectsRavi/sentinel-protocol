@@ -1,5 +1,6 @@
 const { RapidApiPIIClient } = require('./rapidapi-client');
 const { SEVERITY_RANK } = require('../engines/pii-scanner');
+const { SemanticScanner } = require('../engines/semantic-scanner');
 
 function mergeFindings(primary, secondary) {
   const out = [];
@@ -21,18 +22,73 @@ function maxSeverity(a, b) {
 }
 
 class PIIProviderEngine {
-  constructor({ piiConfig, localScanner, telemetry, rapidClient }) {
+  constructor({ piiConfig, localScanner, telemetry, rapidClient, semanticScanner }) {
     this.config = piiConfig || {};
     this.localScanner = localScanner;
     this.telemetry = telemetry;
     this.rapidClient = rapidClient || new RapidApiPIIClient(this.config.rapidapi || {});
+    this.semanticScanner = semanticScanner || new SemanticScanner(this.config.semantic || {});
   }
 
-  scanLocal(text) {
-    return this.localScanner.scan(text, {
+  async applySemanticLayer(text, baseResult) {
+    if (!this.semanticScanner || this.semanticScanner.enabled !== true) {
+      return {
+        result: baseResult,
+        meta: {
+          semanticEnabled: false,
+          semanticUsed: false,
+          semanticError: null,
+        },
+      };
+    }
+
+    try {
+      const semantic = await this.semanticScanner.scan(text, {
+        maxScanBytes: this.config.semantic?.max_scan_bytes,
+      });
+      if (!semantic.findings || semantic.findings.length === 0) {
+        return {
+          result: baseResult,
+          meta: {
+            semanticEnabled: true,
+            semanticUsed: true,
+            semanticError: semantic.error || null,
+          },
+        };
+      }
+
+      return {
+        result: {
+          findings: mergeFindings(baseResult.findings, semantic.findings),
+          redactedText: semantic.redactedText || baseResult.redactedText,
+          highestSeverity: maxSeverity(baseResult.highestSeverity, semantic.highestSeverity),
+          scanTruncated: baseResult.scanTruncated || semantic.scanTruncated,
+        },
+        meta: {
+          semanticEnabled: true,
+          semanticUsed: true,
+          semanticError: semantic.error || null,
+        },
+      };
+    } catch (error) {
+      return {
+        result: baseResult,
+        meta: {
+          semanticEnabled: true,
+          semanticUsed: false,
+          semanticError: error.message,
+        },
+      };
+    }
+  }
+
+  async scanLocal(text) {
+    const local = this.localScanner.scan(text, {
       maxScanBytes: this.config.max_scan_bytes,
       regexSafetyCapBytes: this.config.regex_safety_cap_bytes,
     });
+    const semanticMerged = await this.applySemanticLayer(text, local);
+    return semanticMerged;
   }
 
   async scanRapid(text, headers = {}) {
@@ -44,13 +100,15 @@ class PIIProviderEngine {
     const fallbackEnabled = this.config.rapidapi?.fallback_to_local !== false;
 
     if (mode === 'local') {
+      const local = await this.scanLocal(text);
       return {
-        result: this.scanLocal(text),
+        result: local.result,
         meta: {
           providerMode: 'local',
           providerUsed: 'local',
           fallbackUsed: false,
           fallbackReason: null,
+          ...local.meta,
         },
       };
     }
@@ -72,45 +130,49 @@ class PIIProviderEngine {
           throw error;
         }
         this.telemetry?.addUpstreamError({ provider: 'rapidapi', reason: error.kind || 'rapidapi_error' });
+        const local = await this.scanLocal(text);
         return {
-          result: this.scanLocal(text),
+          result: local.result,
           meta: {
             providerMode: 'rapidapi',
             providerUsed: 'local',
             fallbackUsed: true,
             fallbackReason: error.kind || 'rapidapi_error',
+            ...local.meta,
           },
         };
       }
     }
 
     // hybrid mode: local always + rapidapi best effort
-    const local = this.scanLocal(text);
+    const local = await this.scanLocal(text);
     try {
       const rapid = await this.scanRapid(text, headers);
       return {
         result: {
-          findings: mergeFindings(local.findings, rapid.findings),
-          redactedText: rapid.redactedText || local.redactedText,
-          highestSeverity: maxSeverity(local.highestSeverity, rapid.highestSeverity),
-          scanTruncated: local.scanTruncated || rapid.scanTruncated,
+          findings: mergeFindings(local.result.findings, rapid.findings),
+          redactedText: rapid.redactedText || local.result.redactedText,
+          highestSeverity: maxSeverity(local.result.highestSeverity, rapid.highestSeverity),
+          scanTruncated: local.result.scanTruncated || rapid.scanTruncated,
         },
         meta: {
           providerMode: 'hybrid',
           providerUsed: 'hybrid',
           fallbackUsed: false,
           fallbackReason: null,
+          ...local.meta,
         },
       };
     } catch (error) {
       this.telemetry?.addUpstreamError({ provider: 'rapidapi', reason: error.kind || 'rapidapi_error' });
       return {
-        result: local,
+        result: local.result,
         meta: {
           providerMode: 'hybrid',
           providerUsed: 'local',
           fallbackUsed: true,
           fallbackReason: error.kind || 'rapidapi_error',
+          ...local.meta,
         },
       };
     }

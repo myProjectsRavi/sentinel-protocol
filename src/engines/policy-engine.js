@@ -1,8 +1,14 @@
+const { InjectionScanner } = require('./injection-scanner');
+
 class PolicyEngine {
   constructor(config, rateLimiter) {
     this.rules = Array.isArray(config.rules) ? config.rules : [];
     this.whitelistDomains = Array.isArray(config.whitelist?.domains) ? config.whitelist.domains : [];
     this.rateLimiter = rateLimiter;
+    this.injectionConfig = config.injection || {};
+    this.injectionScanner = new InjectionScanner({
+      maxScanBytes: this.injectionConfig.max_scan_bytes,
+    });
   }
 
   isWhitelisted(hostname) {
@@ -51,7 +57,14 @@ class PolicyEngine {
       headers,
       provider,
       rateLimitKey,
+      injectionResult: providedInjectionResult,
     } = context;
+
+    const injectionResult = this.injectionConfig.enabled === false
+      ? { score: 0, matchedSignals: [], scanTruncated: false }
+      : providedInjectionResult || this.injectionScanner.scan(bodyText || '', {
+          maxScanBytes: this.injectionConfig.max_scan_bytes,
+        });
 
     if (this.isWhitelisted(hostname)) {
       return {
@@ -59,6 +72,7 @@ class PolicyEngine {
         action: 'allow',
         allowed: true,
         reason: 'whitelisted',
+        injection: injectionResult,
       };
     }
 
@@ -83,6 +97,9 @@ class PolicyEngine {
       if (match.body_size_mb && requestBytes / (1024 * 1024) <= Number(match.body_size_mb)) {
         continue;
       }
+      if (match.injection_threshold !== undefined && injectionResult.score < Number(match.injection_threshold)) {
+        continue;
+      }
 
       if (match.requests_per_minute && this.rateLimiter) {
         const allowed = this.rateLimiter.consume({
@@ -101,9 +118,15 @@ class PolicyEngine {
         matched: true,
         action,
         allowed,
-        reason: action === 'block' ? 'policy_violation' : 'policy_match',
+        reason:
+          match.injection_threshold !== undefined
+            ? 'prompt_injection_detected'
+            : action === 'block'
+              ? 'policy_violation'
+              : 'policy_match',
         rule: rule.name,
         message: rule.message || `Policy rule matched: ${rule.name}`,
+        injection: injectionResult,
       };
     }
 
@@ -112,6 +135,7 @@ class PolicyEngine {
       action: 'allow',
       allowed: true,
       reason: 'no_matching_rule',
+      injection: injectionResult,
     };
   }
 }

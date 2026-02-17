@@ -15,10 +15,12 @@
     "start": "node ./cli/sentinel.js start",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand test/unit",
-    "test:integration": "jest --runInBand test/integration"
+    "test:integration": "jest --runInBand test/integration",
+    "benchmark": "node ./scripts/benchmark-overhead.js"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.0",
+    "blessed": "0.1.81",
     "commander": "13.1.0",
     "express": "4.21.2",
     "js-yaml": "4.1.0",
@@ -26,6 +28,7 @@
     "uuid": "11.1.0"
   },
   "devDependencies": {
+    "autocannon": "8.0.0",
     "jest": "30.0.5",
     "supertest": "7.1.3"
   }

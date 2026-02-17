@@ -2,7 +2,7 @@ const VALID_MODES = new Set(['monitor', 'warn', 'enforce']);
 const VALID_ACTIONS = new Set(['allow', 'block', 'warn']);
 const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
 const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
-const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'rules', 'whitelist', 'logging']);
+const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'injection', 'rules', 'whitelist', 'logging']);
 const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
 const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream']);
 const TELEMETRY_KEYS = new Set(['enabled']);
@@ -25,8 +25,12 @@ const PII_KEYS = new Set([
   'regex_safety_cap_bytes',
   'severity_actions',
   'rapidapi',
+  'semantic',
 ]);
 const PII_SEVERITY_KEYS = new Set(['critical', 'high', 'medium', 'low']);
+const PII_SEMANTIC_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'score_threshold', 'max_scan_bytes']);
+const INJECTION_KEYS = new Set(['enabled', 'threshold', 'max_scan_bytes', 'action']);
+const INJECTION_ACTIONS = new Set(['allow', 'block', 'warn']);
 const RAPIDAPI_KEYS = new Set([
   'endpoint',
   'host',
@@ -45,6 +49,7 @@ const RULE_MATCH_KEYS = new Set([
   'body_contains',
   'tool_name',
   'body_size_mb',
+  'injection_threshold',
   'requests_per_minute',
 ]);
 const WHITELIST_KEYS = new Set(['domains']);
@@ -100,6 +105,14 @@ function validateRules(rules, details) {
     assertType(rule.match && typeof rule.match === 'object', `${prefix}.match must be an object`, details);
     assertType(typeof rule.action === 'string' && VALID_ACTIONS.has(rule.action), `${prefix}.action must be one of: allow, block, warn`, details);
     assertNoUnknownKeys(rule.match, RULE_MATCH_KEYS, `${prefix}.match`, details);
+    if (rule.match?.injection_threshold !== undefined) {
+      const threshold = Number(rule.match.injection_threshold);
+      assertType(
+        Number.isFinite(threshold) && threshold >= 0 && threshold <= 1,
+        `${prefix}.match.injection_threshold must be between 0 and 1`,
+        details
+      );
+    }
   });
 }
 
@@ -163,6 +176,18 @@ function applyDefaults(config) {
     normalized.pii.rapidapi.extra_body && typeof normalized.pii.rapidapi.extra_body === 'object'
       ? normalized.pii.rapidapi.extra_body
       : {};
+  normalized.pii.semantic = normalized.pii.semantic || {};
+  normalized.pii.semantic.enabled = normalized.pii.semantic.enabled === true;
+  normalized.pii.semantic.model_id = normalized.pii.semantic.model_id || 'Xenova/bert-base-NER';
+  normalized.pii.semantic.cache_dir = normalized.pii.semantic.cache_dir || '~/.sentinel/models';
+  normalized.pii.semantic.score_threshold = Number(normalized.pii.semantic.score_threshold ?? 0.6);
+  normalized.pii.semantic.max_scan_bytes = Number(normalized.pii.semantic.max_scan_bytes ?? 32768);
+
+  normalized.injection = normalized.injection || {};
+  normalized.injection.enabled = normalized.injection.enabled !== false;
+  normalized.injection.threshold = Number(normalized.injection.threshold ?? 0.8);
+  normalized.injection.max_scan_bytes = Number(normalized.injection.max_scan_bytes ?? 131072);
+  normalized.injection.action = normalized.injection.action || 'block';
 
   normalized.whitelist = normalized.whitelist || {};
   normalized.whitelist.domains = Array.isArray(normalized.whitelist.domains) ? normalized.whitelist.domains : [];
@@ -263,6 +288,7 @@ function validateConfigShape(config) {
     assertNoUnknownKeys(pii.severity_actions, PII_SEVERITY_KEYS, 'pii.severity_actions', details);
 
     const rapidapi = pii.rapidapi || {};
+    const semantic = pii.semantic || {};
     if (pii.rapidapi !== undefined) {
       assertNoUnknownKeys(rapidapi, RAPIDAPI_KEYS, 'pii.rapidapi', details);
       assertType(rapidapi.endpoint === undefined || typeof rapidapi.endpoint === 'string', '`pii.rapidapi.endpoint` must be string', details);
@@ -295,6 +321,47 @@ function validateConfigShape(config) {
         details
       );
     }
+    if (pii.semantic !== undefined) {
+      assertNoUnknownKeys(semantic, PII_SEMANTIC_KEYS, 'pii.semantic', details);
+      assertType(typeof semantic.enabled === 'boolean', '`pii.semantic.enabled` must be boolean', details);
+      assertType(typeof semantic.model_id === 'string', '`pii.semantic.model_id` must be string', details);
+      assertType(typeof semantic.cache_dir === 'string', '`pii.semantic.cache_dir` must be string', details);
+      assertType(
+        Number.isFinite(Number(semantic.score_threshold)) &&
+          Number(semantic.score_threshold) >= 0 &&
+          Number(semantic.score_threshold) <= 1,
+        '`pii.semantic.score_threshold` must be between 0 and 1',
+        details
+      );
+      assertType(
+        Number.isInteger(semantic.max_scan_bytes) && semantic.max_scan_bytes > 0,
+        '`pii.semantic.max_scan_bytes` must be integer > 0',
+        details
+      );
+    }
+  }
+
+  const injection = config.injection || {};
+  if (config.injection !== undefined) {
+    assertNoUnknownKeys(injection, INJECTION_KEYS, 'injection', details);
+    assertType(typeof injection.enabled === 'boolean', '`injection.enabled` must be boolean', details);
+    assertType(
+      Number.isFinite(Number(injection.threshold)) &&
+        Number(injection.threshold) >= 0 &&
+        Number(injection.threshold) <= 1,
+      '`injection.threshold` must be between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(injection.max_scan_bytes) && injection.max_scan_bytes > 0,
+      '`injection.max_scan_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      INJECTION_ACTIONS.has(String(injection.action)),
+      '`injection.action` must be one of: allow, block, warn',
+      details
+    );
   }
 
   assertType(Array.isArray(config.whitelist?.domains), '`whitelist.domains` must be an array', details);

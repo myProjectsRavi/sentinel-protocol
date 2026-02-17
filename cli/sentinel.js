@@ -7,6 +7,8 @@ const { Command } = require('commander');
 const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeYamlConfig } = require('../src/config/loader');
 const { migrateConfig, CURRENT_CONFIG_VERSION } = require('../src/config/migrations');
 const { ConfigValidationError } = require('../src/config/schema');
+const { startMCPServer } = require('../src/mcp/server');
+const { startMonitorTUI } = require('../src/monitor/tui');
 const {
   startServer,
   stopServer,
@@ -73,6 +75,37 @@ program
       console.error(error.message);
       process.exitCode = 1;
     }
+  });
+
+program
+  .command('mcp')
+  .description('Run Sentinel as a minimal MCP server over stdio')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: true,
+      });
+
+      startMCPServer(loaded.config);
+      console.log('Sentinel MCP server started on stdio');
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('monitor')
+  .description('Open a real-time terminal dashboard (requests/sec, blocked%, pii types, last requests)')
+  .option('--refresh-ms <ms>', 'Refresh interval in milliseconds', '1000')
+  .action((options) => {
+    const refreshMs = Number(options.refreshMs);
+    startMonitorTUI({
+      refreshMs: Number.isFinite(refreshMs) && refreshMs > 100 ? refreshMs : 1000,
+    });
   });
 
 program

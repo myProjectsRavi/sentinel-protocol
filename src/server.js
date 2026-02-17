@@ -115,6 +115,8 @@ class SentinelServer {
       blocked_total: 0,
       policy_blocked: 0,
       pii_blocked: 0,
+      injection_detected: 0,
+      injection_blocked: 0,
       pii_provider_fallbacks: 0,
       rapidapi_error_count: 0,
       upstream_errors: 0,
@@ -352,10 +354,18 @@ class SentinelServer {
         rateLimitKey: req.headers['x-sentinel-agent-id'],
       });
 
+      const injectionScore = Number(policyDecision.injection?.score || 0);
+      if (injectionScore > 0) {
+        this.stats.injection_detected += 1;
+      }
+
       if (policyDecision.matched && policyDecision.action === 'block') {
         if (effectiveMode === 'enforce') {
           this.stats.blocked_total += 1;
           this.stats.policy_blocked += 1;
+          if (policyDecision.reason === 'prompt_injection_detected') {
+            this.stats.injection_blocked += 1;
+          }
           const diagnostics = {
             errorSource: 'sentinel',
             upstreamError: false,
@@ -372,7 +382,7 @@ class SentinelServer {
             config_version: this.config.version,
             mode: effectiveMode,
             decision: 'blocked',
-            reasons: ['policy_violation'],
+            reasons: [policyDecision.reason || 'policy_violation'],
             rule: policyDecision.rule,
             pii_types: [],
             redactions: 0,
@@ -393,10 +403,14 @@ class SentinelServer {
             reason: policyDecision.reason,
             rule: policyDecision.rule,
             message: policyDecision.message,
+            injection_score: injectionScore || undefined,
             correlation_id: correlationId,
           });
         }
         warnings.push(`policy:${policyDecision.rule || 'blocked-rule'}`);
+        if (policyDecision.reason === 'prompt_injection_detected') {
+          warnings.push(`injection:${injectionScore.toFixed(3)}`);
+        }
         this.stats.warnings_total += 1;
       }
 

@@ -50,6 +50,18 @@ pii:
     # BYOK only. Keep empty and inject via SENTINEL_RAPIDAPI_KEY in production.
     api_key: ""
     extra_body: {}
+  semantic:
+    enabled: false
+    model_id: Xenova/bert-base-NER
+    cache_dir: "~/.sentinel/models"
+    score_threshold: 0.6
+    max_scan_bytes: 32768
+
+injection:
+  enabled: true
+  threshold: 0.8
+  max_scan_bytes: 131072
+  action: block
 
 rules:
   - name: block-destructive-delete
@@ -71,6 +83,12 @@ rules:
       tool_name: execute_shell
     action: block
     message: "execute_shell tool is blocked"
+
+  - name: block-prompt-injection
+    match:
+      injection_threshold: 0.8
+    action: block
+    message: "Prompt injection pattern detected"
 
 whitelist:
   domains:

@@ -6,6 +6,7 @@ It provides:
 - Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
 - PII provider modes: `local`, `rapidapi`, `hybrid` (with local fallback controls)
+- Heuristic prompt-injection detection (`injection_threshold` policy matching)
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
@@ -64,8 +65,22 @@ node ./cli/sentinel.js doctor
 
 The doctor command warns when `NODE_ENV` is not `production`.
 
+MCP mode:
+
+```bash
+node ./cli/sentinel.js mcp
+```
+
+Terminal monitor:
+
+```bash
+node ./cli/sentinel.js monitor
+```
+
 See docs:
 - `docs/QUICKSTART.md`
 - `docs/OUTAGE-RUNBOOK.md`
 - `docs/POLICY-GUIDE.md`
 - `docs/DEMO_VIDEO_SCRIPT.md`
+- `docs/INTEGRATIONS.md`
+- `BENCHMARKS.md`

@@ -112,7 +112,61 @@ On RapidAPI failures:
 
 Sentinel strips all `x-sentinel-*` headers before forwarding upstream.
 
-## 6. Check status
+## 6. Configure prompt-injection detection
+
+Injection scanning is enabled by default. You can tune the default threshold and add rule-level controls.
+
+```yaml
+injection:
+  enabled: true
+  threshold: 0.8
+  max_scan_bytes: 131072
+  action: block
+
+rules:
+  - name: block-prompt-injection
+    match:
+      injection_threshold: 0.8
+    action: block
+```
+
+## 7. Optional semantic scanner
+
+Semantic NER runs locally and is disabled by default.
+
+1. Install optional dependency:
+
+```bash
+npm install @xenova/transformers
+```
+
+2. Enable scanner in config:
+
+```yaml
+pii:
+  semantic:
+    enabled: true
+    model_id: Xenova/bert-base-NER
+    cache_dir: "~/.sentinel/models"
+    score_threshold: 0.6
+    max_scan_bytes: 32768
+```
+
+## 8. MCP and monitor modes
+
+Run Sentinel as minimal MCP server:
+
+```bash
+node ./cli/sentinel.js mcp
+```
+
+Open terminal dashboard:
+
+```bash
+node ./cli/sentinel.js monitor
+```
+
+## 9. Check status
 
 Human output:
 
@@ -131,7 +185,15 @@ Provider observability fields:
 - `pii_provider_fallbacks`
 - `rapidapi_error_count`
 
-## 7. Emergency recovery
+## 10. Benchmark overhead
+
+```bash
+npm run benchmark
+```
+
+See `BENCHMARKS.md` and generated files in `metrics/`.
+
+## 11. Emergency recovery
 
 Enable emergency pass-through:
 

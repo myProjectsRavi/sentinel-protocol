@@ -83,4 +83,42 @@ describe('PIIProviderEngine', () => {
     expect(result.result.findings.some((f) => f.id === 'rapid_email')).toBe(true);
     expect(result.result.findings.some((f) => f.id === 'openai_api_key')).toBe(true);
   });
+
+  test('local mode merges semantic findings when semantic scanner is enabled', async () => {
+    const scanner = new PIIScanner();
+    const semanticScanner = {
+      enabled: true,
+      scan: jest.fn(async () => ({
+        findings: [
+          {
+            id: 'semantic_person',
+            severity: 'medium',
+            value: 'John',
+          },
+        ],
+        redactedText: 'My name is [REDACTED_SEMANTIC_PERSON]',
+        highestSeverity: 'medium',
+        scanTruncated: false,
+      })),
+    };
+
+    const engine = new PIIProviderEngine({
+      piiConfig: basePiiConfig({
+        provider_mode: 'local',
+        semantic: {
+          enabled: true,
+          model_id: 'Xenova/bert-base-NER',
+          cache_dir: '~/.sentinel/models',
+          score_threshold: 0.6,
+          max_scan_bytes: 32768,
+        },
+      }),
+      localScanner: scanner,
+      semanticScanner,
+    });
+
+    const result = await engine.scan('My name is John and email is john@example.com');
+    expect(result.meta.semanticEnabled).toBe(true);
+    expect(result.result.findings.some((f) => f.id === 'semantic_person')).toBe(true);
+  });
 });
