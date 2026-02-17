@@ -1,0 +1,36 @@
+services:
+  sentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PRELOAD_SEMANTIC_MODEL: ${PRELOAD_SEMANTIC_MODEL:-false}
+    image: sentinel-protocol:latest
+    container_name: sentinel-protocol
+    command: ["start", "--config", "/etc/sentinel/sentinel.yaml", "--port", "8787"]
+    ports:
+      - "8787:8787"
+    environment:
+      NODE_ENV: production
+      SENTINEL_HOME: /var/lib/sentinel
+      SENTINEL_RAPIDAPI_KEY: ${SENTINEL_RAPIDAPI_KEY:-}
+    volumes:
+      - ./config/sentinel.yaml:/etc/sentinel/sentinel.yaml:ro
+      - sentinel-data:/var/lib/sentinel
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node ./cli/sentinel.js status --json | grep -q '\"service_status\": \"running\"'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  sentinel-data:

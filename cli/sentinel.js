@@ -7,6 +7,7 @@ const { Command } = require('commander');
 const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeYamlConfig } = require('../src/config/loader');
 const { migrateConfig, CURRENT_CONFIG_VERSION } = require('../src/config/migrations');
 const { ConfigValidationError } = require('../src/config/schema');
+const { SemanticScanner } = require('../src/engines/semantic-scanner');
 const { startMCPServer } = require('../src/mcp/server');
 const { startMonitorTUI } = require('../src/monitor/tui');
 const {
@@ -240,4 +241,59 @@ configCommand
     }
   });
 
-program.parse(process.argv);
+const modelsCommand = program.command('models').description('Model utilities');
+
+modelsCommand
+  .command('download')
+  .description('Pre-download semantic scanner model into local cache')
+  .option('--config <path>', 'Optional config path to read semantic model settings')
+  .option('--model-id <model>', 'Override model id from config/defaults')
+  .option('--cache-dir <path>', 'Override cache directory from config/defaults')
+  .action(async (options) => {
+    try {
+      let semanticConfig = {
+        enabled: true,
+      };
+
+      const configPath = options.config || DEFAULT_CONFIG_PATH;
+      if (fs.existsSync(configPath)) {
+        const loaded = loadAndValidateConfig({
+          configPath,
+          allowMigration: true,
+          writeMigrated: false,
+        });
+        semanticConfig = {
+          ...(loaded.config.pii?.semantic || {}),
+          enabled: true,
+        };
+      } else if (options.config) {
+        console.error(`Config file not found at ${configPath}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      if (options.modelId) {
+        semanticConfig.model_id = options.modelId;
+      }
+      if (options.cacheDir) {
+        semanticConfig.cache_dir = options.cacheDir;
+      }
+
+      const scanner = new SemanticScanner(semanticConfig);
+      const startedAt = Date.now();
+      await scanner.loadPipeline();
+      const elapsedMs = Date.now() - startedAt;
+
+      console.log(`Model downloaded and cached: ${scanner.modelId}`);
+      console.log(`Cache directory: ${scanner.cacheDir}`);
+      console.log(`Ready in ${elapsedMs}ms`);
+    } catch (error) {
+      console.error(`Model download failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program.parseAsync(process.argv).catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

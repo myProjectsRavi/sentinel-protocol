@@ -77,6 +77,49 @@ Terminal monitor:
 node ./cli/sentinel.js monitor
 ```
 
+## Docker
+
+Build image (Debian slim, non-root runtime):
+
+```bash
+docker build -t sentinel-protocol:latest .
+```
+
+Optional: preload semantic model during build to remove first-request model download latency:
+
+```bash
+docker build -t sentinel-protocol:latest --build-arg PRELOAD_SEMANTIC_MODEL=true .
+```
+
+Run with one command (read-only config mount + writable runtime state volume):
+
+```bash
+docker run --rm -p 8787:8787 \
+  -e NODE_ENV=production \
+  -e SENTINEL_HOME=/var/lib/sentinel \
+  -v $(pwd)/config/sentinel.yaml:/etc/sentinel/sentinel.yaml:ro \
+  -v sentinel-data:/var/lib/sentinel \
+  sentinel-protocol:latest start --config /etc/sentinel/sentinel.yaml --port 8787
+```
+
+If you enable semantic scanning and do not preload the model in the image, provide writable model cache storage:
+
+```bash
+-v sentinel-models:/home/sentinel/.sentinel/models
+```
+
+Compose (hardened defaults: `read_only`, `no-new-privileges`, `cap_drop: ALL`):
+
+```bash
+docker compose up --build
+```
+
+Pre-download semantic model manually:
+
+```bash
+node ./cli/sentinel.js models download --config ./config/sentinel.yaml
+```
+
 See docs:
 - `docs/QUICKSTART.md`
 - `docs/OUTAGE-RUNBOOK.md`
