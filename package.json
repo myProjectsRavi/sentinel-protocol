@@ -1,0 +1,30 @@
+{
+  "name": "sentinel-protocol",
+  "version": "0.1.0",
+  "description": "Local firewall for AI agents with deterministic policy and resilience controls",
+  "license": "MIT",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "bin": {
+    "sentinel": "./cli/sentinel.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node ./cli/sentinel.js start",
+    "test": "jest --runInBand",
+    "test:unit": "jest --runInBand test/unit",
+    "test:integration": "jest --runInBand test/integration"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "express": "^4.21.2",
+    "js-yaml": "^4.1.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "jest": "^30.0.5",
+    "supertest": "^7.1.3"
+  }
+}
