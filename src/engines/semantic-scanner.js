@@ -2,6 +2,19 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+function resolveUserPath(rawPath) {
+  if (typeof rawPath !== 'string' || rawPath.length === 0) {
+    return rawPath;
+  }
+  if (rawPath === '~') {
+    return os.homedir();
+  }
+  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) {
+    return path.join(os.homedir(), rawPath.slice(2));
+  }
+  return rawPath;
+}
+
 function maxSeverity(a, b) {
   const rank = { low: 1, medium: 2, high: 3, critical: 4 };
   if (!a) return b;
@@ -55,7 +68,7 @@ class SemanticScanner {
     this.modelId = config.model_id || 'Xenova/bert-base-NER';
     this.scoreThreshold = Number(config.score_threshold ?? 0.6);
     this.maxScanBytes = Number(config.max_scan_bytes ?? 32768);
-    this.cacheDir = config.cache_dir || path.join(os.homedir(), '.sentinel', 'models');
+    this.cacheDir = resolveUserPath(config.cache_dir) || path.join(os.homedir(), '.sentinel', 'models');
     this.pipelinePromise = null;
     this.loadError = null;
   }
@@ -182,4 +195,5 @@ class SemanticScanner {
 
 module.exports = {
   SemanticScanner,
+  resolveUserPath,
 };
