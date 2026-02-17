@@ -17,6 +17,7 @@ services:
     volumes:
       - ./config/sentinel.yaml:/etc/sentinel/sentinel.yaml:ro
       - sentinel-data:/var/lib/sentinel
+      - sentinel-models:/home/sentinel/.sentinel/models
     read_only: true
     tmpfs:
       - /tmp:size=64m,noexec,nosuid,nodev
@@ -34,3 +35,4 @@ services:
 
 volumes:
   sentinel-data:
+  sentinel-models:

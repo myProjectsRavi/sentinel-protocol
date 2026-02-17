@@ -102,11 +102,8 @@ docker run --rm -p 8787:8787 \
   sentinel-protocol:latest start --config /etc/sentinel/sentinel.yaml --port 8787
 ```
 
-If you enable semantic scanning and do not preload the model in the image, provide writable model cache storage:
-
-```bash
--v sentinel-models:/home/sentinel/.sentinel/models
-```
+The included `docker-compose.yml` already mounts a writable model cache volume:
+`sentinel-models:/home/sentinel/.sentinel/models`.
 
 Compose (hardened defaults: `read_only`, `no-new-privileges`, `cap_drop: ALL`):
 
