@@ -4,7 +4,7 @@ class Telemetry {
   constructor(options = {}) {
     this.enabled = options.enabled !== false;
     this.serviceName = options.serviceName || 'sentinel-protocol';
-    this.serviceVersion = options.serviceVersion || '0.2.0';
+    this.serviceVersion = options.serviceVersion || '1.0.0';
 
     this.tracer = trace.getTracer(this.serviceName, this.serviceVersion);
     this.meter = metrics.getMeter(this.serviceName, this.serviceVersion);

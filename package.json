@@ -1,7 +1,15 @@
 {
   "name": "sentinel-protocol",
-  "version": "0.2.0",
-  "description": "Local firewall for AI agents with deterministic policy and resilience controls",
+  "version": "1.0.0",
+  "description": "The Reference Architecture for Local AI Governance & Firewalling. Secure, deterministic protection for Agents, MCP, and LLMs.",
+  "keywords": [
+    "ai-security",
+    "firewall",
+    "mcp",
+    "agent-governance",
+    "pii-redaction",
+    "prompt-injection"
+  ],
   "license": "MIT",
   "main": "src/index.js",
   "type": "commonjs",

@@ -1,4 +1,4 @@
-# sentinel-protocol
+# Sentinel Protocol (v1.0)
 
 Sentinel Protocol is a local firewall for AI agents.
 

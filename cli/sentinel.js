@@ -21,7 +21,7 @@ const { DEFAULT_CONFIG_PATH } = require('../src/utils/paths');
 
 const program = new Command();
 
-program.name('sentinel').description('Sentinel Protocol CLI').version('0.2.0');
+program.name('sentinel').description('Sentinel Protocol CLI').version('1.0.0');
 
 program
   .command('init')

@@ -131,7 +131,7 @@ class SentinelServer {
     });
     this.telemetry = createTelemetry({
       enabled: config.runtime?.telemetry?.enabled !== false,
-      serviceVersion: '0.2.0',
+      serviceVersion: '1.0.0',
     });
     this.piiProviderEngine = new PIIProviderEngine({
       piiConfig: config.pii,

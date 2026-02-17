@@ -1,14 +1,24 @@
 const fs = require('fs');
 const path = require('path');
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function appendFileAsync(filePath, content) {
+  return new Promise((resolve, reject) => {
+    fs.appendFile(filePath, content, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
 class AuditLogger {
   constructor(filePath) {
     this.filePath = filePath;
-    this.pendingWrites = new Set();
+    this.tail = Promise.resolve();
+    this.pendingCount = 0;
+    this.lastError = null;
     this.closed = false;
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
@@ -22,37 +32,38 @@ class AuditLogger {
     }
 
     const line = `${JSON.stringify(event)}\n`;
-    const pending = new Promise((resolve, reject) => {
-      fs.appendFile(this.filePath, line, (error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    });
+    this.pendingCount += 1;
 
-    this.pendingWrites.add(pending);
-    pending.finally(() => {
-      this.pendingWrites.delete(pending);
-    }).catch(() => {});
+    const pending = this.tail.then(() => appendFileAsync(this.filePath, line));
+    this.tail = pending
+      .catch((error) => {
+        this.lastError = error;
+      })
+      .finally(() => {
+        this.pendingCount = Math.max(0, this.pendingCount - 1);
+      });
+
     return pending;
   }
 
   async flush(options = {}) {
     const timeoutMs = Number(options.timeoutMs ?? 5000);
-    const startedAt = Date.now();
+    const timeout = new Promise((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Timed out waiting for ${this.pendingCount} pending audit writes`));
+      }, timeoutMs);
+      timer.unref?.();
+    });
 
-    while (this.pendingWrites.size > 0) {
-      const elapsed = Date.now() - startedAt;
-      if (elapsed >= timeoutMs) {
-        throw new Error(`Timed out waiting for ${this.pendingWrites.size} pending audit writes`);
-      }
+    await Promise.race([
+      this.tail,
+      timeout,
+    ]);
 
-      await Promise.race([
-        Promise.allSettled(Array.from(this.pendingWrites)),
-        sleep(25),
-      ]);
+    if (this.lastError) {
+      const error = this.lastError;
+      this.lastError = null;
+      throw error;
     }
   }
 

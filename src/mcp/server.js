@@ -239,7 +239,7 @@ class SentinelMCPServer {
           protocolVersion: '2025-01-01',
           serverInfo: {
             name: 'sentinel-protocol',
-            version: '0.2.0',
+            version: '1.0.0',
           },
           capabilities: {
             tools: {
