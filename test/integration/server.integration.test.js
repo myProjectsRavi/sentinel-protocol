@@ -10,8 +10,24 @@ const { SentinelServer } = require('../../src/server');
 const { RuntimeOverrideManager } = require('../../src/runtime/override');
 const { OVERRIDE_FILE_PATH } = require('../../src/utils/paths');
 
+function deepMerge(base, extra) {
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) {
+    return extra === undefined ? base : extra;
+  }
+
+  const out = { ...base };
+  for (const [key, value] of Object.entries(extra)) {
+    if (value && typeof value === 'object' && !Array.isArray(value) && base && typeof base[key] === 'object' && !Array.isArray(base[key])) {
+      out[key] = deepMerge(base[key], value);
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 function createBaseConfig(overrides = {}) {
-  return {
+  const base = {
     version: 1,
     mode: 'enforce',
     proxy: {
@@ -37,6 +53,11 @@ function createBaseConfig(overrides = {}) {
           open_seconds: 20,
           half_open_success_threshold: 3,
         },
+        custom_targets: {
+          enabled: true,
+          allowlist: ['127.0.0.1', 'localhost'],
+          block_private_networks: false,
+        },
       },
     },
     pii: {
@@ -52,8 +73,9 @@ function createBaseConfig(overrides = {}) {
     rules: [],
     whitelist: { domains: [] },
     logging: { level: 'info' },
-    ...overrides,
   };
+
+  return deepMerge(base, overrides);
 }
 
 async function startUpstream(handler) {
@@ -131,6 +153,122 @@ describe('sentinel integration', () => {
     expect(response.headers['x-sentinel-warning']).toBeDefined();
   });
 
+  test('rapidapi mode falls back to local scanner when key is missing', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'enforce',
+        pii: {
+          enabled: true,
+          provider_mode: 'rapidapi',
+          max_scan_bytes: 262144,
+          severity_actions: {
+            critical: 'block',
+            high: 'block',
+            medium: 'redact',
+            low: 'log',
+          },
+          rapidapi: {
+            endpoint: 'https://pii-firewall-edge.p.rapidapi.com/redact',
+            host: 'pii-firewall-edge.p.rapidapi.com',
+            timeout_ms: 2000,
+            request_body_field: 'text',
+            fallback_to_local: true,
+            allow_non_rapidapi_host: false,
+            api_key: '',
+            extra_body: {},
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'openai key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefgh' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('PII_DETECTED');
+    expect(response.headers['x-sentinel-pii-provider']).toBe('local');
+    expect(response.headers['x-sentinel-warning']).toContain('pii_provider_fallback_local');
+
+    const snapshot = sentinel.currentStatusPayload();
+    expect(snapshot.pii_provider_mode).toBe('rapidapi');
+    expect(snapshot.pii_provider_fallbacks).toBe(1);
+    expect(snapshot.rapidapi_error_count).toBe(1);
+  });
+
+  test('rapidapi mode returns provider error when fallback is disabled', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'enforce',
+        pii: {
+          enabled: true,
+          provider_mode: 'rapidapi',
+          max_scan_bytes: 262144,
+          severity_actions: {
+            critical: 'block',
+            high: 'block',
+            medium: 'redact',
+            low: 'log',
+          },
+          rapidapi: {
+            endpoint: 'https://pii-firewall-edge.p.rapidapi.com/redact',
+            host: 'pii-firewall-edge.p.rapidapi.com',
+            timeout_ms: 2000,
+            request_body_field: 'text',
+            fallback_to_local: false,
+            allow_non_rapidapi_host: false,
+            api_key: '',
+            extra_body: {},
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'openai key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefgh' });
+
+    expect(response.status).toBe(502);
+    expect(response.body.error).toBe('PII_PROVIDER_ERROR');
+    expect(response.headers['x-sentinel-error-source']).toBe('sentinel');
+
+    const snapshot = sentinel.currentStatusPayload();
+    expect(snapshot.rapidapi_error_count).toBe(1);
+  });
+
+  test('does not forward x-sentinel headers upstream', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.status(200).json({
+        leakedRapidApiKeyHeader: Boolean(req.headers['x-sentinel-rapidapi-key']),
+        leakedInternalRouteHeader: Boolean(req.headers['x-sentinel-target']),
+      });
+    });
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'monitor' }));
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .set('x-sentinel-rapidapi-key', 'secret-test-key')
+      .send({ text: 'hello world' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.leakedRapidApiKeyHeader).toBe(false);
+    expect(response.body.leakedInternalRouteHeader).toBe(false);
+  });
+
   test('returns timeout diagnostics when upstream hangs', async () => {
     upstream = await startUpstream((req, res) => {
       setTimeout(() => {
@@ -158,6 +296,86 @@ describe('sentinel integration', () => {
     expect(response.status).toBe(504);
     expect(response.headers['x-sentinel-error-source']).toBe('upstream');
     expect(response.headers['x-sentinel-upstream-error']).toBe('true');
+  });
+
+  test('rejects custom target when custom targets are disabled', async () => {
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        runtime: {
+          upstream: {
+            custom_targets: {
+              enabled: false,
+              allowlist: ['127.0.0.1'],
+              block_private_networks: false,
+            },
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .get('/v1/models')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', 'http://127.0.0.1:9999');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('INVALID_PROVIDER_TARGET');
+  });
+
+  test('rejects private-network custom target when blocking is enabled', async () => {
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        runtime: {
+          upstream: {
+            custom_targets: {
+              enabled: true,
+              allowlist: ['127.0.0.1'],
+              block_private_networks: true,
+            },
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .get('/v1/models')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', 'http://127.0.0.1:9999');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('INVALID_PROVIDER_TARGET');
+  });
+
+  test('passes through SSE streaming responses', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream');
+      res.setHeader('cache-control', 'no-cache');
+      res.write('data: first\\n\\n');
+      setTimeout(() => {
+        res.write('data: second\\n\\n');
+        res.end();
+      }, 20);
+    });
+
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'monitor' }));
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/stream')
+      .set('accept', 'text/event-stream')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ stream: true, messages: [{ role: 'user', content: 'stream me' }] });
+
+    const text = response.text;
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(text).toContain('data: first');
+    expect(text).toContain('data: second');
   });
 
   test('retries once on upstream 429 for idempotent method', async () => {

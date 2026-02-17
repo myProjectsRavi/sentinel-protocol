@@ -1,6 +1,7 @@
 const VALID_MODES = new Set(['monitor', 'warn', 'enforce']);
 const VALID_ACTIONS = new Set(['allow', 'block', 'warn']);
 const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
+const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
 
 class ConfigValidationError extends Error {
   constructor(message, details = []) {
@@ -52,6 +53,8 @@ function applyDefaults(config) {
   normalized.runtime = normalized.runtime || {};
   normalized.runtime.fail_open = Boolean(normalized.runtime.fail_open);
   normalized.runtime.scanner_error_action = normalized.runtime.scanner_error_action || 'allow';
+  normalized.runtime.telemetry = normalized.runtime.telemetry || {};
+  normalized.runtime.telemetry.enabled = normalized.runtime.telemetry.enabled !== false;
   normalized.runtime.upstream = normalized.runtime.upstream || {};
   normalized.runtime.upstream.retry = normalized.runtime.upstream.retry || {};
   normalized.runtime.upstream.retry.enabled = normalized.runtime.upstream.retry.enabled !== false;
@@ -70,14 +73,34 @@ function applyDefaults(config) {
   cb.open_seconds = Number(cb.open_seconds ?? 20);
   cb.half_open_success_threshold = Number(cb.half_open_success_threshold ?? 3);
 
+  normalized.runtime.upstream.custom_targets = normalized.runtime.upstream.custom_targets || {};
+  const customTargets = normalized.runtime.upstream.custom_targets;
+  customTargets.enabled = customTargets.enabled === true;
+  customTargets.allowlist = Array.isArray(customTargets.allowlist) ? customTargets.allowlist : [];
+  customTargets.block_private_networks = customTargets.block_private_networks !== false;
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
+  normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
   normalized.pii.max_scan_bytes = Number(normalized.pii.max_scan_bytes ?? 262144);
   normalized.pii.severity_actions = normalized.pii.severity_actions || {};
   normalized.pii.severity_actions.critical = normalized.pii.severity_actions.critical || 'block';
   normalized.pii.severity_actions.high = normalized.pii.severity_actions.high || 'block';
   normalized.pii.severity_actions.medium = normalized.pii.severity_actions.medium || 'redact';
   normalized.pii.severity_actions.low = normalized.pii.severity_actions.low || 'log';
+  normalized.pii.rapidapi = normalized.pii.rapidapi || {};
+  normalized.pii.rapidapi.endpoint =
+    normalized.pii.rapidapi.endpoint || process.env.SENTINEL_RAPIDAPI_ENDPOINT || 'https://pii-firewall-edge.p.rapidapi.com/redact';
+  normalized.pii.rapidapi.host = normalized.pii.rapidapi.host || process.env.SENTINEL_RAPIDAPI_HOST || '';
+  normalized.pii.rapidapi.timeout_ms = Number(normalized.pii.rapidapi.timeout_ms ?? 4000);
+  normalized.pii.rapidapi.request_body_field = normalized.pii.rapidapi.request_body_field || 'text';
+  normalized.pii.rapidapi.fallback_to_local = normalized.pii.rapidapi.fallback_to_local !== false;
+  normalized.pii.rapidapi.allow_non_rapidapi_host = normalized.pii.rapidapi.allow_non_rapidapi_host === true;
+  normalized.pii.rapidapi.api_key = normalized.pii.rapidapi.api_key || '';
+  normalized.pii.rapidapi.extra_body =
+    normalized.pii.rapidapi.extra_body && typeof normalized.pii.rapidapi.extra_body === 'object'
+      ? normalized.pii.rapidapi.extra_body
+      : {};
 
   normalized.whitelist = normalized.whitelist || {};
   normalized.whitelist.domains = Array.isArray(normalized.whitelist.domains) ? normalized.whitelist.domains : [];
@@ -103,6 +126,10 @@ function validateConfigShape(config) {
 
   const runtime = config.runtime || {};
   assertType(typeof runtime.fail_open === 'boolean', '`runtime.fail_open` must be boolean', details);
+  const telemetry = runtime.telemetry || {};
+  if (runtime.telemetry !== undefined) {
+    assertType(typeof telemetry.enabled === 'boolean', '`runtime.telemetry.enabled` must be boolean', details);
+  }
   assertType(
     VALID_SCANNER_ACTIONS.has(runtime.scanner_error_action),
     '`runtime.scanner_error_action` must be allow|block',
@@ -117,7 +144,68 @@ function validateConfigShape(config) {
   assertType(typeof cb.enabled === 'boolean', '`runtime.upstream.circuit_breaker.enabled` must be boolean', details);
   assertType(Number.isInteger(cb.open_seconds) && cb.open_seconds > 0, '`runtime.upstream.circuit_breaker.open_seconds` must be integer > 0', details);
 
+  const customTargets = runtime.upstream?.custom_targets;
+  if (customTargets !== undefined) {
+    assertType(typeof customTargets.enabled === 'boolean', '`runtime.upstream.custom_targets.enabled` must be boolean', details);
+    assertType(Array.isArray(customTargets.allowlist), '`runtime.upstream.custom_targets.allowlist` must be an array', details);
+    assertType(
+      typeof customTargets.block_private_networks === 'boolean',
+      '`runtime.upstream.custom_targets.block_private_networks` must be boolean',
+      details
+    );
+    if (customTargets.enabled && Array.isArray(customTargets.allowlist) && customTargets.allowlist.length === 0) {
+      details.push('`runtime.upstream.custom_targets.allowlist` must not be empty when custom targets are enabled');
+    }
+  }
+
   validateRules(config.rules, details);
+
+  const pii = config.pii || {};
+  if (pii !== undefined) {
+    assertType(typeof pii.enabled === 'boolean', '`pii.enabled` must be boolean', details);
+    assertType(typeof pii.provider_mode === 'string', '`pii.provider_mode` must be string', details);
+    if (typeof pii.provider_mode === 'string' && !VALID_PII_PROVIDER_MODES.has(String(pii.provider_mode).toLowerCase())) {
+      details.push('`pii.provider_mode` must be one of: local, rapidapi, hybrid');
+    }
+    assertType(
+      Number.isFinite(Number(pii.max_scan_bytes)) && Number(pii.max_scan_bytes) > 0,
+      '`pii.max_scan_bytes` must be > 0',
+      details
+    );
+
+    const rapidapi = pii.rapidapi || {};
+    if (pii.rapidapi !== undefined) {
+      assertType(rapidapi.endpoint === undefined || typeof rapidapi.endpoint === 'string', '`pii.rapidapi.endpoint` must be string', details);
+      assertType(rapidapi.host === undefined || typeof rapidapi.host === 'string', '`pii.rapidapi.host` must be string', details);
+      assertType(
+        rapidapi.timeout_ms === undefined || (Number.isInteger(rapidapi.timeout_ms) && rapidapi.timeout_ms > 0),
+        '`pii.rapidapi.timeout_ms` must be integer > 0',
+        details
+      );
+      assertType(
+        rapidapi.request_body_field === undefined || typeof rapidapi.request_body_field === 'string',
+        '`pii.rapidapi.request_body_field` must be string',
+        details
+      );
+      assertType(
+        rapidapi.fallback_to_local === undefined || typeof rapidapi.fallback_to_local === 'boolean',
+        '`pii.rapidapi.fallback_to_local` must be boolean',
+        details
+      );
+      assertType(
+        rapidapi.allow_non_rapidapi_host === undefined || typeof rapidapi.allow_non_rapidapi_host === 'boolean',
+        '`pii.rapidapi.allow_non_rapidapi_host` must be boolean',
+        details
+      );
+      assertType(rapidapi.api_key === undefined || typeof rapidapi.api_key === 'string', '`pii.rapidapi.api_key` must be string', details);
+      assertType(
+        rapidapi.extra_body === undefined ||
+          (rapidapi.extra_body && typeof rapidapi.extra_body === 'object' && !Array.isArray(rapidapi.extra_body)),
+        '`pii.rapidapi.extra_body` must be object',
+        details
+      );
+    }
+  }
 
   assertType(Array.isArray(config.whitelist?.domains), '`whitelist.domains` must be an array', details);
 

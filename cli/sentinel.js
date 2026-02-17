@@ -12,12 +12,13 @@ const {
   stopServer,
   statusServer,
   setEmergencyOpen,
+  doctorServer,
 } = require('../src');
 const { DEFAULT_CONFIG_PATH } = require('../src/utils/paths');
 
 const program = new Command();
 
-program.name('sentinel').description('Sentinel Protocol CLI').version('0.1.0');
+program.name('sentinel').description('Sentinel Protocol CLI').version('0.2.0');
 
 program
   .command('init')
@@ -40,20 +41,37 @@ program
   .option('--mode <mode>', 'Mode override (monitor|warn|enforce)')
   .option('--dry-run', 'Force monitor behavior')
   .option('--fail-open', 'Degrade blocking decisions to pass-through monitor mode')
+  .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
   .action((options) => {
-    const result = startServer({
-      configPath: options.config,
-      port: options.port,
-      modeOverride: options.mode,
-      dryRun: options.dryRun,
-      failOpen: options.failOpen,
-    });
+    try {
+      const result = startServer({
+        configPath: options.config,
+        port: options.port,
+        modeOverride: options.mode,
+        dryRun: options.dryRun,
+        failOpen: options.failOpen,
+        runDoctor: !options.skipDoctor,
+      });
 
-    if (result.loaded.migration.migrated) {
-      console.log(`Config migrated from v${result.loaded.migration.fromVersion} to v${result.loaded.migration.toVersion}`);
-      if (result.loaded.backupPath) {
-        console.log(`Backup written to: ${result.loaded.backupPath}`);
+      if (result.loaded.migration.migrated) {
+        console.log(`Config migrated from v${result.loaded.migration.fromVersion} to v${result.loaded.migration.toVersion}`);
+        if (result.loaded.backupPath) {
+          console.log(`Backup written to: ${result.loaded.backupPath}`);
+        }
       }
+
+      if (result.doctor) {
+        const summary = result.doctor.summary;
+        console.log(`Doctor summary: pass=${summary.pass} warn=${summary.warn} fail=${summary.fail}`);
+        for (const check of result.doctor.checks) {
+          if (check.status === 'warn') {
+            console.log(`[WARN] ${check.id}: ${check.message}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
     }
   });
 
@@ -81,6 +99,28 @@ program
       return;
     }
     console.log(output);
+  });
+
+program
+  .command('doctor')
+  .description('Run startup readiness checks (RapidAPI key/config/fallback)')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--json', 'Output JSON')
+  .action((options) => {
+    try {
+      const result = doctorServer({ configPath: options.config });
+      if (options.json) {
+        console.log(JSON.stringify(result.report, null, 2));
+      } else {
+        console.log(result.formatted);
+      }
+      if (!result.report.ok) {
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
   });
 
 program

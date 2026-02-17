@@ -47,4 +47,18 @@ describe('config loader and migration', () => {
       loadAndValidateConfig({ configPath });
     }).toThrow(/Unsupported config version/);
   });
+
+  test('fails validation when custom targets enabled without allowlist', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.upstream.custom_targets.enabled = true;
+    base.runtime.upstream.custom_targets.allowlist = [];
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/allowlist/);
+  });
 });

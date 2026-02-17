@@ -13,6 +13,8 @@ const { CircuitBreakerManager } = require('./resilience/circuit-breaker');
 const { AuditLogger } = require('./logging/audit-logger');
 const { StatusStore } = require('./status/store');
 const { loadOptimizerPlugin } = require('./optimizer/loader');
+const { createTelemetry } = require('./telemetry');
+const { PIIProviderEngine } = require('./pii/provider-engine');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -66,6 +68,8 @@ class SentinelServer {
       blocked_total: 0,
       policy_blocked: 0,
       pii_blocked: 0,
+      pii_provider_fallbacks: 0,
+      rapidapi_error_count: 0,
       upstream_errors: 0,
       warnings_total: 0,
     };
@@ -73,11 +77,21 @@ class SentinelServer {
     this.rateLimiter = new InMemoryRateLimiter();
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
     this.piiScanner = new PIIScanner({ maxScanBytes: config.pii.max_scan_bytes });
+    this.telemetry = createTelemetry({
+      enabled: config.runtime?.telemetry?.enabled !== false,
+      serviceVersion: '0.2.0',
+    });
+    this.piiProviderEngine = new PIIProviderEngine({
+      piiConfig: config.pii,
+      localScanner: this.piiScanner,
+      telemetry: this.telemetry,
+    });
     this.circuitBreakers = new CircuitBreakerManager(config.runtime.upstream.circuit_breaker);
     this.upstreamClient = new UpstreamClient({
       timeoutMs: config.proxy.timeout_ms,
       retryConfig: config.runtime.upstream.retry,
       circuitBreakers: this.circuitBreakers,
+      telemetry: this.telemetry,
     });
 
     this.overrideManager = new RuntimeOverrideManager(OVERRIDE_FILE_PATH);
@@ -107,6 +121,9 @@ class SentinelServer {
       effective_mode: this.computeEffectiveMode(),
       emergency_open: this.overrideManager.getOverride().emergency_open,
       providers: this.circuitBreakers.snapshot(),
+      pii_provider_mode: this.config.pii.provider_mode,
+      pii_provider_fallbacks: this.stats.pii_provider_fallbacks,
+      rapidapi_error_count: this.stats.rapidapi_error_count,
       uptime_seconds: Math.floor((Date.now() - this.startedAt) / 1000),
       version: this.config.version,
       counters: this.stats,
@@ -135,13 +152,47 @@ class SentinelServer {
       const method = req.method.toUpperCase();
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       let bodyText = rawBody.toString('utf8');
+      const parsedPath = new URL(req.originalUrl, 'http://localhost');
+      const requestStart = Date.now();
+      const requestSpan = this.telemetry.startSpan('sentinel.request', {
+        method,
+        route: parsedPath.pathname,
+        correlation_id: correlationId,
+      });
+      let requestFinalized = false;
+
+      const finalizeRequestTelemetry = ({ decision, status, providerName, error }) => {
+        if (requestFinalized) {
+          return;
+        }
+        requestFinalized = true;
+        const latencyMs = Date.now() - requestStart;
+        const attrs = {
+          decision,
+          status_code: Number(status || 0),
+          provider: providerName || 'unknown',
+          effective_mode: this.computeEffectiveMode(),
+        };
+        this.telemetry.recordLatencyMs(latencyMs, attrs);
+        if (decision === 'blocked_policy' || decision === 'blocked_pii') {
+          this.telemetry.addBlocked(attrs);
+        }
+        if (decision === 'upstream_error' || decision === 'stream_error') {
+          this.telemetry.addUpstreamError(attrs);
+        }
+        this.telemetry.endSpan(requestSpan, attrs, error);
+      };
 
       this.stats.requests_total += 1;
+      this.telemetry.addRequest({
+        method,
+        route: parsedPath.pathname,
+      });
 
       let provider;
       let baseUrl;
       try {
-        const resolved = resolveProvider(req);
+        const resolved = await resolveProvider(req, this.config);
         provider = resolved.provider;
         baseUrl = resolved.baseUrl;
       } catch (error) {
@@ -154,10 +205,14 @@ class SentinelServer {
           correlationId,
         };
         responseHeaderDiagnostics(res, diagnostics);
+        finalizeRequestTelemetry({
+          decision: 'invalid_provider_target',
+          status: 400,
+          providerName: 'unknown',
+        });
         return res.status(400).json({ error: 'INVALID_PROVIDER_TARGET', message: error.message });
       }
 
-      const parsedPath = new URL(req.originalUrl, 'http://localhost');
       const contentType = String(req.headers['content-type'] || '').toLowerCase();
       let bodyJson = contentType.includes('application/json') && bodyText.length > 0 ? safeJsonParse(bodyText) : null;
       const warnings = [];
@@ -176,6 +231,11 @@ class SentinelServer {
           correlationId,
         };
         responseHeaderDiagnostics(res, diagnostics);
+        finalizeRequestTelemetry({
+          decision: 'invalid_provider_url',
+          status: 400,
+          providerName: provider,
+        });
         return res.status(400).json({ error: 'INVALID_PROVIDER_URL', message: `Invalid provider URL: ${baseUrl}` });
       }
 
@@ -222,6 +282,11 @@ class SentinelServer {
             provider,
           });
           this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_policy',
+            status: 403,
+            providerName: provider,
+          });
           return res.status(403).json({
             error: 'POLICY_VIOLATION',
             reason: policyDecision.reason,
@@ -234,34 +299,80 @@ class SentinelServer {
         this.stats.warnings_total += 1;
       }
 
-      const piiResult = this.config.pii.enabled ? this.piiScanner.scan(bodyText, { maxScanBytes: this.config.pii.max_scan_bytes }) : null;
       let piiBlocked = false;
       let redactedCount = 0;
       let piiTypes = [];
+      let piiProviderUsed = 'local';
 
-      if (piiResult && piiResult.findings.length > 0) {
-        piiTypes = flattenFindings(piiResult.findings);
-        const topSeverity = highestSeverity(piiResult.findings);
-        const severityAction = this.config.pii.severity_actions[topSeverity] || 'log';
-
-        if (severityAction === 'block' && effectiveMode === 'enforce') {
-          piiBlocked = true;
+      if (this.config.pii.enabled) {
+        let piiEvaluation;
+        try {
+          piiEvaluation = await this.piiProviderEngine.scan(bodyText, req.headers);
+        } catch (error) {
+          if (String(error.kind || '').startsWith('rapidapi_')) {
+            this.stats.rapidapi_error_count += 1;
+          }
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          finalizeRequestTelemetry({
+            decision: 'pii_provider_error',
+            status: 502,
+            providerName: provider,
+            error,
+          });
+          return res.status(502).json({
+            error: 'PII_PROVIDER_ERROR',
+            message: 'PII provider failed and fallback is disabled',
+            correlation_id: correlationId,
+          });
         }
 
-        if (severityAction === 'redact') {
-          bodyText = piiResult.redactedText;
-          redactedCount = piiResult.findings.length;
-          if (bodyJson) {
-            const reparsed = safeJsonParse(bodyText);
-            if (reparsed) {
-              bodyJson = reparsed;
-            }
+        const piiResult = piiEvaluation.result;
+        const piiMeta = piiEvaluation.meta;
+        piiProviderUsed = piiMeta.providerUsed;
+        res.setHeader('x-sentinel-pii-provider', piiProviderUsed);
+        if (piiMeta.fallbackUsed) {
+          this.stats.pii_provider_fallbacks += 1;
+          if (String(piiMeta.fallbackReason || '').startsWith('rapidapi_')) {
+            this.stats.rapidapi_error_count += 1;
+          }
+          warnings.push('pii_provider_fallback_local');
+          if (piiMeta.fallbackReason === 'rapidapi_quota') {
+            warnings.push('pii_provider_quota_exceeded');
           }
         }
 
-        if (!piiBlocked) {
-          warnings.push(`pii:${topSeverity}`);
-          this.stats.warnings_total += 1;
+        if (piiResult && piiResult.findings.length > 0) {
+          piiTypes = flattenFindings(piiResult.findings);
+          const topSeverity = highestSeverity(piiResult.findings);
+          const severityAction = this.config.pii.severity_actions[topSeverity] || 'log';
+
+          if (severityAction === 'block' && effectiveMode === 'enforce') {
+            piiBlocked = true;
+          }
+
+          if (severityAction === 'redact') {
+            bodyText = piiResult.redactedText;
+            redactedCount = piiResult.findings.length;
+            if (bodyJson) {
+              const reparsed = safeJsonParse(bodyText);
+              if (reparsed) {
+                bodyJson = reparsed;
+              }
+            }
+          }
+
+          if (!piiBlocked) {
+            warnings.push(`pii:${topSeverity}`);
+            this.stats.warnings_total += 1;
+          }
         }
       }
 
@@ -278,6 +389,10 @@ class SentinelServer {
           correlationId,
         };
         responseHeaderDiagnostics(res, diagnostics);
+        if (warnings.length > 0) {
+          res.setHeader('x-sentinel-warning', warnings.join(','));
+        }
+        res.setHeader('x-sentinel-pii-provider', piiProviderUsed);
 
         this.auditLogger.write({
           timestamp: new Date().toISOString(),
@@ -295,6 +410,11 @@ class SentinelServer {
           provider,
         });
         this.writeStatus();
+        finalizeRequestTelemetry({
+          decision: 'blocked_pii',
+          status: 403,
+          providerName: provider,
+        });
 
         return res.status(403).json({
           error: 'PII_DETECTED',
@@ -321,6 +441,9 @@ class SentinelServer {
       }
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
+      const wantsStream =
+        String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
+        (bodyJson && bodyJson.stream === true);
       const start = Date.now();
 
       const upstream = await this.upstreamClient.forwardRequest({
@@ -331,6 +454,7 @@ class SentinelServer {
         method,
         bodyBuffer,
         correlationId,
+        wantsStream,
       });
 
       const durationMs = Date.now() - start;
@@ -339,6 +463,7 @@ class SentinelServer {
       if (warnings.length > 0) {
         res.setHeader('x-sentinel-warning', warnings.join(','));
       }
+      res.setHeader('x-sentinel-pii-provider', piiProviderUsed);
 
       if (!upstream.ok) {
         this.stats.upstream_errors += 1;
@@ -364,6 +489,11 @@ class SentinelServer {
         });
 
         this.writeStatus();
+        finalizeRequestTelemetry({
+          decision: 'upstream_error',
+          status: upstream.status,
+          providerName: provider,
+        });
         return res.status(upstream.status).json(upstream.body);
       }
 
@@ -376,6 +506,69 @@ class SentinelServer {
           continue;
         }
         res.setHeader(key, value);
+      }
+
+      if (upstream.isStream) {
+        res.status(upstream.status);
+        let streamedBytes = 0;
+
+        upstream.bodyStream.on('data', (chunk) => {
+          streamedBytes += chunk.length;
+        });
+
+        upstream.bodyStream.on('end', () => {
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'forwarded_stream',
+            reasons: warnings,
+            pii_types: piiTypes,
+            redactions: redactedCount,
+            duration_ms: Date.now() - start,
+            request_bytes: bodyBuffer.length,
+            response_status: upstream.status,
+            response_bytes: streamedBytes,
+            provider,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'forwarded_stream',
+            status: upstream.status,
+            providerName: provider,
+          });
+        });
+
+        upstream.bodyStream.on('error', (error) => {
+          this.stats.upstream_errors += 1;
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'stream_error',
+            reasons: [error.message || 'stream_error'],
+            pii_types: piiTypes,
+            redactions: redactedCount,
+            duration_ms: Date.now() - start,
+            request_bytes: bodyBuffer.length,
+            response_status: upstream.status,
+            response_bytes: streamedBytes,
+            provider,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'stream_error',
+            status: upstream.status,
+            providerName: provider,
+            error,
+          });
+          res.destroy(error);
+        });
+
+        upstream.bodyStream.pipe(res);
+        return;
       }
 
       this.auditLogger.write({
@@ -395,6 +588,11 @@ class SentinelServer {
       });
 
       this.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'forwarded',
+        status: upstream.status,
+        providerName: provider,
+      });
       res.status(upstream.status).send(upstream.body);
     });
   }

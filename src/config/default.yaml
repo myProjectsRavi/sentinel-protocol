@@ -9,6 +9,8 @@ proxy:
 runtime:
   fail_open: false
   scanner_error_action: allow
+  telemetry:
+    enabled: true
   upstream:
     retry:
       enabled: true
@@ -22,15 +24,30 @@ runtime:
       consecutive_timeout_threshold: 5
       open_seconds: 20
       half_open_success_threshold: 3
+    custom_targets:
+      enabled: false
+      allowlist: []
+      block_private_networks: true
 
 pii:
   enabled: true
+  provider_mode: local
   max_scan_bytes: 262144
   severity_actions:
     critical: block
     high: block
     medium: redact
     low: log
+  rapidapi:
+    endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
+    host: "pii-firewall-edge.p.rapidapi.com"
+    timeout_ms: 4000
+    request_body_field: text
+    fallback_to_local: true
+    allow_non_rapidapi_host: false
+    # BYOK only. Keep empty and inject via SENTINEL_RAPIDAPI_KEY in production.
+    api_key: ""
+    extra_body: {}
 
 rules:
   - name: block-destructive-delete

@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: sentinel-protocol
+authors:
+  - family-names: Nekkalapu
+    given-names: Raviteja
+    alias: myProjectsRavi
+repository-code: https://github.com/myProjectsRavi/sentinel-protocol
+date-released: 2026-02-16
+license: MIT
+url: https://github.com/myProjectsRavi/sentinel-protocol

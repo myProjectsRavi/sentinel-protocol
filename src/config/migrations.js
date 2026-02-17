@@ -17,6 +17,9 @@ function migrateFromZero(config) {
     next.runtime = {
       fail_open: false,
       scanner_error_action: 'allow',
+      telemetry: {
+        enabled: true,
+      },
       upstream: {
         retry: {
           enabled: true,
@@ -31,6 +34,11 @@ function migrateFromZero(config) {
           consecutive_timeout_threshold: 5,
           open_seconds: 20,
           half_open_success_threshold: 3,
+        },
+        custom_targets: {
+          enabled: false,
+          allowlist: [],
+          block_private_networks: true,
         },
       },
     };

@@ -3,6 +3,7 @@ const fs = require('fs');
 const { loadAndValidateConfig } = require('./config/loader');
 const { SentinelServer } = require('./server');
 const { RuntimeOverrideManager } = require('./runtime/override');
+const { runDoctorChecks, formatDoctorReport } = require('./runtime/doctor');
 const {
   DEFAULT_CONFIG_PATH,
   STATUS_FILE_PATH,
@@ -29,6 +30,18 @@ function loadConfigForStart(options = {}) {
 function startServer(options = {}) {
   ensureSentinelHome();
   const loaded = loadConfigForStart(options);
+  let doctorReport = null;
+  if (options.runDoctor !== false) {
+    doctorReport = runDoctorChecks(loaded.config);
+    if (!doctorReport.ok) {
+      const details = formatDoctorReport(doctorReport, {
+        includeSummary: true,
+        includeWarnings: true,
+        includePasses: false,
+      });
+      throw new Error(`Doctor checks failed.\n${details}`);
+    }
+  }
   const server = new SentinelServer(loaded.config, {
     dryRun: Boolean(options.dryRun),
     failOpen: Boolean(options.failOpen || process.env.SENTINEL_FAIL_OPEN === 'true'),
@@ -45,7 +58,7 @@ function startServer(options = {}) {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  return { server, loaded };
+  return { server, loaded, doctor: doctorReport };
 }
 
 function stopServer() {
@@ -71,8 +84,16 @@ function statusServer(asJson = false) {
   const status = store.read();
   if (!status) {
     return asJson
-      ? { service_status: 'stopped' }
-      : 'Service status: stopped\nConfigured mode: unknown\nEffective mode: unknown\nEmergency override: false';
+      ? { service_status: 'stopped', pii_provider_mode: 'unknown', pii_provider_fallbacks: 0, rapidapi_error_count: 0 }
+      : [
+          'Service status: stopped',
+          'Configured mode: unknown',
+          'Effective mode: unknown',
+          'Emergency override: false',
+          'PII provider mode: unknown',
+          'PII provider fallbacks: 0',
+          'RapidAPI errors: 0',
+        ].join('\n');
   }
 
   if (asJson) {
@@ -90,6 +111,9 @@ function statusServer(asJson = false) {
     `Configured mode: ${status.configured_mode}`,
     `Effective mode: ${status.effective_mode}`,
     `Emergency override: ${status.emergency_open}`,
+    `PII provider mode: ${status.pii_provider_mode || 'unknown'}`,
+    `PII provider fallbacks: ${status.pii_provider_fallbacks ?? status.counters?.pii_provider_fallbacks ?? 0}`,
+    `RapidAPI errors: ${status.rapidapi_error_count ?? status.counters?.rapidapi_error_count ?? 0}`,
     `Uptime (s): ${status.uptime_seconds}`,
     `Version: ${status.version}`,
     'Providers:',
@@ -104,10 +128,24 @@ function setEmergencyOpen(enabled) {
   return payload;
 }
 
+function doctorServer(options = {}) {
+  const loaded = loadConfigForStart({
+    configPath: options.configPath || DEFAULT_CONFIG_PATH,
+    modeOverride: options.modeOverride,
+  });
+  const report = runDoctorChecks(loaded.config);
+  return {
+    loaded,
+    report,
+    formatted: formatDoctorReport(report),
+  };
+}
+
 module.exports = {
   startServer,
   stopServer,
   statusServer,
   setEmergencyOpen,
+  doctorServer,
   loadConfigForStart,
 };
