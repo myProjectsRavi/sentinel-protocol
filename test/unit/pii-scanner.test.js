@@ -32,4 +32,18 @@ describe('PII scanner', () => {
     const result = scanner.scan(oversized);
     expect(result.scanTruncated).toBe(true);
   });
+
+  test('supports format-preserving redaction mode', () => {
+    const scanner = new PIIScanner({
+      redactionMode: 'format_preserving',
+      redactionSalt: 'unit-test-salt',
+    });
+    const input = 'Contact me at ravi@gmail.com or +1 (555) 123-9876';
+    const result = scanner.scan(input);
+
+    expect(result.findings.some((f) => f.id === 'email_address')).toBe(true);
+    expect(result.redactedText).not.toContain('ravi@gmail.com');
+    expect(result.redactedText).toMatch(/user_[a-z]{8}@example\.com/);
+    expect(result.redactedText).toMatch(/\+1 \(\d{3}\) \d{3}-\d{4}/);
+  });
 });

@@ -10,6 +10,26 @@ proxy:
 runtime:
   fail_open: false
   scanner_error_action: allow
+  vcr:
+    enabled: false
+    mode: off
+    tape_file: "~/.sentinel/vcr-tape.jsonl"
+    max_entries: 2000
+    strict_replay: false
+  semantic_cache:
+    enabled: false
+    model_id: Xenova/all-MiniLM-L6-v2
+    cache_dir: "~/.sentinel/models"
+    similarity_threshold: 0.95
+    max_entries: 2000
+    ttl_ms: 3600000
+    max_prompt_chars: 2000
+  dashboard:
+    enabled: false
+    host: 127.0.0.1
+    port: 8788
+    auth_token: ""
+    allow_remote: false
   telemetry:
     enabled: true
   upstream:
@@ -35,6 +55,9 @@ pii:
   provider_mode: local
   max_scan_bytes: 262144
   regex_safety_cap_bytes: 51200
+  redaction:
+    mode: placeholder # placeholder | format_preserving
+    salt: "sentinel-mask-salt"
   severity_actions:
     critical: block
     high: block
@@ -99,3 +122,4 @@ whitelist:
 logging:
   level: info
   audit_file: ~/.sentinel/audit.jsonl
+  audit_stdout: false

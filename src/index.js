@@ -78,6 +78,17 @@ function loadConfigForStart(options = {}) {
   if (options.modeOverride) {
     loaded.config.mode = options.modeOverride;
   }
+  if (options.vcrMode) {
+    loaded.config.runtime = loaded.config.runtime || {};
+    loaded.config.runtime.vcr = loaded.config.runtime.vcr || {};
+    loaded.config.runtime.vcr.enabled = true;
+    loaded.config.runtime.vcr.mode = options.vcrMode;
+  }
+  if (options.dashboardEnabled !== undefined) {
+    loaded.config.runtime = loaded.config.runtime || {};
+    loaded.config.runtime.dashboard = loaded.config.runtime.dashboard || {};
+    loaded.config.runtime.dashboard.enabled = Boolean(options.dashboardEnabled);
+  }
 
   return loaded;
 }
@@ -150,6 +161,9 @@ function statusServer(asJson = false) {
           'Configured mode: unknown',
           'Effective mode: unknown',
           'Emergency override: false',
+          'VCR mode: off',
+          'Semantic cache: disabled',
+          'Dashboard: disabled',
           'PII provider mode: unknown',
           'PII provider fallbacks: 0',
           'RapidAPI errors: 0',
@@ -171,6 +185,9 @@ function statusServer(asJson = false) {
     `Configured mode: ${status.configured_mode}`,
     `Effective mode: ${status.effective_mode}`,
     `Emergency override: ${status.emergency_open}`,
+    `VCR mode: ${status.vcr_mode || 'off'}`,
+    `Semantic cache: ${status.semantic_cache_enabled ? 'enabled' : 'disabled'}`,
+    `Dashboard: ${status.dashboard_enabled ? `enabled (http://${status.dashboard_host}:${status.dashboard_port})` : 'disabled'}`,
     `PII provider mode: ${status.pii_provider_mode || 'unknown'}`,
     `PII provider fallbacks: ${status.pii_provider_fallbacks ?? status.counters?.pii_provider_fallbacks ?? 0}`,
     `RapidAPI errors: ${status.rapidapi_error_count ?? status.counters?.rapidapi_error_count ?? 0}`,

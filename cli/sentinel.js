@@ -44,15 +44,24 @@ program
   .option('--mode <mode>', 'Mode override (monitor|warn|enforce)')
   .option('--dry-run', 'Force monitor behavior')
   .option('--fail-open', 'Degrade blocking decisions to pass-through monitor mode')
+  .option('--record', 'Enable VCR record mode (writes deterministic tape)')
+  .option('--replay', 'Enable VCR replay mode (reads deterministic tape)')
+  .option('--dashboard', 'Enable local dashboard server for this run')
   .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
   .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
   .action((options) => {
     try {
+      if (options.record && options.replay) {
+        throw new Error('Choose either --record or --replay, not both.');
+      }
+      const vcrMode = options.record ? 'record' : options.replay ? 'replay' : undefined;
       const shutdownTimeoutMs = Number(options.shutdownTimeoutMs);
       const result = startServer({
         configPath: options.config,
         port: options.port,
         modeOverride: options.mode,
+        vcrMode,
+        dashboardEnabled: options.dashboard === true ? true : undefined,
         dryRun: options.dryRun,
         failOpen: options.failOpen,
         shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,

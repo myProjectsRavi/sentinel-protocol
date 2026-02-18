@@ -23,10 +23,13 @@ This document maps Sentinel v1 hardenings to 20 common OWASP-style risk classes 
 17. Cascading provider failure: per-provider circuit breaker with half-open probes.
 18. Unsafe emergency recovery: `--dry-run`, `--fail-open`, `emergency-open` with logging.
 19. Method abuse: TRACE/CONNECT denied with explicit 405.
-20. Runtime observability gaps: audit logs, status endpoint, TUI monitor, telemetry hooks.
+20. Runtime observability gaps: audit logs, status endpoint, TUI monitor, local-only dashboard, telemetry hooks.
+21. Test determinism / replay safety: VCR `record|replay` mode with strict replay fail-closed option.
+22. Data minimization during masking: deterministic format-preserving pseudonymization mode.
+23. Cost-abuse reduction: experimental semantic cache with strict opt-in defaults.
 
 ## Current Gaps (Planned)
 
-1. Streaming egress block mode: current SSE mode redacts but does not mid-stream hard-block.
-2. Neural injection classifier: heuristics are implemented; model-assisted detection is optional roadmap.
-3. Integration tests in restricted sandboxes: network-binding constraints can block integration runs.
+1. Semantic cache poisoning defenses can be tightened further with signed cache metadata and optional disk encryption.
+2. VCR tape artifact signing/encryption for shared CI environments.
+3. Integration tests in restricted sandboxes: network-binding constraints can block full end-to-end runs.

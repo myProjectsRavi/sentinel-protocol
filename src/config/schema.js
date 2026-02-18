@@ -6,10 +6,22 @@ const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
 const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
 const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'injection', 'rules', 'whitelist', 'logging']);
 const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
-const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream', 'worker_pool']);
+const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream', 'worker_pool', 'vcr', 'semantic_cache', 'dashboard']);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets']);
 const WORKER_POOL_KEYS = new Set(['enabled', 'size', 'queue_limit', 'task_timeout_ms']);
+const VCR_KEYS = new Set(['enabled', 'mode', 'tape_file', 'max_entries', 'strict_replay']);
+const VCR_MODES = new Set(['off', 'record', 'replay']);
+const SEMANTIC_CACHE_KEYS = new Set([
+  'enabled',
+  'model_id',
+  'cache_dir',
+  'similarity_threshold',
+  'max_entries',
+  'ttl_ms',
+  'max_prompt_chars',
+]);
+const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
 const CIRCUIT_BREAKER_KEYS = new Set([
   'enabled',
@@ -26,11 +38,14 @@ const PII_KEYS = new Set([
   'provider_mode',
   'max_scan_bytes',
   'regex_safety_cap_bytes',
+  'redaction',
   'severity_actions',
   'rapidapi',
   'semantic',
   'egress',
 ]);
+const PII_REDACTION_KEYS = new Set(['mode', 'salt']);
+const PII_REDACTION_MODES = new Set(['placeholder', 'format_preserving']);
 const PII_SEVERITY_KEYS = new Set(['critical', 'high', 'medium', 'low']);
 const PII_SEMANTIC_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'score_threshold', 'max_scan_bytes']);
 const PII_EGRESS_KEYS = new Set(['enabled', 'max_scan_bytes', 'stream_enabled', 'sse_line_max_bytes', 'stream_block_mode']);
@@ -172,11 +187,44 @@ function applyDefaults(config) {
   workerPool.queue_limit = Number(workerPool.queue_limit ?? 1024);
   workerPool.task_timeout_ms = Number(workerPool.task_timeout_ms ?? 2000);
 
+  normalized.runtime.vcr = normalized.runtime.vcr || {};
+  const vcr = normalized.runtime.vcr;
+  vcr.enabled = vcr.enabled === true;
+  vcr.mode = VCR_MODES.has(String(vcr.mode || '').toLowerCase()) ? String(vcr.mode).toLowerCase() : 'off';
+  vcr.tape_file = vcr.tape_file || '~/.sentinel/vcr-tape.jsonl';
+  vcr.max_entries = Number(vcr.max_entries ?? 2000);
+  vcr.strict_replay = vcr.strict_replay === true;
+
+  normalized.runtime.semantic_cache = normalized.runtime.semantic_cache || {};
+  const semanticCache = normalized.runtime.semantic_cache;
+  semanticCache.enabled = semanticCache.enabled === true;
+  semanticCache.model_id = semanticCache.model_id || 'Xenova/all-MiniLM-L6-v2';
+  semanticCache.cache_dir = semanticCache.cache_dir || '~/.sentinel/models';
+  semanticCache.similarity_threshold = Number(semanticCache.similarity_threshold ?? 0.95);
+  semanticCache.max_entries = Number(semanticCache.max_entries ?? 2000);
+  semanticCache.ttl_ms = Number(semanticCache.ttl_ms ?? 3600000);
+  semanticCache.max_prompt_chars = Number(semanticCache.max_prompt_chars ?? 2000);
+
+  normalized.runtime.dashboard = normalized.runtime.dashboard || {};
+  const dashboard = normalized.runtime.dashboard;
+  dashboard.enabled = dashboard.enabled === true;
+  dashboard.host = dashboard.host || '127.0.0.1';
+  dashboard.port = Number(dashboard.port ?? 8788);
+  dashboard.auth_token = String(dashboard.auth_token || process.env.SENTINEL_DASHBOARD_TOKEN || '');
+  dashboard.allow_remote = dashboard.allow_remote === true;
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
   normalized.pii.max_scan_bytes = Number(normalized.pii.max_scan_bytes ?? 262144);
   normalized.pii.regex_safety_cap_bytes = Number(normalized.pii.regex_safety_cap_bytes ?? 51200);
+  normalized.pii.redaction = normalized.pii.redaction || {};
+  normalized.pii.redaction.mode = PII_REDACTION_MODES.has(String(normalized.pii.redaction.mode || '').toLowerCase())
+    ? String(normalized.pii.redaction.mode).toLowerCase()
+    : 'placeholder';
+  normalized.pii.redaction.salt = String(
+    normalized.pii.redaction.salt || process.env.SENTINEL_MASKING_SALT || 'sentinel-mask-salt'
+  );
   normalized.pii.severity_actions = normalized.pii.severity_actions || {};
   normalized.pii.severity_actions.critical = normalized.pii.severity_actions.critical || 'block';
   normalized.pii.severity_actions.high = normalized.pii.severity_actions.high || 'block';
@@ -298,6 +346,61 @@ function validateConfigShape(config) {
       details
     );
   }
+  const vcr = runtime.vcr || {};
+  if (runtime.vcr !== undefined) {
+    assertNoUnknownKeys(vcr, VCR_KEYS, 'runtime.vcr', details);
+    assertType(typeof vcr.enabled === 'boolean', '`runtime.vcr.enabled` must be boolean', details);
+    assertType(VCR_MODES.has(String(vcr.mode)), '`runtime.vcr.mode` must be one of: off, record, replay', details);
+    assertType(typeof vcr.tape_file === 'string' && vcr.tape_file.length > 0, '`runtime.vcr.tape_file` must be string', details);
+    assertType(
+      Number.isInteger(vcr.max_entries) && vcr.max_entries > 0,
+      '`runtime.vcr.max_entries` must be integer > 0',
+      details
+    );
+    assertType(typeof vcr.strict_replay === 'boolean', '`runtime.vcr.strict_replay` must be boolean', details);
+  }
+  const semanticCache = runtime.semantic_cache || {};
+  if (runtime.semantic_cache !== undefined) {
+    assertNoUnknownKeys(semanticCache, SEMANTIC_CACHE_KEYS, 'runtime.semantic_cache', details);
+    assertType(typeof semanticCache.enabled === 'boolean', '`runtime.semantic_cache.enabled` must be boolean', details);
+    assertType(typeof semanticCache.model_id === 'string', '`runtime.semantic_cache.model_id` must be string', details);
+    assertType(typeof semanticCache.cache_dir === 'string', '`runtime.semantic_cache.cache_dir` must be string', details);
+    assertType(
+      Number.isFinite(Number(semanticCache.similarity_threshold)) &&
+        Number(semanticCache.similarity_threshold) >= 0 &&
+        Number(semanticCache.similarity_threshold) <= 1,
+      '`runtime.semantic_cache.similarity_threshold` must be between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticCache.max_entries) && semanticCache.max_entries > 0,
+      '`runtime.semantic_cache.max_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticCache.ttl_ms) && semanticCache.ttl_ms >= 0,
+      '`runtime.semantic_cache.ttl_ms` must be integer >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticCache.max_prompt_chars) && semanticCache.max_prompt_chars > 0,
+      '`runtime.semantic_cache.max_prompt_chars` must be integer > 0',
+      details
+    );
+  }
+  const dashboard = runtime.dashboard || {};
+  if (runtime.dashboard !== undefined) {
+    assertNoUnknownKeys(dashboard, DASHBOARD_KEYS, 'runtime.dashboard', details);
+    assertType(typeof dashboard.enabled === 'boolean', '`runtime.dashboard.enabled` must be boolean', details);
+    assertType(typeof dashboard.host === 'string' && dashboard.host.length > 0, '`runtime.dashboard.host` must be string', details);
+    assertType(
+      Number.isInteger(dashboard.port) && dashboard.port > 0 && dashboard.port <= 65535,
+      '`runtime.dashboard.port` must be integer between 1 and 65535',
+      details
+    );
+    assertType(typeof dashboard.auth_token === 'string', '`runtime.dashboard.auth_token` must be string', details);
+    assertType(typeof dashboard.allow_remote === 'boolean', '`runtime.dashboard.allow_remote` must be boolean', details);
+  }
 
   const retry = runtime.upstream?.retry || {};
   const upstream = runtime.upstream || {};
@@ -347,6 +450,20 @@ function validateConfigShape(config) {
       '`pii.regex_safety_cap_bytes` must be > 0',
       details
     );
+    if (pii.redaction !== undefined) {
+      const redaction = pii.redaction || {};
+      assertNoUnknownKeys(redaction, PII_REDACTION_KEYS, 'pii.redaction', details);
+      assertType(
+        PII_REDACTION_MODES.has(String(redaction.mode)),
+        '`pii.redaction.mode` must be placeholder|format_preserving',
+        details
+      );
+      assertType(
+        typeof redaction.salt === 'string' && redaction.salt.length > 0,
+        '`pii.redaction.salt` must be non-empty string',
+        details
+      );
+    }
     assertNoUnknownKeys(pii.severity_actions, PII_SEVERITY_KEYS, 'pii.severity_actions', details);
 
     const rapidapi = pii.rapidapi || {};

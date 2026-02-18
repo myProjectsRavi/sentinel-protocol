@@ -1,4 +1,5 @@
 const { PATTERN_DEFINITIONS } = require('./pii-patterns');
+const { maskValueForPattern } = require('./masking');
 
 const SEVERITY_RANK = {
   low: 1,
@@ -116,10 +117,11 @@ class PIIScanner {
   constructor(options = {}) {
     this.maxScanBytes = options.maxScanBytes ?? 262144;
     this.regexSafetyCapBytes = options.regexSafetyCapBytes ?? 51200;
+    this.redactionMode = String(options.redactionMode || 'placeholder').toLowerCase();
+    this.redactionSalt = String(options.redactionSalt || process.env.SENTINEL_MASKING_SALT || '');
     this.patterns = PATTERN_DEFINITIONS.map((item) => ({
       ...item,
       regex: toRegex(item.regex),
-      replacement: `[REDACTED_${item.id.toUpperCase()}]`,
     }));
   }
 
@@ -135,6 +137,8 @@ class PIIScanner {
 
     const maxBytes = options.maxScanBytes ?? this.maxScanBytes;
     const regexSafetyCapBytes = options.regexSafetyCapBytes ?? this.regexSafetyCapBytes;
+    const redactionMode = String(options.redactionMode || this.redactionMode || 'placeholder').toLowerCase();
+    const redactionSalt = String(options.redactionSalt || this.redactionSalt || '');
     const inputBytes = Buffer.byteLength(input, 'utf8');
     const truncatedByScanBudget = inputBytes > maxBytes;
     const scanBudgetText = truncatedByScanBudget ? Buffer.from(input).subarray(0, maxBytes).toString('utf8') : input;
@@ -145,8 +149,8 @@ class PIIScanner {
     const lowered = text.toLowerCase();
     const scanTruncated = truncatedByScanBudget || truncatedByRegexSafetyCap;
 
-    let redactedText = text;
     const findings = [];
+    const replacementCandidates = [];
 
     for (const pattern of this.patterns) {
       if (Array.isArray(pattern.keywords) && pattern.keywords.length > 0) {
@@ -168,11 +172,52 @@ class PIIScanner {
           id: pattern.id,
           severity: pattern.severity,
           value: rawValue,
+          start: match.index,
+          end: match.index + rawValue.length,
         });
-
-        redactedText = redactedText.replace(rawValue, pattern.replacement);
+        replacementCandidates.push({
+          id: pattern.id,
+          severity: pattern.severity,
+          value: rawValue,
+          start: match.index,
+          end: match.index + rawValue.length,
+          replacement: maskValueForPattern(pattern.id, rawValue, {
+            mode: redactionMode,
+            salt: redactionSalt,
+          }),
+        });
       }
     }
+
+    replacementCandidates.sort((a, b) => {
+      if (a.start !== b.start) {
+        return a.start - b.start;
+      }
+      const severityDiff = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+      if (severityDiff !== 0) {
+        return severityDiff;
+      }
+      return (b.end - b.start) - (a.end - a.start);
+    });
+
+    const selected = [];
+    let lastEnd = -1;
+    for (const candidate of replacementCandidates) {
+      if (candidate.start < lastEnd) {
+        continue;
+      }
+      selected.push(candidate);
+      lastEnd = candidate.end;
+    }
+
+    let redactedText = '';
+    let cursor = 0;
+    for (const item of selected) {
+      redactedText += text.slice(cursor, item.start);
+      redactedText += item.replacement;
+      cursor = item.end;
+    }
+    redactedText += text.slice(cursor);
 
     const highestSeverity = findings.reduce((current, finding) => {
       if (!current) {

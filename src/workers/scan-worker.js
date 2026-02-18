@@ -14,13 +14,17 @@ function positiveIntOr(value, fallback) {
 function getPIIScanner(options = {}) {
   const maxScanBytes = positiveIntOr(options.maxScanBytes, 262144);
   const regexSafetyCapBytes = positiveIntOr(options.regexSafetyCapBytes, 51200);
-  const key = `${maxScanBytes}:${regexSafetyCapBytes}`;
+  const redactionMode = String(options.redactionMode || 'placeholder').toLowerCase();
+  const redactionSalt = String(options.redactionSalt || '');
+  const key = `${maxScanBytes}:${regexSafetyCapBytes}:${redactionMode}:${redactionSalt}`;
   if (!piiScannerCache.has(key)) {
     piiScannerCache.set(
       key,
       new PIIScanner({
         maxScanBytes,
         regexSafetyCapBytes,
+        redactionMode,
+        redactionSalt,
       })
     );
   }
@@ -50,6 +54,8 @@ function scanPayload(payload = {}) {
   const piiResult = piiScanner.scan(text, {
     maxScanBytes: payload.pii?.maxScanBytes,
     regexSafetyCapBytes: payload.pii?.regexSafetyCapBytes,
+    redactionMode: payload.pii?.redactionMode,
+    redactionSalt: payload.pii?.redactionSalt,
   });
   const injectionResult = injectionEnabled
     ? injectionScanner.scan(text, {

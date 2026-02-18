@@ -671,4 +671,144 @@ describe('sentinel integration', () => {
 
     expect(allowed.status).toBe(200);
   });
+
+  test('records and replays responses in VCR mode', async () => {
+    const tapePath = path.join(os.tmpdir(), `sentinel-vcr-${Date.now()}.jsonl`);
+    upstream = await startUpstream((req, res) => {
+      res.status(200).json({ output: 'Paris' });
+    });
+
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'monitor',
+        runtime: {
+          vcr: {
+            enabled: true,
+            mode: 'record',
+            tape_file: tapePath,
+            max_entries: 100,
+            strict_replay: false,
+          },
+        },
+      })
+    );
+    let server = sentinel.start();
+
+    const first = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'What is the capital of France?' });
+
+    expect(first.status).toBe(200);
+    expect(first.headers['x-sentinel-vcr']).toBe('recorded');
+
+    await sentinel.stop();
+    sentinel = null;
+    await closeServer(upstream.server);
+    upstream = null;
+
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'monitor',
+        runtime: {
+          vcr: {
+            enabled: true,
+            mode: 'replay',
+            tape_file: tapePath,
+            max_entries: 100,
+            strict_replay: true,
+          },
+        },
+      })
+    );
+    server = sentinel.start();
+
+    const replayed = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', 'http://127.0.0.1:9')
+      .send({ text: 'What is the capital of France?' });
+
+    expect(replayed.status).toBe(200);
+    expect(replayed.headers['x-sentinel-vcr']).toBe('replay-hit');
+    expect(replayed.body.output).toBe('Paris');
+  });
+
+  test('strict replay mode fails closed on tape miss', async () => {
+    const tapePath = path.join(os.tmpdir(), `sentinel-vcr-miss-${Date.now()}.jsonl`);
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'monitor',
+        runtime: {
+          vcr: {
+            enabled: true,
+            mode: 'replay',
+            tape_file: tapePath,
+            max_entries: 100,
+            strict_replay: true,
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', 'http://127.0.0.1:9')
+      .send({ text: 'Unknown request for tape' });
+
+    expect(response.status).toBe(424);
+    expect(response.body.error).toBe('VCR_REPLAY_MISS');
+    expect(response.headers['x-sentinel-vcr']).toBe('replay-miss');
+  });
+
+  test('semantic cache hit bypasses upstream and returns cached response', async () => {
+    let upstreamHits = 0;
+    upstream = await startUpstream((req, res) => {
+      upstreamHits += 1;
+      res.status(200).json({ output: 'upstream' });
+    });
+
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'monitor',
+        runtime: {
+          semantic_cache: {
+            enabled: true,
+          },
+        },
+      })
+    );
+    sentinel.semanticCache = {
+      isEnabled: () => true,
+      lookup: async () => ({
+        hit: true,
+        similarity: 0.991,
+        response: {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          bodyBuffer: Buffer.from(JSON.stringify({ output: 'cached' })),
+        },
+      }),
+      store: async () => ({ stored: false }),
+    };
+
+    const server = sentinel.start();
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ messages: [{ role: 'user', content: 'France capital?' }] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.output).toBe('cached');
+    expect(response.headers['x-sentinel-semantic-cache']).toBe('hit');
+    expect(upstreamHits).toBe(0);
+  });
 });

@@ -20,6 +20,9 @@ const { PIIProviderEngine } = require('./pii/provider-engine');
 const { scanBufferedResponse } = require('./egress/response-scanner');
 const { SSERedactionTransform } = require('./egress/sse-redaction-transform');
 const { ScanWorkerPool } = require('./workers/scan-pool');
+const { VCRStore } = require('./runtime/vcr-store');
+const { SemanticCache } = require('./cache/semantic-cache');
+const { DashboardServer } = require('./monitor/dashboard-server');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -157,6 +160,12 @@ class SentinelServer {
       egress_stream_redacted: 0,
       scan_worker_fallbacks: 0,
       warnings_total: 0,
+      vcr_replay_hits: 0,
+      vcr_replay_misses: 0,
+      vcr_records: 0,
+      semantic_cache_hits: 0,
+      semantic_cache_misses: 0,
+      semantic_cache_stores: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -164,6 +173,8 @@ class SentinelServer {
     this.piiScanner = new PIIScanner({
       maxScanBytes: config.pii.max_scan_bytes,
       regexSafetyCapBytes: config.pii.regex_safety_cap_bytes,
+      redactionMode: config.pii?.redaction?.mode,
+      redactionSalt: config.pii?.redaction?.salt,
     });
     this.telemetry = createTelemetry({
       enabled: config.runtime?.telemetry?.enabled !== false,
@@ -194,8 +205,11 @@ class SentinelServer {
     this.auditLogger = new AuditLogger(AUDIT_LOG_PATH, {
       mirrorStdout: this.config.logging?.audit_stdout === true,
     });
+    this.vcrStore = new VCRStore(this.config.runtime?.vcr || {});
+    this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {});
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
     this.optimizerPlugin = loadOptimizerPlugin();
+    this.dashboardServer = null;
 
     this.setupApp();
   }
@@ -222,6 +236,11 @@ class SentinelServer {
       pii_provider_mode: this.config.pii.provider_mode,
       pii_provider_fallbacks: this.stats.pii_provider_fallbacks,
       rapidapi_error_count: this.stats.rapidapi_error_count,
+      vcr_mode: this.config.runtime?.vcr?.mode || 'off',
+      semantic_cache_enabled: this.semanticCache.isEnabled(),
+      dashboard_enabled: this.config.runtime?.dashboard?.enabled === true,
+      dashboard_host: this.config.runtime?.dashboard?.host || '127.0.0.1',
+      dashboard_port: this.config.runtime?.dashboard?.port || 8788,
       uptime_seconds: Math.floor((Date.now() - this.startedAt) / 1000),
       version: this.config.version,
       counters: this.stats,
@@ -406,6 +425,8 @@ class SentinelServer {
             pii: {
               maxScanBytes: this.config.pii.max_scan_bytes,
               regexSafetyCapBytes: this.config.pii.regex_safety_cap_bytes,
+              redactionMode: this.config.pii?.redaction?.mode,
+              redactionSalt: this.config.pii?.redaction?.salt,
             },
             injection: {
               enabled: this.config.injection?.enabled !== false,
@@ -679,22 +700,129 @@ class SentinelServer {
         String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
         (bodyJson && bodyJson.stream === true);
       const start = Date.now();
-
-      const upstream = await this.upstreamClient.forwardRequest({
+      const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
+      const vcrRequestMeta = {
         provider,
-        baseUrl,
-        req,
-        pathWithQuery: `${parsedPath.pathname}${parsedPath.search}`,
         method,
+        pathWithQuery,
         bodyBuffer,
-        correlationId,
+        contentType: req.headers['content-type'],
         wantsStream,
-        resolvedIp,
-        resolvedFamily,
-        upstreamHostname,
-        upstreamHostHeader,
-        forwardHeaders,
-      });
+      };
+      const vcrLookup = this.vcrStore.lookup(vcrRequestMeta);
+      let replayedFromVcr = false;
+      let replayedFromSemanticCache = false;
+      let semanticCacheHeader = null;
+      let upstream;
+      if (vcrLookup.hit) {
+        replayedFromVcr = true;
+        this.stats.vcr_replay_hits += 1;
+        res.setHeader('x-sentinel-vcr', 'replay-hit');
+        upstream = {
+          ok: true,
+          status: vcrLookup.response.status,
+          isStream: false,
+          body: vcrLookup.response.bodyBuffer,
+          responseHeaders: vcrLookup.response.headers || {},
+          diagnostics: {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            correlationId,
+          },
+        };
+      } else {
+        if (this.vcrStore.enabled && this.vcrStore.mode === 'replay') {
+          this.stats.vcr_replay_misses += 1;
+          res.setHeader('x-sentinel-vcr', 'replay-miss');
+          if (vcrLookup.strictReplay) {
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider,
+              retryCount: 0,
+              circuitState: this.circuitBreakers.getProviderState(provider).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            finalizeRequestTelemetry({
+              decision: 'vcr_replay_miss',
+              status: 424,
+              providerName: provider,
+            });
+            return res.status(424).json({
+              error: 'VCR_REPLAY_MISS',
+              message: 'No matching VCR tape entry found for request',
+              correlation_id: correlationId,
+            });
+          }
+          warnings.push('vcr_replay_miss_passthrough');
+          this.stats.warnings_total += 1;
+        }
+
+        if (this.semanticCache.isEnabled()) {
+          try {
+            const cacheLookup = await this.semanticCache.lookup({
+              provider,
+              method,
+              pathWithQuery,
+              wantsStream,
+              bodyJson,
+              bodyText,
+            });
+            if (cacheLookup.hit) {
+              replayedFromSemanticCache = true;
+              semanticCacheHeader = 'hit';
+              this.stats.semantic_cache_hits += 1;
+              upstream = {
+                ok: true,
+                status: cacheLookup.response.status,
+                isStream: false,
+                body: cacheLookup.response.bodyBuffer,
+                responseHeaders: cacheLookup.response.headers || {},
+                diagnostics: {
+                  errorSource: 'sentinel',
+                  upstreamError: false,
+                  provider,
+                  retryCount: 0,
+                  circuitState: this.circuitBreakers.getProviderState(provider).state,
+                  correlationId,
+                },
+              };
+              res.setHeader('x-sentinel-semantic-cache', 'hit');
+              res.setHeader('x-sentinel-semantic-similarity', String(cacheLookup.similarity));
+            } else if (cacheLookup.reason === 'miss') {
+              semanticCacheHeader = 'miss';
+              this.stats.semantic_cache_misses += 1;
+            } else {
+              semanticCacheHeader = 'bypass';
+            }
+          } catch (error) {
+            warnings.push('semantic_cache_error');
+            this.stats.warnings_total += 1;
+          }
+        }
+
+        if (!replayedFromSemanticCache) {
+          upstream = await this.upstreamClient.forwardRequest({
+            provider,
+            baseUrl,
+            req,
+            pathWithQuery,
+            method,
+            bodyBuffer,
+            correlationId,
+            wantsStream,
+            resolvedIp,
+            resolvedFamily,
+            upstreamHostname,
+            upstreamHostHeader,
+            forwardHeaders,
+          });
+        }
+      }
 
       const durationMs = Date.now() - start;
       const diagnostics = upstream.diagnostics;
@@ -703,6 +831,9 @@ class SentinelServer {
         res.setHeader('x-sentinel-warning', warnings.join(','));
       }
       res.setHeader('x-sentinel-pii-provider', piiProviderUsed);
+      if (semanticCacheHeader && !res.getHeader('x-sentinel-semantic-cache')) {
+        res.setHeader('x-sentinel-semantic-cache', semanticCacheHeader);
+      }
 
       if (!upstream.ok) {
         this.stats.upstream_errors += 1;
@@ -893,6 +1024,15 @@ class SentinelServer {
       }
 
       let outboundBody = upstream.body;
+      if (!replayedFromVcr && this.vcrStore.enabled && this.vcrStore.mode === 'record' && Buffer.isBuffer(upstream.body)) {
+        this.vcrStore.record(vcrRequestMeta, {
+          status: upstream.status,
+          headers: upstream.responseHeaders || {},
+          bodyBuffer: upstream.body,
+        });
+        this.stats.vcr_records += 1;
+        res.setHeader('x-sentinel-vcr', 'recorded');
+      }
       if (egressConfig.enabled) {
         const egressResult = scanBufferedResponse({
           bodyBuffer: outboundBody,
@@ -964,6 +1104,48 @@ class SentinelServer {
         res.setHeader('x-sentinel-warning', warnings.join(','));
       }
 
+      if (!replayedFromVcr && !replayedFromSemanticCache && this.semanticCache.isEnabled()) {
+        const cacheSafeForStore =
+          upstream.status >= 200 &&
+          upstream.status < 300 &&
+          injectionScore === 0 &&
+          piiTypes.length === 0 &&
+          redactedCount === 0 &&
+          !warnings.some((item) => {
+            const warning = String(item);
+            return (
+              warning.startsWith('policy:') ||
+              warning.startsWith('pii:') ||
+              warning.startsWith('injection:') ||
+              warning.startsWith('egress_pii:') ||
+              warning.includes('fallback') ||
+              warning.includes('error')
+            );
+          });
+        if (cacheSafeForStore) {
+          try {
+            const stored = await this.semanticCache.store({
+              provider,
+              method,
+              pathWithQuery,
+              wantsStream,
+              bodyJson,
+              bodyText,
+              responseStatus: upstream.status,
+              responseHeaders: upstream.responseHeaders || {},
+              responseBodyBuffer: outboundBody,
+            });
+            if (stored.stored) {
+              this.stats.semantic_cache_stores += 1;
+              res.setHeader('x-sentinel-semantic-cache', 'store');
+            }
+          } catch {
+            warnings.push('semantic_cache_store_error');
+            this.stats.warnings_total += 1;
+          }
+        }
+      }
+
       this.auditLogger.write({
         timestamp: new Date().toISOString(),
         correlation_id: correlationId,
@@ -1015,6 +1197,32 @@ class SentinelServer {
       this.writeStatus();
     });
 
+    const dashboardConfig = this.config.runtime?.dashboard || {};
+    if (dashboardConfig.enabled === true) {
+      this.dashboardServer = new DashboardServer({
+        host: dashboardConfig.host,
+        port: dashboardConfig.port,
+        allowRemote: dashboardConfig.allow_remote === true,
+        authToken: dashboardConfig.auth_token,
+        statusProvider: () => this.currentStatusPayload(),
+      });
+      this.dashboardServer
+        .start()
+        .then(() => {
+          logger.info('Sentinel dashboard started', {
+            host: dashboardConfig.host,
+            port: dashboardConfig.port,
+            allow_remote: dashboardConfig.allow_remote === true,
+          });
+        })
+        .catch((error) => {
+          logger.warn('Sentinel dashboard failed to start', {
+            error: error.message,
+          });
+          this.dashboardServer = null;
+        });
+    }
+
     return this.server;
   }
 
@@ -1039,6 +1247,11 @@ class SentinelServer {
     if (this.scanWorkerPool) {
       await this.scanWorkerPool.close();
     }
+    if (this.dashboardServer) {
+      await this.dashboardServer.stop();
+      this.dashboardServer = null;
+    }
+    await this.vcrStore.flush();
     await this.auditLogger.close({ timeoutMs: 5000 });
 
     if (fs.existsSync(PID_FILE_PATH)) {

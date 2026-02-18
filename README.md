@@ -7,10 +7,14 @@ Sentinel is the only Open Source AI Firewall that runs PII detection in Worker T
 It provides:
 - Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
+- Format-preserving masking mode for test-safe pseudonyms (`pii.redaction.mode: format_preserving`)
 - Bi-directional protection: ingress request scanning + egress response scanning/redaction
 - PII provider modes: `local`, `rapidapi`, `hybrid` (with local fallback controls)
 - Heuristic prompt-injection detection (`injection_threshold` policy matching)
 - Optional neural injection classifier (`injection.neural.*`) with weighted merge
+- VCR mode for deterministic API testing (`runtime.vcr.mode: record|replay`)
+- Experimental semantic cache (opt-in, off by default) to reduce repeat LLM calls
+- Local-only live dashboard (`runtime.dashboard.enabled: true`) on `127.0.0.1:8788`
 - Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -65,6 +69,21 @@ injection:
     timeout_ms: 1200
     weight: 1
     mode: max # max | blend
+runtime:
+  vcr:
+    enabled: false
+    mode: off # off | record | replay
+    strict_replay: false
+  semantic_cache:
+    enabled: false # experimental, opt-in
+    similarity_threshold: 0.95
+  dashboard:
+    enabled: false
+    host: 127.0.0.1
+    port: 8788
+pii:
+  redaction:
+    mode: placeholder # placeholder | format_preserving
 ```
 
 Key resolution priority for `rapidapi` and `hybrid`:
@@ -97,6 +116,22 @@ Terminal monitor:
 
 ```bash
 node ./cli/sentinel.js monitor
+```
+
+VCR mode (deterministic test replay):
+
+```bash
+node ./cli/sentinel.js start --record
+# ...run agent tests...
+node ./cli/sentinel.js stop
+node ./cli/sentinel.js start --replay
+```
+
+Enable local dashboard for current run:
+
+```bash
+node ./cli/sentinel.js start --dashboard
+# dashboard: http://127.0.0.1:8788
 ```
 
 ## Docker

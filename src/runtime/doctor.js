@@ -58,6 +58,8 @@ function runDoctorChecks(config, env = process.env) {
   const mode = String(config?.pii?.provider_mode || 'local').toLowerCase();
   const rapidapi = config?.pii?.rapidapi || {};
   const semantic = config?.pii?.semantic || {};
+  const semanticCache = config?.runtime?.semantic_cache || {};
+  const dashboard = config?.runtime?.dashboard || {};
   const fallbackToLocal = rapidapi.fallback_to_local !== false;
   const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
 
@@ -146,6 +148,34 @@ function runDoctorChecks(config, env = process.env) {
       message: hasDependency
         ? 'Semantic scanner dependency (@xenova/transformers) is installed.'
         : 'Semantic scanner is enabled but @xenova/transformers is missing. Install it to use semantic NER.',
+    });
+  }
+
+  if (semanticCache.enabled === true) {
+    let hasDependency = true;
+    try {
+      require.resolve('@xenova/transformers');
+    } catch {
+      hasDependency = false;
+    }
+
+    checks.push({
+      id: 'semantic-cache-dependency',
+      status: hasDependency ? 'pass' : 'fail',
+      message: hasDependency
+        ? 'Semantic cache dependency (@xenova/transformers) is installed.'
+        : 'Semantic cache is enabled but @xenova/transformers is missing.',
+    });
+  }
+
+  if (dashboard.enabled === true) {
+    checks.push({
+      id: 'dashboard-local-only',
+      status: dashboard.allow_remote === true ? 'warn' : 'pass',
+      message:
+        dashboard.allow_remote === true
+          ? 'Dashboard allow_remote=true. Prefer local-only mode unless protected by token and network ACL.'
+          : 'Dashboard is local-only (allow_remote=false).',
     });
   }
 
