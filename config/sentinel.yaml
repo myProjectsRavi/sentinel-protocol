@@ -10,6 +10,13 @@ proxy:
 runtime:
   fail_open: false
   scanner_error_action: allow
+  worker_pool:
+    enabled: true
+    size: 2
+    queue_limit: 1024
+    task_timeout_ms: 10000
+    scan_task_timeout_ms: 2000
+    embed_task_timeout_ms: 10000
   vcr:
     enabled: false
     mode: off
@@ -26,6 +33,8 @@ runtime:
     max_prompt_chars: 2000
     max_entry_bytes: 262144
     max_ram_mb: 64
+    max_consecutive_errors: 3
+    failure_cooldown_ms: 30000
   dashboard:
     enabled: false
     host: 127.0.0.1

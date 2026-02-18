@@ -110,4 +110,51 @@ describe('SemanticCache', () => {
     expect(result.hit).toBe(false);
     expect(result.reason).toBe('worker_pool_unavailable');
   });
+
+  test('enters runtime backoff after consecutive embed failures', async () => {
+    const scanWorkerPool = {
+      enabled: true,
+      embed: jest.fn(async () => ({ vector: [1, 0] })),
+    };
+    const cache = new SemanticCache({
+      enabled: true,
+      similarity_threshold: 0.8,
+      max_consecutive_errors: 2,
+      failure_cooldown_ms: 60000,
+    }, { scanWorkerPool });
+
+    const request = {
+      provider: 'openai',
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      wantsStream: false,
+      bodyJson: { messages: [{ role: 'user', content: 'hello world' }] },
+    };
+
+    const seedStore = await cache.store({
+      ...request,
+      responseStatus: 200,
+      responseHeaders: { 'content-type': 'application/json' },
+      responseBodyBuffer: Buffer.from(JSON.stringify({ answer: 'ok' })),
+    });
+    expect(seedStore.stored).toBe(true);
+
+    scanWorkerPool.embed.mockImplementation(async () => {
+      throw new Error('embed worker unavailable');
+    });
+
+    const first = await cache.lookup(request);
+    expect(first.hit).toBe(false);
+    expect(first.reason).toBe('embed_error');
+
+    const second = await cache.lookup(request);
+    expect(second.hit).toBe(false);
+    expect(second.reason).toBe('embed_error');
+
+    const third = await cache.lookup(request);
+    expect(third.hit).toBe(false);
+    expect(third.reason).toBe('runtime_backoff');
+    // One embed for seed store, then two failing embed attempts.
+    expect(scanWorkerPool.embed).toHaveBeenCalledTimes(3);
+  });
 });

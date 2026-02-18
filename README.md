@@ -70,6 +70,11 @@ injection:
     weight: 1
     mode: max # max | blend
 runtime:
+  worker_pool:
+    enabled: true
+    task_timeout_ms: 10000
+    scan_task_timeout_ms: 2000
+    embed_task_timeout_ms: 10000
   vcr:
     enabled: false
     mode: off # off | record | replay
@@ -79,6 +84,8 @@ runtime:
     similarity_threshold: 0.95
     max_entry_bytes: 262144
     max_ram_mb: 64
+    max_consecutive_errors: 3
+    failure_cooldown_ms: 30000
   dashboard:
     enabled: false
     host: 127.0.0.1
@@ -140,6 +147,7 @@ node ./cli/sentinel.js start --dashboard
 Security note:
 - `runtime.dashboard.allow_remote=true` requires `runtime.dashboard.auth_token` (enforced by config validation).
 - Semantic cache embeddings run in worker threads; keep `runtime.worker_pool.enabled=true`.
+- Keep `runtime.worker_pool.embed_task_timeout_ms` high enough for model cold starts (recommended: `>=10000`).
 
 ## Docker
 

@@ -98,4 +98,17 @@ describe('doctor checks', () => {
     expect(report.ok).toBe(false);
     expect(report.checks.some((check) => check.id === 'semantic-cache-worker-pool' && check.status === 'fail')).toBe(true);
   });
+
+  test('warns when semantic cache embed timeout is too low for cold starts', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        worker_pool: {
+          enabled: true,
+          embed_task_timeout_ms: 2000,
+        },
+        semantic_cache: { enabled: true },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'semantic-cache-embed-timeout' && check.status === 'warn')).toBe(true);
+  });
 });

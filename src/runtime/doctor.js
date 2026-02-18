@@ -176,6 +176,16 @@ function runDoctorChecks(config, env = process.env) {
         ? 'Semantic cache dependency (@xenova/transformers) is installed.'
         : 'Semantic cache is enabled but @xenova/transformers is missing.',
     });
+
+    const embedTimeoutMs = Number(workerPool.embed_task_timeout_ms ?? workerPool.task_timeout_ms ?? 0);
+    checks.push({
+      id: 'semantic-cache-embed-timeout',
+      status: embedTimeoutMs >= 5000 ? 'pass' : 'warn',
+      message:
+        embedTimeoutMs >= 5000
+          ? `Worker embed timeout is ${embedTimeoutMs}ms (cold-start resilient).`
+          : `Worker embed timeout is ${embedTimeoutMs}ms. Increase runtime.worker_pool.embed_task_timeout_ms to >=5000ms (recommended 10000ms).`,
+    });
   }
 
   if (dashboard.enabled === true) {

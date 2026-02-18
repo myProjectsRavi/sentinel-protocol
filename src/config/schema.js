@@ -9,7 +9,14 @@ const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
 const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream', 'worker_pool', 'vcr', 'semantic_cache', 'dashboard']);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets']);
-const WORKER_POOL_KEYS = new Set(['enabled', 'size', 'queue_limit', 'task_timeout_ms']);
+const WORKER_POOL_KEYS = new Set([
+  'enabled',
+  'size',
+  'queue_limit',
+  'task_timeout_ms',
+  'scan_task_timeout_ms',
+  'embed_task_timeout_ms',
+]);
 const VCR_KEYS = new Set(['enabled', 'mode', 'tape_file', 'max_entries', 'strict_replay']);
 const VCR_MODES = new Set(['off', 'record', 'replay']);
 const SEMANTIC_CACHE_KEYS = new Set([
@@ -22,6 +29,8 @@ const SEMANTIC_CACHE_KEYS = new Set([
   'max_prompt_chars',
   'max_entry_bytes',
   'max_ram_mb',
+  'max_consecutive_errors',
+  'failure_cooldown_ms',
 ]);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -187,7 +196,11 @@ function applyDefaults(config) {
     workerPool.size ?? Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1))
   );
   workerPool.queue_limit = Number(workerPool.queue_limit ?? 1024);
-  workerPool.task_timeout_ms = Number(workerPool.task_timeout_ms ?? 2000);
+  workerPool.task_timeout_ms = Number(workerPool.task_timeout_ms ?? 10000);
+  workerPool.scan_task_timeout_ms = Number(workerPool.scan_task_timeout_ms ?? 2000);
+  workerPool.embed_task_timeout_ms = Number(
+    workerPool.embed_task_timeout_ms ?? Math.max(workerPool.task_timeout_ms, 10000)
+  );
 
   normalized.runtime.vcr = normalized.runtime.vcr || {};
   const vcr = normalized.runtime.vcr;
@@ -208,6 +221,8 @@ function applyDefaults(config) {
   semanticCache.max_prompt_chars = Number(semanticCache.max_prompt_chars ?? 2000);
   semanticCache.max_entry_bytes = Number(semanticCache.max_entry_bytes ?? 262144);
   semanticCache.max_ram_mb = Number(semanticCache.max_ram_mb ?? 64);
+  semanticCache.max_consecutive_errors = Number(semanticCache.max_consecutive_errors ?? 3);
+  semanticCache.failure_cooldown_ms = Number(semanticCache.failure_cooldown_ms ?? 30000);
 
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
@@ -349,6 +364,16 @@ function validateConfigShape(config) {
       '`runtime.worker_pool.task_timeout_ms` must be integer > 0',
       details
     );
+    assertType(
+      Number.isInteger(workerPool.scan_task_timeout_ms) && workerPool.scan_task_timeout_ms > 0,
+      '`runtime.worker_pool.scan_task_timeout_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(workerPool.embed_task_timeout_ms) && workerPool.embed_task_timeout_ms > 0,
+      '`runtime.worker_pool.embed_task_timeout_ms` must be integer > 0',
+      details
+    );
   }
   const vcr = runtime.vcr || {};
   if (runtime.vcr !== undefined) {
@@ -399,6 +424,16 @@ function validateConfigShape(config) {
     assertType(
       Number.isFinite(Number(semanticCache.max_ram_mb)) && Number(semanticCache.max_ram_mb) > 0,
       '`runtime.semantic_cache.max_ram_mb` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticCache.max_consecutive_errors) && semanticCache.max_consecutive_errors > 0,
+      '`runtime.semantic_cache.max_consecutive_errors` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticCache.failure_cooldown_ms) && semanticCache.failure_cooldown_ms > 0,
+      '`runtime.semantic_cache.failure_cooldown_ms` must be integer > 0',
       details
     );
   }

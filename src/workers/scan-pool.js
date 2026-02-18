@@ -12,7 +12,9 @@ class ScanWorkerPool {
     this.enabled = config.enabled !== false;
     this.size = positiveIntOr(config.size, Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1)));
     this.queueLimit = positiveIntOr(config.queue_limit, 1024);
-    this.taskTimeoutMs = positiveIntOr(config.task_timeout_ms, 2000);
+    this.taskTimeoutMs = positiveIntOr(config.task_timeout_ms, 10000);
+    this.scanTaskTimeoutMs = positiveIntOr(config.scan_task_timeout_ms, Math.min(this.taskTimeoutMs, 2000));
+    this.embedTaskTimeoutMs = positiveIntOr(config.embed_task_timeout_ms, Math.max(this.taskTimeoutMs, 10000));
 
     this.workers = [];
     this.pending = new Map();
@@ -130,6 +132,8 @@ class ScanWorkerPool {
       throw new Error('no scan workers available');
     }
 
+    const timeoutMs = kind === 'embed' ? this.embedTaskTimeoutMs : this.scanTaskTimeoutMs;
+
     const taskId = this.nextTaskId++;
     this.queueDepth += 1;
     info.inflight += 1;
@@ -139,8 +143,8 @@ class ScanWorkerPool {
         this.pending.delete(taskId);
         info.inflight = Math.max(0, info.inflight - 1);
         this.queueDepth = Math.max(0, this.queueDepth - 1);
-        reject(new Error(`scan worker timeout after ${this.taskTimeoutMs}ms`));
-      }, this.taskTimeoutMs);
+        reject(new Error(`scan worker timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
       timeout.unref?.();
 
       this.pending.set(taskId, {

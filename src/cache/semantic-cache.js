@@ -48,6 +48,8 @@ function normalizeCacheMode(config = {}) {
     maxPromptChars: Number(config.max_prompt_chars ?? 2000),
     maxEntryBytes: Number(config.max_entry_bytes ?? 262144),
     maxRamMb: Number(config.max_ram_mb ?? 64),
+    maxConsecutiveErrors: Number(config.max_consecutive_errors ?? 3),
+    failureCooldownMs: Number(config.failure_cooldown_ms ?? 30000),
   };
 }
 
@@ -107,6 +109,8 @@ class SemanticCache {
     this.maxPromptChars = Math.max(64, Math.floor(normalized.maxPromptChars));
     this.maxEntryBytes = Math.max(1, Math.floor(normalized.maxEntryBytes));
     this.maxRamBytes = Math.max(this.maxEntryBytes, Math.floor(normalized.maxRamMb * 1024 * 1024));
+    this.maxConsecutiveErrors = Math.max(1, Math.floor(normalized.maxConsecutiveErrors));
+    this.failureCooldownMs = Math.max(1000, Math.floor(normalized.failureCooldownMs));
     this.scanWorkerPool = deps.scanWorkerPool || null;
 
     this.nextEntryId = 1;
@@ -114,15 +118,21 @@ class SemanticCache {
     this.byContext = new Map();
     this.order = new Map();
     this.currentBytes = 0;
+    this.consecutiveEmbedErrors = 0;
+    this.disabledUntil = 0;
+    this.lastEmbedError = null;
   }
 
   isEnabled() {
-    return this.enabled === true && this.scanWorkerPool?.enabled === true;
+    return this.enabled === true && this.scanWorkerPool?.enabled === true && Date.now() >= this.disabledUntil;
   }
 
   isEligibleRequest(input = {}) {
     if (!this.enabled) {
       return { eligible: false, reason: 'disabled' };
+    }
+    if (Date.now() < this.disabledUntil) {
+      return { eligible: false, reason: 'runtime_backoff' };
     }
     if (!this.scanWorkerPool || this.scanWorkerPool.enabled !== true) {
       return { eligible: false, reason: 'worker_pool_unavailable' };
@@ -164,16 +174,37 @@ class SemanticCache {
     if (!prompt) {
       return [];
     }
-    const result = await this.scanWorkerPool.embed({
-      text: prompt,
-      modelId: this.modelId,
-      cacheDir: this.cacheDir,
-      maxPromptChars: this.maxPromptChars,
-    });
-    if (!Array.isArray(result?.vector)) {
+    try {
+      const result = await this.scanWorkerPool.embed({
+        text: prompt,
+        modelId: this.modelId,
+        cacheDir: this.cacheDir,
+        maxPromptChars: this.maxPromptChars,
+      });
+      if (!Array.isArray(result?.vector)) {
+        this.recordEmbedFailure(new Error('embedding vector unavailable'));
+        return [];
+      }
+      this.recordEmbedSuccess();
+      return result.vector;
+    } catch (error) {
+      this.recordEmbedFailure(error);
       return [];
     }
-    return result.vector;
+  }
+
+  recordEmbedSuccess() {
+    this.consecutiveEmbedErrors = 0;
+    this.lastEmbedError = null;
+  }
+
+  recordEmbedFailure(error) {
+    this.consecutiveEmbedErrors += 1;
+    this.lastEmbedError = error ? String(error.message || error) : 'embed_failure';
+    if (this.consecutiveEmbedErrors >= this.maxConsecutiveErrors) {
+      this.disabledUntil = Date.now() + this.failureCooldownMs;
+      this.consecutiveEmbedErrors = 0;
+    }
   }
 
   isExpired(entry, now) {

@@ -1,6 +1,19 @@
 const { ScanWorkerPool } = require('../../src/workers/scan-pool');
 
 describe('ScanWorkerPool', () => {
+  test('uses independent scan and embed timeout budgets', () => {
+    const pool = new ScanWorkerPool({
+      enabled: false,
+      task_timeout_ms: 4000,
+      scan_task_timeout_ms: 1500,
+      embed_task_timeout_ms: 12000,
+    });
+
+    expect(pool.taskTimeoutMs).toBe(4000);
+    expect(pool.scanTaskTimeoutMs).toBe(1500);
+    expect(pool.embedTaskTimeoutMs).toBe(12000);
+  });
+
   test('returns pii and injection results from worker threads', async () => {
     const pool = new ScanWorkerPool({
       enabled: true,
