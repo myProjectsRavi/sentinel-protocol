@@ -14,8 +14,9 @@ function appendFileAsync(filePath, content) {
 }
 
 class AuditLogger {
-  constructor(filePath) {
+  constructor(filePath, options = {}) {
     this.filePath = filePath;
+    this.mirrorStdout = options.mirrorStdout === true;
     this.tail = Promise.resolve();
     this.pendingCount = 0;
     this.lastError = null;
@@ -32,6 +33,13 @@ class AuditLogger {
     }
 
     const line = `${JSON.stringify(event)}\n`;
+    if (this.mirrorStdout) {
+      try {
+        process.stdout.write(line);
+      } catch {
+        // Never break request flow due to stdout mirror failures.
+      }
+    }
     this.pendingCount += 1;
 
     const pending = this.tail.then(() => appendFileAsync(this.filePath, line));

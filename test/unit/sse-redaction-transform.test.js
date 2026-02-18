@@ -62,5 +62,6 @@ describe('SSERedactionTransform', () => {
     expect(out.trim()).toBe('');
     expect(detections.length).toBeGreaterThan(0);
     expect(detections[0].action).toBe('block');
+    expect(detections[0].projectedRedaction).toContain('[REDACTED_OPENAI_API_KEY]');
   });
 });

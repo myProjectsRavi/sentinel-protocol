@@ -42,4 +42,27 @@ describe('AuditLogger', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test('mirrors audit lines to stdout when enabled', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-audit-'));
+    const logPath = path.join(tmpDir, 'audit.jsonl');
+    const originalWrite = process.stdout.write;
+    let mirrored = '';
+    process.stdout.write = (chunk, encoding, cb) => {
+      mirrored += String(chunk);
+      if (typeof cb === 'function') cb();
+      return true;
+    };
+
+    try {
+      const logger = new AuditLogger(logPath, { mirrorStdout: true });
+      await logger.write({ id: 42, decision: 'blocked_egress_stream' });
+      await logger.flush({ timeoutMs: 2000 });
+      expect(mirrored).toContain('"id":42');
+      expect(mirrored).toContain('"decision":"blocked_egress_stream"');
+    } finally {
+      process.stdout.write = originalWrite;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

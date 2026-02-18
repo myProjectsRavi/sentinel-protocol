@@ -63,7 +63,7 @@ const RULE_MATCH_KEYS = new Set([
   'requests_per_minute',
 ]);
 const WHITELIST_KEYS = new Set(['domains']);
-const LOGGING_KEYS = new Set(['level', 'audit_file']);
+const LOGGING_KEYS = new Set(['level', 'audit_file', 'audit_stdout']);
 
 class ConfigValidationError extends Error {
   constructor(message, details = []) {
@@ -232,6 +232,10 @@ function applyDefaults(config) {
 
   normalized.logging = normalized.logging || {};
   normalized.logging.level = normalized.logging.level || 'info';
+  normalized.logging.audit_stdout =
+    normalized.logging.audit_stdout !== undefined
+      ? Boolean(normalized.logging.audit_stdout)
+      : ['true', '1', 'yes', 'on'].includes(String(process.env.SENTINEL_AUDIT_STDOUT || '').toLowerCase());
 
   return normalized;
 }
@@ -491,6 +495,9 @@ function validateConfigShape(config) {
   assertType(Array.isArray(config.whitelist?.domains), '`whitelist.domains` must be an array', details);
   assertNoUnknownKeys(config.whitelist, WHITELIST_KEYS, 'whitelist', details);
   assertNoUnknownKeys(config.logging, LOGGING_KEYS, 'logging', details);
+  if (config.logging?.audit_stdout !== undefined) {
+    assertType(typeof config.logging.audit_stdout === 'boolean', '`logging.audit_stdout` must be boolean', details);
+  }
 
   if (details.length > 0) {
     throw new ConfigValidationError('Configuration validation failed', details);

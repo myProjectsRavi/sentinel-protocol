@@ -191,7 +191,9 @@ class SentinelServer {
     }
 
     this.overrideManager = new RuntimeOverrideManager(OVERRIDE_FILE_PATH);
-    this.auditLogger = new AuditLogger(AUDIT_LOG_PATH);
+    this.auditLogger = new AuditLogger(AUDIT_LOG_PATH, {
+      mirrorStdout: this.config.logging?.audit_stdout === true,
+    });
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
     this.optimizerPlugin = loadOptimizerPlugin();
 
@@ -747,6 +749,9 @@ class SentinelServer {
         let streamedBytes = 0;
         let streamOut = upstream.bodyStream;
         let streamTerminatedForPII = false;
+        const streamEgressTypes = new Set();
+        let streamProjectedRedaction = null;
+        let streamBlockedSeverity = null;
         const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
 
         if (egressConfig.enabled && egressConfig.streamEnabled && upstreamContentType.includes('text/event-stream')) {
@@ -757,8 +762,17 @@ class SentinelServer {
             severityActions: this.config.pii?.severity_actions || {},
             effectiveMode,
             streamBlockMode: egressConfig.streamBlockMode,
-            onDetection: ({ action }) => {
+            onDetection: ({ action, severity, findings, projectedRedaction }) => {
               this.stats.egress_detected += 1;
+              streamBlockedSeverity = severity || streamBlockedSeverity;
+              for (const finding of findings || []) {
+                if (finding?.id) {
+                  streamEgressTypes.add(String(finding.id));
+                }
+              }
+              if (typeof projectedRedaction === 'string' && projectedRedaction.length > 0 && !streamProjectedRedaction) {
+                streamProjectedRedaction = projectedRedaction.slice(0, 512);
+              }
               if (action === 'redact') {
                 this.stats.egress_stream_redacted += 1;
               }
@@ -766,7 +780,9 @@ class SentinelServer {
                 streamTerminatedForPII = true;
                 this.stats.blocked_total += 1;
                 this.stats.egress_blocked += 1;
-                res.setHeader('x-sentinel-egress-action', 'stream_terminate');
+                if (!res.headersSent) {
+                  res.setHeader('x-sentinel-egress-action', 'stream_terminate');
+                }
                 warnings.push('egress_stream_blocked');
                 this.stats.warnings_total += 1;
                 setImmediate(() => {
@@ -798,11 +814,14 @@ class SentinelServer {
             config_version: this.config.version,
             mode: effectiveMode,
             decision: 'forwarded_stream',
-            reasons: warnings,
-            pii_types: piiTypes,
-            redactions: redactedCount,
-            duration_ms: Date.now() - start,
-            request_bytes: bodyBuffer.length,
+              reasons: warnings,
+              pii_types: piiTypes,
+              egress_pii_types: Array.from(streamEgressTypes).sort(),
+              egress_projected_redaction: streamProjectedRedaction || undefined,
+              egress_block_severity: streamBlockedSeverity || undefined,
+              redactions: redactedCount,
+              duration_ms: Date.now() - start,
+              request_bytes: bodyBuffer.length,
             response_status: upstream.status,
             response_bytes: streamedBytes,
             provider,
@@ -825,6 +844,9 @@ class SentinelServer {
               decision: 'blocked_egress_stream',
               reasons: ['egress_stream_blocked'],
               pii_types: piiTypes,
+              egress_pii_types: Array.from(streamEgressTypes).sort(),
+              egress_projected_redaction: streamProjectedRedaction || undefined,
+              egress_block_severity: streamBlockedSeverity || undefined,
               redactions: redactedCount,
               duration_ms: Date.now() - start,
               request_bytes: bodyBuffer.length,

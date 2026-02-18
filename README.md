@@ -2,6 +2,8 @@
 
 Sentinel Protocol is a local firewall for AI agents.
 
+Sentinel is the only Open Source AI Firewall that runs PII detection in Worker Threads and performs Real-Time Neural Injection analysis without blocking the Event Loop. It supports Bi-directional SSE Stream Redaction out of the box.
+
 It provides:
 - Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
@@ -105,10 +107,12 @@ Build image (Debian slim, non-root runtime):
 docker build -t sentinel-protocol:latest .
 ```
 
-Optional: preload semantic model during build to remove first-request model download latency:
+Optional: preload semantic and neural models during build to remove first-request model download latency:
 
 ```bash
-docker build -t sentinel-protocol:latest --build-arg PRELOAD_SEMANTIC_MODEL=true .
+docker build -t sentinel-protocol:latest \
+  --build-arg PRELOAD_SEMANTIC_MODEL=true \
+  --build-arg PRELOAD_NEURAL_MODEL=true .
 ```
 
 Run with one command (read-only config mount + writable runtime state volume):

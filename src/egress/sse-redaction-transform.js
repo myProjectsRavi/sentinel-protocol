@@ -69,7 +69,8 @@ class SSERedactionTransform extends Transform {
       effectiveMode: this.effectiveMode,
       streamBlockMode: this.streamBlockMode,
     });
-    const redactedPayload = action === 'redact' ? scan.redactedText : payloadTrimmed;
+    const projectedRedaction = scan.redactedText;
+    const redactedPayload = action === 'redact' ? projectedRedaction : payloadTrimmed;
     const spacer = payload.startsWith(' ') ? ' ' : '';
 
     if (this.onDetection) {
@@ -77,6 +78,7 @@ class SSERedactionTransform extends Transform {
         severity,
         action,
         findings: scan.findings,
+        projectedRedaction,
       });
     }
 

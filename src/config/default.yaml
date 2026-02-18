@@ -121,3 +121,4 @@ whitelist:
 logging:
   level: info
   audit_file: ~/.sentinel/audit.jsonl
+  audit_stdout: false
