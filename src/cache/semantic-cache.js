@@ -1,9 +1,8 @@
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const { cosineSimilarity, flattenToVector, resolveUserPath } = require('../engines/neural-injection-classifier');
+const { cosineSimilarity, resolveUserPath } = require('../engines/neural-injection-classifier');
 
 function sha256Hex(input) {
   return crypto.createHash('sha256').update(String(input)).digest('hex');
@@ -47,6 +46,8 @@ function normalizeCacheMode(config = {}) {
     maxEntries: Number(config.max_entries ?? 2000),
     ttlMs: Number(config.ttl_ms ?? 3600000),
     maxPromptChars: Number(config.max_prompt_chars ?? 2000),
+    maxEntryBytes: Number(config.max_entry_bytes ?? 262144),
+    maxRamMb: Number(config.max_ram_mb ?? 64),
   };
 }
 
@@ -85,8 +86,17 @@ function extractContextKey(input = {}) {
   return sha256Hex(stableStringify(payload));
 }
 
+function headersBytes(headers = {}) {
+  let total = 0;
+  for (const [key, value] of Object.entries(headers)) {
+    total += Buffer.byteLength(String(key), 'utf8');
+    total += Buffer.byteLength(String(value), 'utf8');
+  }
+  return total;
+}
+
 class SemanticCache {
-  constructor(config = {}) {
+  constructor(config = {}, deps = {}) {
     const normalized = normalizeCacheMode(config);
     this.enabled = normalized.enabled;
     this.modelId = normalized.modelId;
@@ -95,22 +105,27 @@ class SemanticCache {
     this.maxEntries = Math.max(1, Math.floor(normalized.maxEntries));
     this.ttlMs = Math.max(0, Math.floor(normalized.ttlMs));
     this.maxPromptChars = Math.max(64, Math.floor(normalized.maxPromptChars));
+    this.maxEntryBytes = Math.max(1, Math.floor(normalized.maxEntryBytes));
+    this.maxRamBytes = Math.max(this.maxEntryBytes, Math.floor(normalized.maxRamMb * 1024 * 1024));
+    this.scanWorkerPool = deps.scanWorkerPool || null;
 
-    this.embedFn = null;
-    this.embedderPromise = null;
     this.nextEntryId = 1;
     this.entries = new Map();
     this.byContext = new Map();
-    this.order = [];
+    this.order = new Map();
+    this.currentBytes = 0;
   }
 
   isEnabled() {
-    return this.enabled === true;
+    return this.enabled === true && this.scanWorkerPool?.enabled === true;
   }
 
   isEligibleRequest(input = {}) {
-    if (!this.isEnabled()) {
+    if (!this.enabled) {
       return { eligible: false, reason: 'disabled' };
+    }
+    if (!this.scanWorkerPool || this.scanWorkerPool.enabled !== true) {
+      return { eligible: false, reason: 'worker_pool_unavailable' };
     }
     if (String(input.method || '').toUpperCase() !== 'POST') {
       return { eligible: false, reason: 'method' };
@@ -144,55 +159,21 @@ class SemanticCache {
     };
   }
 
-  async loadEmbedder() {
-    if (!this.isEnabled()) {
-      return null;
-    }
-    if (this.embedFn) {
-      return this.embedFn;
-    }
-    if (this.embedderPromise) {
-      return this.embedderPromise;
-    }
-
-    this.embedderPromise = (async () => {
-      fs.mkdirSync(this.cacheDir, { recursive: true });
-      const mod = await import('@xenova/transformers');
-      const { pipeline, env } = mod;
-      if (env) {
-        env.allowRemoteModels = true;
-        env.allowLocalModels = true;
-        env.cacheDir = this.cacheDir;
-        env.localModelPath = this.cacheDir;
-      }
-      const extractor = await pipeline('feature-extraction', this.modelId, {
-        quantized: true,
-      });
-      this.embedFn = async (text) => {
-        const output = await extractor(text, {
-          pooling: 'mean',
-          normalize: true,
-        });
-        return flattenToVector(output);
-      };
-      return this.embedFn;
-    })();
-
-    try {
-      return await this.embedderPromise;
-    } catch (error) {
-      this.embedderPromise = null;
-      throw error;
-    }
-  }
-
   async embedPrompt(promptText) {
     const prompt = String(promptText || '').slice(0, this.maxPromptChars);
-    const embed = await this.loadEmbedder();
-    if (!embed) {
+    if (!prompt) {
       return [];
     }
-    return embed(prompt);
+    const result = await this.scanWorkerPool.embed({
+      text: prompt,
+      modelId: this.modelId,
+      cacheDir: this.cacheDir,
+      maxPromptChars: this.maxPromptChars,
+    });
+    if (!Array.isArray(result?.vector)) {
+      return [];
+    }
+    return result.vector;
   }
 
   isExpired(entry, now) {
@@ -202,12 +183,31 @@ class SemanticCache {
     return now - entry.createdAt > this.ttlMs;
   }
 
+  estimateEntryBytes(entry) {
+    const vectorBytes = Array.isArray(entry.vector) ? entry.vector.length * 8 : 0;
+    const responseBytes = Buffer.isBuffer(entry.response?.bodyBuffer) ? entry.response.bodyBuffer.length : 0;
+    const headerBytes = headersBytes(entry.response?.headers || {});
+    const keyBytes = Buffer.byteLength(String(entry.contextKey || ''), 'utf8');
+    // Add modest fixed overhead for object metadata.
+    return responseBytes + vectorBytes + headerBytes + keyBytes + 256;
+  }
+
+  touchEntry(entryId) {
+    if (!this.order.has(entryId)) {
+      return;
+    }
+    this.order.delete(entryId);
+    this.order.set(entryId, true);
+  }
+
   removeEntry(entryId) {
     const existing = this.entries.get(entryId);
     if (!existing) {
       return;
     }
     this.entries.delete(entryId);
+    this.currentBytes = Math.max(0, this.currentBytes - Number(existing.sizeBytes || 0));
+    this.order.delete(entryId);
     const bucket = this.byContext.get(existing.contextKey);
     if (bucket) {
       const idx = bucket.indexOf(entryId);
@@ -221,16 +221,16 @@ class SemanticCache {
   }
 
   evictIfNeeded() {
-    while (this.entries.size > this.maxEntries && this.order.length > 0) {
-      const id = this.order.shift();
-      this.removeEntry(id);
+    while ((this.entries.size > this.maxEntries || this.currentBytes > this.maxRamBytes) && this.order.size > 0) {
+      const oldest = this.order.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.removeEntry(oldest);
     }
   }
 
   async lookup(input = {}) {
-    if (!this.isEnabled()) {
-      return { hit: false, reason: 'disabled' };
-    }
     const eligibility = this.isEligibleRequest(input);
     if (!eligibility.eligible) {
       return { hit: false, reason: eligibility.reason || 'ineligible' };
@@ -267,27 +267,28 @@ class SemanticCache {
       return { hit: false, reason: 'miss' };
     }
 
+    this.touchEntry(best.entry.id);
     return {
       hit: true,
       similarity: Number(best.similarity.toFixed(4)),
       response: {
         status: best.entry.response.status,
         headers: best.entry.response.headers,
-        bodyBuffer: Buffer.from(best.entry.response.bodyBase64, 'base64'),
+        bodyBuffer: Buffer.from(best.entry.response.bodyBuffer),
       },
     };
   }
 
   async store(input = {}) {
-    if (!this.isEnabled()) {
-      return { stored: false, reason: 'disabled' };
-    }
     const eligibility = this.isEligibleRequest(input);
     if (!eligibility.eligible) {
       return { stored: false, reason: eligibility.reason || 'ineligible' };
     }
     if (!Buffer.isBuffer(input.responseBodyBuffer) || input.responseBodyBuffer.length === 0) {
       return { stored: false, reason: 'response_empty' };
+    }
+    if (input.responseBodyBuffer.length > this.maxEntryBytes) {
+      return { stored: false, reason: 'entry_too_large' };
     }
     const status = Number(input.responseStatus || 0);
     if (status < 200 || status >= 300) {
@@ -308,15 +309,17 @@ class SemanticCache {
       response: {
         status,
         headers: sanitizeResponseHeaders(input.responseHeaders || {}),
-        bodyBase64: input.responseBodyBuffer.toString('base64'),
+        bodyBuffer: Buffer.from(input.responseBodyBuffer),
       },
     };
+    entry.sizeBytes = this.estimateEntryBytes(entry);
     this.entries.set(id, entry);
+    this.currentBytes += entry.sizeBytes;
     if (!this.byContext.has(eligibility.contextKey)) {
       this.byContext.set(eligibility.contextKey, []);
     }
     this.byContext.get(eligibility.contextKey).push(id);
-    this.order.push(id);
+    this.order.set(id, true);
     this.evictIfNeeded();
     return { stored: true };
   }

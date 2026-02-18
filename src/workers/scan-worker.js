@@ -1,10 +1,15 @@
 const { parentPort } = require('worker_threads');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const { PIIScanner } = require('../engines/pii-scanner');
 const { InjectionScanner } = require('../engines/injection-scanner');
+const { flattenToVector } = require('../engines/neural-injection-classifier');
 
 const piiScannerCache = new Map();
 const injectionScannerCache = new Map();
+const embedderCache = new Map();
 
 function positiveIntOr(value, fallback) {
   const parsed = Number(value);
@@ -45,6 +50,58 @@ function getInjectionScanner(options = {}) {
   return injectionScannerCache.get(key);
 }
 
+function resolveUserPath(rawPath) {
+  if (typeof rawPath !== 'string' || rawPath.length === 0) {
+    return rawPath;
+  }
+  if (rawPath === '~') {
+    return os.homedir();
+  }
+  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) {
+    return path.join(os.homedir(), rawPath.slice(2));
+  }
+  return rawPath;
+}
+
+async function getEmbedder(options = {}) {
+  const modelId = String(options.modelId || 'Xenova/all-MiniLM-L6-v2');
+  const cacheDir = resolveUserPath(String(options.cacheDir || path.join(os.homedir(), '.sentinel', 'models')));
+  const key = `${modelId}|${cacheDir}`;
+  if (embedderCache.has(key)) {
+    return embedderCache.get(key);
+  }
+
+  const loading = (async () => {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const mod = await import('@xenova/transformers');
+    const { pipeline, env } = mod;
+    if (env) {
+      env.allowRemoteModels = true;
+      env.allowLocalModels = true;
+      env.cacheDir = cacheDir;
+      env.localModelPath = cacheDir;
+    }
+    const extractor = await pipeline('feature-extraction', modelId, {
+      quantized: true,
+    });
+    return async (text) => {
+      const output = await extractor(text, {
+        pooling: 'mean',
+        normalize: true,
+      });
+      return flattenToVector(output);
+    };
+  })();
+
+  embedderCache.set(key, loading);
+  try {
+    return await loading;
+  } catch (error) {
+    embedderCache.delete(key);
+    throw error;
+  }
+}
+
 function scanPayload(payload = {}) {
   const text = typeof payload.text === 'string' ? payload.text : '';
   const piiScanner = getPIIScanner(payload.pii || {});
@@ -69,10 +126,37 @@ function scanPayload(payload = {}) {
   };
 }
 
-parentPort.on('message', (message) => {
+async function embedPayload(payload = {}) {
+  const text = typeof payload.text === 'string' ? payload.text : '';
+  if (text.length === 0) {
+    return {
+      vector: [],
+    };
+  }
+
+  const maxChars = positiveIntOr(payload.maxPromptChars, 2000);
+  const truncatedText = text.length > maxChars ? text.slice(0, maxChars) : text;
+  const embed = await getEmbedder({
+    modelId: payload.modelId,
+    cacheDir: payload.cacheDir,
+  });
+  const vector = await embed(truncatedText);
+  return {
+    vector,
+    truncated: truncatedText.length !== text.length,
+  };
+}
+
+parentPort.on('message', async (message) => {
   const id = message?.id;
+  const kind = message?.kind || 'scan';
   try {
-    const result = scanPayload(message?.payload || {});
+    let result;
+    if (kind === 'embed') {
+      result = await embedPayload(message?.payload || {});
+    } else {
+      result = scanPayload(message?.payload || {});
+    }
     parentPort.postMessage({
       id,
       ok: true,

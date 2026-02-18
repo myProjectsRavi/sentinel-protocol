@@ -20,6 +20,8 @@ const SEMANTIC_CACHE_KEYS = new Set([
   'max_entries',
   'ttl_ms',
   'max_prompt_chars',
+  'max_entry_bytes',
+  'max_ram_mb',
 ]);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -204,6 +206,8 @@ function applyDefaults(config) {
   semanticCache.max_entries = Number(semanticCache.max_entries ?? 2000);
   semanticCache.ttl_ms = Number(semanticCache.ttl_ms ?? 3600000);
   semanticCache.max_prompt_chars = Number(semanticCache.max_prompt_chars ?? 2000);
+  semanticCache.max_entry_bytes = Number(semanticCache.max_entry_bytes ?? 262144);
+  semanticCache.max_ram_mb = Number(semanticCache.max_ram_mb ?? 64);
 
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
@@ -387,6 +391,16 @@ function validateConfigShape(config) {
       '`runtime.semantic_cache.max_prompt_chars` must be integer > 0',
       details
     );
+    assertType(
+      Number.isInteger(semanticCache.max_entry_bytes) && semanticCache.max_entry_bytes > 0,
+      '`runtime.semantic_cache.max_entry_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(semanticCache.max_ram_mb)) && Number(semanticCache.max_ram_mb) > 0,
+      '`runtime.semantic_cache.max_ram_mb` must be number > 0',
+      details
+    );
   }
   const dashboard = runtime.dashboard || {};
   if (runtime.dashboard !== undefined) {
@@ -400,6 +414,9 @@ function validateConfigShape(config) {
     );
     assertType(typeof dashboard.auth_token === 'string', '`runtime.dashboard.auth_token` must be string', details);
     assertType(typeof dashboard.allow_remote === 'boolean', '`runtime.dashboard.allow_remote` must be boolean', details);
+    if (dashboard.allow_remote === true && String(dashboard.auth_token || '').length === 0) {
+      details.push('`runtime.dashboard.auth_token` must be non-empty when `runtime.dashboard.allow_remote=true`');
+    }
   }
 
   const retry = runtime.upstream?.retry || {};

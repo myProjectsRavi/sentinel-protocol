@@ -110,6 +110,14 @@ class ScanWorkerPool {
   }
 
   async scan(payload) {
+    return this.dispatchTask('scan', payload);
+  }
+
+  async embed(payload) {
+    return this.dispatchTask('embed', payload);
+  }
+
+  async dispatchTask(kind, payload) {
     if (!this.enabled) {
       throw new Error('scan worker pool disabled');
     }
@@ -143,6 +151,7 @@ class ScanWorkerPool {
       });
       info.worker.postMessage({
         id: taskId,
+        kind,
         payload,
       });
     });

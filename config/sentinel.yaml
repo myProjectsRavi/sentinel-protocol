@@ -24,11 +24,13 @@ runtime:
     max_entries: 2000
     ttl_ms: 3600000
     max_prompt_chars: 2000
+    max_entry_bytes: 262144
+    max_ram_mb: 64
   dashboard:
     enabled: false
     host: 127.0.0.1
     port: 8788
-    auth_token: ""
+    auth_token: "" # required if allow_remote=true
     allow_remote: false
   telemetry:
     enabled: true

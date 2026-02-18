@@ -206,7 +206,15 @@ class SentinelServer {
       mirrorStdout: this.config.logging?.audit_stdout === true,
     });
     this.vcrStore = new VCRStore(this.config.runtime?.vcr || {});
-    this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {});
+    this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {}, {
+      scanWorkerPool: this.scanWorkerPool,
+    });
+    if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
+      logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
+        semantic_cache_enabled: true,
+        worker_pool_enabled: this.scanWorkerPool?.enabled === true,
+      });
+    }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
@@ -709,7 +717,17 @@ class SentinelServer {
         contentType: req.headers['content-type'],
         wantsStream,
       };
-      const vcrLookup = this.vcrStore.lookup(vcrRequestMeta);
+      let vcrLookup;
+      try {
+        vcrLookup = await this.vcrStore.lookup(vcrRequestMeta);
+      } catch (error) {
+        vcrLookup = {
+          hit: false,
+          strictReplay: false,
+        };
+        warnings.push('vcr_lookup_error');
+        this.stats.warnings_total += 1;
+      }
       let replayedFromVcr = false;
       let replayedFromSemanticCache = false;
       let semanticCacheHeader = null;

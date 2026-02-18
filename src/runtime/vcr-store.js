@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const readline = require('readline');
 
 const { SENTINEL_HOME } = require('../utils/paths');
 
@@ -78,47 +79,67 @@ class VCRStore {
     this.replayIndex = new Map();
     this.writeTail = Promise.resolve();
     this.loaded = false;
-
-    if (this.enabled && this.mode === 'replay') {
-      this.loadTape();
-    }
+    this.loadPromise = null;
   }
 
   isActive() {
     return this.enabled && this.mode !== 'off';
   }
 
-  loadTape() {
-    this.loaded = true;
+  async loadTape() {
     if (!fs.existsSync(this.tapePath)) {
+      this.loaded = true;
       return;
     }
 
-    const raw = fs.readFileSync(this.tapePath, 'utf8');
-    if (!raw) {
-      return;
-    }
+    const stream = fs.createReadStream(this.tapePath, {
+      encoding: 'utf8',
+      highWaterMark: 64 * 1024,
+    });
+    const rl = readline.createInterface({
+      input: stream,
+      crlfDelay: Infinity,
+    });
 
-    const lines = raw.split('\n');
-    for (const line of lines) {
-      if (!line) {
-        continue;
+    try {
+      for await (const line of rl) {
+        if (!line) {
+          continue;
+        }
+        const entry = safeParseLine(line);
+        if (!entry || typeof entry.signature !== 'string' || !entry.response) {
+          continue;
+        }
+        if (!this.replayIndex.has(entry.signature)) {
+          this.replayIndex.set(entry.signature, entry);
+        }
+        this.entryCount += 1;
+        if (this.entryCount >= this.maxEntries) {
+          rl.close();
+          stream.destroy();
+          break;
+        }
       }
-      const entry = safeParseLine(line);
-      if (!entry || typeof entry.signature !== 'string' || !entry.response) {
-        continue;
-      }
-      if (!this.replayIndex.has(entry.signature)) {
-        this.replayIndex.set(entry.signature, entry);
-      }
-      this.entryCount += 1;
-      if (this.entryCount >= this.maxEntries) {
-        break;
-      }
+      this.loaded = true;
+    } finally {
+      rl.close();
+      stream.destroy();
     }
   }
 
-  lookup(requestMeta = {}) {
+  async ensureLoaded() {
+    if (this.loaded) {
+      return;
+    }
+    if (!this.loadPromise) {
+      this.loadPromise = this.loadTape().finally(() => {
+        this.loadPromise = null;
+      });
+    }
+    await this.loadPromise;
+  }
+
+  async lookup(requestMeta = {}) {
     if (!this.enabled || this.mode !== 'replay') {
       return {
         hit: false,
@@ -126,9 +147,7 @@ class VCRStore {
       };
     }
 
-    if (!this.loaded) {
-      this.loadTape();
-    }
+    await this.ensureLoaded();
 
     const signature = buildSignature(requestMeta);
     const entry = this.replayIndex.get(signature);

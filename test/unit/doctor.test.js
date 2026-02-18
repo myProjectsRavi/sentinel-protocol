@@ -3,6 +3,7 @@ const { runDoctorChecks, detectRapidApiKeySource } = require('../../src/runtime/
 function configForMode(mode, overrides = {}) {
   const rapidapiOverrides = overrides.rapidapi || {};
   const semanticOverrides = overrides.semantic || {};
+  const runtimeOverrides = overrides.runtime || {};
   return {
     pii: {
       provider_mode: mode,
@@ -22,6 +23,15 @@ function configForMode(mode, overrides = {}) {
         max_scan_bytes: 32768,
         ...semanticOverrides,
       },
+    },
+    runtime: {
+      worker_pool: {
+        enabled: true,
+      },
+      semantic_cache: {
+        enabled: false,
+      },
+      ...runtimeOverrides,
     },
   };
 }
@@ -76,5 +86,16 @@ describe('doctor checks', () => {
       },
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'semantic-scanner-dependency')).toBe(true);
+  });
+
+  test('fails when semantic cache enabled but worker pool disabled', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        worker_pool: { enabled: false },
+        semantic_cache: { enabled: true },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'semantic-cache-worker-pool' && check.status === 'fail')).toBe(true);
   });
 });

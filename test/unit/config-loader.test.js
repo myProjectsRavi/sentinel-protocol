@@ -74,4 +74,19 @@ describe('config loader and migration', () => {
       loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
     }).toThrow(/Unknown key: config.pii_enable/);
   });
+
+  test('fails validation when dashboard remote mode has no auth token', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.dashboard.enabled = true;
+    base.runtime.dashboard.allow_remote = true;
+    base.runtime.dashboard.auth_token = '';
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/dashboard\.auth_token.*allow_remote=true/);
+  });
 });

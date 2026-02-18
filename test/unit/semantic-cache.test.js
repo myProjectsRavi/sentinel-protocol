@@ -2,20 +2,24 @@ const { SemanticCache } = require('../../src/cache/semantic-cache');
 
 describe('SemanticCache', () => {
   test('stores and returns semantically similar responses when enabled', async () => {
+    const scanWorkerPool = {
+      enabled: true,
+      embed: async ({ text }) => {
+        const input = String(text || '').toLowerCase();
+        if (input.includes('france') && input.includes('capital')) return { vector: [1, 0] };
+        if (input.includes('france')) return { vector: [0.9, 0.1] };
+        return { vector: [0, 1] };
+      },
+    };
     const cache = new SemanticCache({
       enabled: true,
       similarity_threshold: 0.8,
       max_entries: 10,
       ttl_ms: 60000,
       max_prompt_chars: 1000,
-    });
-
-    cache.embedFn = async (text) => {
-      const input = String(text || '').toLowerCase();
-      if (input.includes('france') && input.includes('capital')) return [1, 0];
-      if (input.includes('france')) return [0.9, 0.1];
-      return [0, 1];
-    };
+      max_entry_bytes: 1024,
+      max_ram_mb: 1,
+    }, { scanWorkerPool });
 
     const request = {
       provider: 'openai',
@@ -60,5 +64,50 @@ describe('SemanticCache', () => {
     });
     expect(result.hit).toBe(false);
     expect(result.reason).toBe('disabled');
+  });
+
+  test('rejects oversized responses by max_entry_bytes', async () => {
+    const scanWorkerPool = {
+      enabled: true,
+      embed: async () => ({ vector: [1, 0, 0] }),
+    };
+    const cache = new SemanticCache({
+      enabled: true,
+      max_entry_bytes: 32,
+    }, { scanWorkerPool });
+
+    const storeResult = await cache.store({
+      provider: 'openai',
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      wantsStream: false,
+      bodyJson: {
+        model: 'gpt-test',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      responseStatus: 200,
+      responseHeaders: { 'content-type': 'application/json' },
+      responseBodyBuffer: Buffer.from(JSON.stringify({ very_large: 'x'.repeat(200) })),
+    });
+
+    expect(storeResult.stored).toBe(false);
+    expect(storeResult.reason).toBe('entry_too_large');
+  });
+
+  test('requires worker pool when cache is enabled', async () => {
+    const cache = new SemanticCache({
+      enabled: true,
+    });
+
+    const result = await cache.lookup({
+      provider: 'openai',
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      wantsStream: false,
+      bodyJson: { messages: [{ role: 'user', content: 'hello' }] },
+    });
+
+    expect(result.hit).toBe(false);
+    expect(result.reason).toBe('worker_pool_unavailable');
   });
 });

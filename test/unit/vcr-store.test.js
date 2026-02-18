@@ -45,14 +45,14 @@ describe('VCRStore', () => {
       strict_replay: true,
     });
 
-    const hit = replay.lookup(requestMeta);
+    const hit = await replay.lookup(requestMeta);
     expect(hit.hit).toBe(true);
     expect(hit.response.status).toBe(200);
     expect(hit.response.headers.authorization).toBeUndefined();
     expect(hit.response.bodyBuffer.toString('utf8')).toBe(responseBody.toString('utf8'));
   });
 
-  test('returns miss and strict replay flag when no entry exists', () => {
+  test('returns miss and strict replay flag when no entry exists', async () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-home-vcr-'));
     process.env.SENTINEL_HOME = tmpHome;
     jest.resetModules();
@@ -65,7 +65,7 @@ describe('VCRStore', () => {
       strict_replay: true,
     });
 
-    const miss = replay.lookup({
+    const miss = await replay.lookup({
       provider: 'custom',
       method: 'GET',
       pathWithQuery: '/v1/models',

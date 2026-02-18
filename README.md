@@ -77,10 +77,13 @@ runtime:
   semantic_cache:
     enabled: false # experimental, opt-in
     similarity_threshold: 0.95
+    max_entry_bytes: 262144
+    max_ram_mb: 64
   dashboard:
     enabled: false
     host: 127.0.0.1
     port: 8788
+    auth_token: "" # required when allow_remote=true
 pii:
   redaction:
     mode: placeholder # placeholder | format_preserving
@@ -133,6 +136,10 @@ Enable local dashboard for current run:
 node ./cli/sentinel.js start --dashboard
 # dashboard: http://127.0.0.1:8788
 ```
+
+Security note:
+- `runtime.dashboard.allow_remote=true` requires `runtime.dashboard.auth_token` (enforced by config validation).
+- Semantic cache embeddings run in worker threads; keep `runtime.worker_pool.enabled=true`.
 
 ## Docker
 

@@ -27,6 +27,8 @@ This document maps Sentinel v1 hardenings to 20 common OWASP-style risk classes 
 21. Test determinism / replay safety: VCR `record|replay` mode with strict replay fail-closed option.
 22. Data minimization during masking: deterministic format-preserving pseudonymization mode.
 23. Cost-abuse reduction: experimental semantic cache with strict opt-in defaults.
+24. Semantic cache memory-safety: per-entry size limits + total cache RAM budget.
+25. Startup blocking resilience: VCR replay tape loads asynchronously (non-blocking startup).
 
 ## Current Gaps (Planned)
 

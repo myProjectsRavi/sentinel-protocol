@@ -60,6 +60,7 @@ function runDoctorChecks(config, env = process.env) {
   const semantic = config?.pii?.semantic || {};
   const semanticCache = config?.runtime?.semantic_cache || {};
   const dashboard = config?.runtime?.dashboard || {};
+  const workerPool = config?.runtime?.worker_pool || {};
   const fallbackToLocal = rapidapi.fallback_to_local !== false;
   const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
 
@@ -152,6 +153,15 @@ function runDoctorChecks(config, env = process.env) {
   }
 
   if (semanticCache.enabled === true) {
+    checks.push({
+      id: 'semantic-cache-worker-pool',
+      status: workerPool.enabled === false ? 'fail' : 'pass',
+      message:
+        workerPool.enabled === false
+          ? 'Semantic cache requires runtime.worker_pool.enabled=true for off-main-thread embeddings.'
+          : 'Worker pool enabled for semantic cache embedding tasks.',
+    });
+
     let hasDependency = true;
     try {
       require.resolve('@xenova/transformers');
