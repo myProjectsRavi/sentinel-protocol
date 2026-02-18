@@ -10,6 +10,11 @@ proxy:
 runtime:
   fail_open: false
   scanner_error_action: allow
+  worker_pool:
+    enabled: true
+    size: 2
+    queue_limit: 1024
+    task_timeout_ms: 2000
   telemetry:
     enabled: true
   upstream:
@@ -44,12 +49,21 @@ pii:
     endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
     host: "pii-firewall-edge.p.rapidapi.com"
     timeout_ms: 4000
+    max_timeout_ms: 1500
+    cache_max_entries: 1024
+    cache_ttl_ms: 300000
     request_body_field: text
     fallback_to_local: true
     allow_non_rapidapi_host: false
     # BYOK only. Keep empty and inject via SENTINEL_RAPIDAPI_KEY in production.
     api_key: ""
     extra_body: {}
+  egress:
+    enabled: true
+    max_scan_bytes: 65536
+    stream_enabled: true
+    sse_line_max_bytes: 16384
+    stream_block_mode: redact
   semantic:
     enabled: false
     model_id: Xenova/bert-base-NER
@@ -62,6 +76,14 @@ injection:
   threshold: 0.8
   max_scan_bytes: 131072
   action: block
+  neural:
+    enabled: false
+    model_id: Xenova/all-MiniLM-L6-v2
+    cache_dir: "~/.sentinel/models"
+    max_scan_bytes: 32768
+    timeout_ms: 1200
+    weight: 1
+    mode: max
 
 rules:
   - name: block-destructive-delete

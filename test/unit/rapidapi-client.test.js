@@ -78,4 +78,50 @@ describe('RapidApiPIIClient', () => {
 
     await expect(client.scan('hello world', {})).rejects.toThrow(/rapidapi.com/i);
   });
+
+  test('uses in-memory cache to avoid duplicate upstream calls for identical text', async () => {
+    global.fetch = jest.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          findings: [{ type: 'email', severity: 'medium', value: 'john@example.com' }],
+          redacted_text: 'hello [REDACTED_EMAIL_ADDRESS]',
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      );
+    });
+
+    const client = new RapidApiPIIClient({
+      endpoint: 'https://pii-firewall-edge.p.rapidapi.com/redact',
+      host: 'pii-firewall-edge.p.rapidapi.com',
+      timeout_ms: 2000,
+      max_timeout_ms: 1500,
+      cache_max_entries: 32,
+      cache_ttl_ms: 10000,
+      request_body_field: 'text',
+      api_key: 'config-key',
+    });
+
+    const first = await client.scan('hello john@example.com', {});
+    const second = await client.scan('hello john@example.com', {});
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(first.cacheHit).toBe(false);
+    expect(second.cacheHit).toBe(true);
+  });
+
+  test('caps effective timeout to max_timeout_ms', () => {
+    const client = new RapidApiPIIClient({
+      endpoint: 'https://pii-firewall-edge.p.rapidapi.com/redact',
+      host: 'pii-firewall-edge.p.rapidapi.com',
+      timeout_ms: 5000,
+      max_timeout_ms: 1200,
+      request_body_field: 'text',
+      api_key: 'config-key',
+    });
+
+    expect(client.timeoutMs).toBe(1200);
+  });
 });

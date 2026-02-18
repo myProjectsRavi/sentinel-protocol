@@ -46,6 +46,14 @@ class PolicyEngine {
     return toolName === expected;
   }
 
+  scanInjection(bodyText, providedInjectionResult) {
+    return this.injectionConfig.enabled === false
+      ? { score: 0, matchedSignals: [], scanTruncated: false }
+      : providedInjectionResult || this.injectionScanner.scan(bodyText || '', {
+          maxScanBytes: this.injectionConfig.max_scan_bytes,
+        });
+  }
+
   check(context) {
     const {
       method,
@@ -60,11 +68,7 @@ class PolicyEngine {
       injectionResult: providedInjectionResult,
     } = context;
 
-    const injectionResult = this.injectionConfig.enabled === false
-      ? { score: 0, matchedSignals: [], scanTruncated: false }
-      : providedInjectionResult || this.injectionScanner.scan(bodyText || '', {
-          maxScanBytes: this.injectionConfig.max_scan_bytes,
-        });
+    const injectionResult = this.scanInjection(bodyText, providedInjectionResult);
 
     if (this.isWhitelisted(hostname)) {
       return {

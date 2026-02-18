@@ -1,12 +1,15 @@
+const os = require('os');
+
 const VALID_MODES = new Set(['monitor', 'warn', 'enforce']);
 const VALID_ACTIONS = new Set(['allow', 'block', 'warn']);
 const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
 const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
 const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'injection', 'rules', 'whitelist', 'logging']);
 const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
-const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream']);
+const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream', 'worker_pool']);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets']);
+const WORKER_POOL_KEYS = new Set(['enabled', 'size', 'queue_limit', 'task_timeout_ms']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
 const CIRCUIT_BREAKER_KEYS = new Set([
   'enabled',
@@ -26,11 +29,15 @@ const PII_KEYS = new Set([
   'severity_actions',
   'rapidapi',
   'semantic',
+  'egress',
 ]);
 const PII_SEVERITY_KEYS = new Set(['critical', 'high', 'medium', 'low']);
 const PII_SEMANTIC_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'score_threshold', 'max_scan_bytes']);
-const INJECTION_KEYS = new Set(['enabled', 'threshold', 'max_scan_bytes', 'action']);
+const PII_EGRESS_KEYS = new Set(['enabled', 'max_scan_bytes', 'stream_enabled', 'sse_line_max_bytes', 'stream_block_mode']);
+const INJECTION_KEYS = new Set(['enabled', 'threshold', 'max_scan_bytes', 'action', 'neural']);
 const INJECTION_ACTIONS = new Set(['allow', 'block', 'warn']);
+const INJECTION_NEURAL_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'max_scan_bytes', 'timeout_ms', 'weight', 'mode']);
+const INJECTION_NEURAL_MODES = new Set(['max', 'blend']);
 const RAPIDAPI_KEYS = new Set([
   'endpoint',
   'host',
@@ -40,6 +47,9 @@ const RAPIDAPI_KEYS = new Set([
   'allow_non_rapidapi_host',
   'api_key',
   'extra_body',
+  'cache_max_entries',
+  'cache_ttl_ms',
+  'max_timeout_ms',
 ]);
 const RULE_KEYS = new Set(['name', 'match', 'action', 'message']);
 const RULE_MATCH_KEYS = new Set([
@@ -153,6 +163,15 @@ function applyDefaults(config) {
   customTargets.allowlist = Array.isArray(customTargets.allowlist) ? customTargets.allowlist : [];
   customTargets.block_private_networks = customTargets.block_private_networks !== false;
 
+  normalized.runtime.worker_pool = normalized.runtime.worker_pool || {};
+  const workerPool = normalized.runtime.worker_pool;
+  workerPool.enabled = workerPool.enabled !== false;
+  workerPool.size = Number(
+    workerPool.size ?? Math.max(1, Math.min(4, (os.cpus()?.length || 2) - 1))
+  );
+  workerPool.queue_limit = Number(workerPool.queue_limit ?? 1024);
+  workerPool.task_timeout_ms = Number(workerPool.task_timeout_ms ?? 2000);
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
@@ -172,6 +191,9 @@ function applyDefaults(config) {
   normalized.pii.rapidapi.fallback_to_local = normalized.pii.rapidapi.fallback_to_local !== false;
   normalized.pii.rapidapi.allow_non_rapidapi_host = normalized.pii.rapidapi.allow_non_rapidapi_host === true;
   normalized.pii.rapidapi.api_key = normalized.pii.rapidapi.api_key || '';
+  normalized.pii.rapidapi.cache_max_entries = Number(normalized.pii.rapidapi.cache_max_entries ?? 1024);
+  normalized.pii.rapidapi.cache_ttl_ms = Number(normalized.pii.rapidapi.cache_ttl_ms ?? 300000);
+  normalized.pii.rapidapi.max_timeout_ms = Number(normalized.pii.rapidapi.max_timeout_ms ?? 1500);
   normalized.pii.rapidapi.extra_body =
     normalized.pii.rapidapi.extra_body && typeof normalized.pii.rapidapi.extra_body === 'object'
       ? normalized.pii.rapidapi.extra_body
@@ -182,12 +204,28 @@ function applyDefaults(config) {
   normalized.pii.semantic.cache_dir = normalized.pii.semantic.cache_dir || '~/.sentinel/models';
   normalized.pii.semantic.score_threshold = Number(normalized.pii.semantic.score_threshold ?? 0.6);
   normalized.pii.semantic.max_scan_bytes = Number(normalized.pii.semantic.max_scan_bytes ?? 32768);
+  normalized.pii.egress = normalized.pii.egress || {};
+  normalized.pii.egress.enabled = normalized.pii.egress.enabled !== false;
+  normalized.pii.egress.max_scan_bytes = Number(normalized.pii.egress.max_scan_bytes ?? 65536);
+  normalized.pii.egress.stream_enabled = normalized.pii.egress.stream_enabled !== false;
+  normalized.pii.egress.sse_line_max_bytes = Number(normalized.pii.egress.sse_line_max_bytes ?? 16384);
+  normalized.pii.egress.stream_block_mode = normalized.pii.egress.stream_block_mode === 'terminate' ? 'terminate' : 'redact';
 
   normalized.injection = normalized.injection || {};
   normalized.injection.enabled = normalized.injection.enabled !== false;
   normalized.injection.threshold = Number(normalized.injection.threshold ?? 0.8);
   normalized.injection.max_scan_bytes = Number(normalized.injection.max_scan_bytes ?? 131072);
   normalized.injection.action = normalized.injection.action || 'block';
+  normalized.injection.neural = normalized.injection.neural || {};
+  normalized.injection.neural.enabled = normalized.injection.neural.enabled === true;
+  normalized.injection.neural.model_id = normalized.injection.neural.model_id || 'Xenova/all-MiniLM-L6-v2';
+  normalized.injection.neural.cache_dir = normalized.injection.neural.cache_dir || '~/.sentinel/models';
+  normalized.injection.neural.max_scan_bytes = Number(normalized.injection.neural.max_scan_bytes ?? 32768);
+  normalized.injection.neural.timeout_ms = Number(normalized.injection.neural.timeout_ms ?? 1200);
+  normalized.injection.neural.weight = Number(normalized.injection.neural.weight ?? 1);
+  normalized.injection.neural.mode = INJECTION_NEURAL_MODES.has(String(normalized.injection.neural.mode || '').toLowerCase())
+    ? String(normalized.injection.neural.mode || '').toLowerCase()
+    : 'max';
 
   normalized.whitelist = normalized.whitelist || {};
   normalized.whitelist.domains = Array.isArray(normalized.whitelist.domains) ? normalized.whitelist.domains : [];
@@ -236,6 +274,26 @@ function validateConfigShape(config) {
     '`runtime.scanner_error_action` must be allow|block',
     details
   );
+  const workerPool = runtime.worker_pool || {};
+  if (runtime.worker_pool !== undefined) {
+    assertNoUnknownKeys(workerPool, WORKER_POOL_KEYS, 'runtime.worker_pool', details);
+    assertType(typeof workerPool.enabled === 'boolean', '`runtime.worker_pool.enabled` must be boolean', details);
+    assertType(
+      Number.isInteger(workerPool.size) && workerPool.size > 0 && workerPool.size <= 32,
+      '`runtime.worker_pool.size` must be integer between 1 and 32',
+      details
+    );
+    assertType(
+      Number.isInteger(workerPool.queue_limit) && workerPool.queue_limit > 0,
+      '`runtime.worker_pool.queue_limit` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(workerPool.task_timeout_ms) && workerPool.task_timeout_ms > 0,
+      '`runtime.worker_pool.task_timeout_ms` must be integer > 0',
+      details
+    );
+  }
 
   const retry = runtime.upstream?.retry || {};
   const upstream = runtime.upstream || {};
@@ -315,6 +373,24 @@ function validateConfigShape(config) {
       );
       assertType(rapidapi.api_key === undefined || typeof rapidapi.api_key === 'string', '`pii.rapidapi.api_key` must be string', details);
       assertType(
+        rapidapi.cache_max_entries === undefined ||
+          (Number.isInteger(rapidapi.cache_max_entries) && rapidapi.cache_max_entries > 0),
+        '`pii.rapidapi.cache_max_entries` must be integer > 0',
+        details
+      );
+      assertType(
+        rapidapi.cache_ttl_ms === undefined ||
+          (Number.isInteger(rapidapi.cache_ttl_ms) && rapidapi.cache_ttl_ms >= 0),
+        '`pii.rapidapi.cache_ttl_ms` must be integer >= 0',
+        details
+      );
+      assertType(
+        rapidapi.max_timeout_ms === undefined ||
+          (Number.isInteger(rapidapi.max_timeout_ms) && rapidapi.max_timeout_ms > 0),
+        '`pii.rapidapi.max_timeout_ms` must be integer > 0',
+        details
+      );
+      assertType(
         rapidapi.extra_body === undefined ||
           (rapidapi.extra_body && typeof rapidapi.extra_body === 'object' && !Array.isArray(rapidapi.extra_body)),
         '`pii.rapidapi.extra_body` must be object',
@@ -336,6 +412,27 @@ function validateConfigShape(config) {
       assertType(
         Number.isInteger(semantic.max_scan_bytes) && semantic.max_scan_bytes > 0,
         '`pii.semantic.max_scan_bytes` must be integer > 0',
+        details
+      );
+    }
+    if (pii.egress !== undefined) {
+      const egress = pii.egress || {};
+      assertNoUnknownKeys(egress, PII_EGRESS_KEYS, 'pii.egress', details);
+      assertType(typeof egress.enabled === 'boolean', '`pii.egress.enabled` must be boolean', details);
+      assertType(
+        Number.isInteger(egress.max_scan_bytes) && egress.max_scan_bytes > 0,
+        '`pii.egress.max_scan_bytes` must be integer > 0',
+        details
+      );
+      assertType(typeof egress.stream_enabled === 'boolean', '`pii.egress.stream_enabled` must be boolean', details);
+      assertType(
+        Number.isInteger(egress.sse_line_max_bytes) && egress.sse_line_max_bytes > 0,
+        '`pii.egress.sse_line_max_bytes` must be integer > 0',
+        details
+      );
+      assertType(
+        egress.stream_block_mode === undefined || ['redact', 'terminate'].includes(String(egress.stream_block_mode)),
+        '`pii.egress.stream_block_mode` must be redact|terminate',
         details
       );
     }
@@ -362,6 +459,33 @@ function validateConfigShape(config) {
       '`injection.action` must be one of: allow, block, warn',
       details
     );
+    if (injection.neural !== undefined) {
+      const neural = injection.neural || {};
+      assertNoUnknownKeys(neural, INJECTION_NEURAL_KEYS, 'injection.neural', details);
+      assertType(typeof neural.enabled === 'boolean', '`injection.neural.enabled` must be boolean', details);
+      assertType(typeof neural.model_id === 'string', '`injection.neural.model_id` must be string', details);
+      assertType(typeof neural.cache_dir === 'string', '`injection.neural.cache_dir` must be string', details);
+      assertType(
+        Number.isInteger(neural.max_scan_bytes) && neural.max_scan_bytes > 0,
+        '`injection.neural.max_scan_bytes` must be integer > 0',
+        details
+      );
+      assertType(
+        Number.isInteger(neural.timeout_ms) && neural.timeout_ms > 0,
+        '`injection.neural.timeout_ms` must be integer > 0',
+        details
+      );
+      assertType(
+        Number.isFinite(Number(neural.weight)) && Number(neural.weight) >= 0 && Number(neural.weight) <= 2,
+        '`injection.neural.weight` must be between 0 and 2',
+        details
+      );
+      assertType(
+        INJECTION_NEURAL_MODES.has(String(neural.mode)),
+        '`injection.neural.mode` must be max|blend',
+        details
+      );
+    }
   }
 
   assertType(Array.isArray(config.whitelist?.domains), '`whitelist.domains` must be an array', details);

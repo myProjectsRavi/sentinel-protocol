@@ -5,8 +5,11 @@ Sentinel Protocol is a local firewall for AI agents.
 It provides:
 - Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
+- Bi-directional protection: ingress request scanning + egress response scanning/redaction
 - PII provider modes: `local`, `rapidapi`, `hybrid` (with local fallback controls)
 - Heuristic prompt-injection detection (`injection_threshold` policy matching)
+- Optional neural injection classifier (`injection.neural.*`) with weighted merge
+- Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
@@ -39,10 +42,27 @@ Configure in `sentinel.yaml`:
 ```yaml
 pii:
   provider_mode: local # local | rapidapi | hybrid
+  egress:
+    enabled: true
+    max_scan_bytes: 65536
+    stream_enabled: true
+    sse_line_max_bytes: 16384
+    stream_block_mode: redact # redact | terminate
   rapidapi:
     endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
     host: "pii-firewall-edge.p.rapidapi.com"
+    max_timeout_ms: 1500
+    cache_max_entries: 1024
+    cache_ttl_ms: 300000
     fallback_to_local: true
+injection:
+  threshold: 0.8
+  neural:
+    enabled: false
+    model_id: "Xenova/all-MiniLM-L6-v2"
+    timeout_ms: 1200
+    weight: 1
+    mode: max # max | blend
 ```
 
 Key resolution priority for `rapidapi` and `hybrid`:
@@ -124,4 +144,5 @@ See docs:
 - `docs/DEMO_VIDEO_SCRIPT.md`
 - `docs/INTEGRATIONS.md`
 - `docs/RELIABILITY_PROOF.md`
+- `docs/OWASP-HARDENING.md`
 - `BENCHMARKS.md`

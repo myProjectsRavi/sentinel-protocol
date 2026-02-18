@@ -6,6 +6,8 @@ const logger = require('./utils/logger');
 const { PIIScanner } = require('./engines/pii-scanner');
 const { PolicyEngine } = require('./engines/policy-engine');
 const { InMemoryRateLimiter } = require('./engines/rate-limiter');
+const { NeuralInjectionClassifier } = require('./engines/neural-injection-classifier');
+const { mergeInjectionResults } = require('./engines/injection-merge');
 const { resolveProvider } = require('./upstream/router');
 const { UpstreamClient } = require('./upstream/client');
 const { RuntimeOverrideManager } = require('./runtime/override');
@@ -15,6 +17,9 @@ const { StatusStore } = require('./status/store');
 const { loadOptimizerPlugin } = require('./optimizer/loader');
 const { createTelemetry } = require('./telemetry');
 const { PIIProviderEngine } = require('./pii/provider-engine');
+const { scanBufferedResponse } = require('./egress/response-scanner');
+const { SSERedactionTransform } = require('./egress/sse-redaction-transform');
+const { ScanWorkerPool } = require('./workers/scan-pool');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -102,6 +107,32 @@ function scrubForwardHeaders(inputHeaders = {}) {
   return headers;
 }
 
+function filterUpstreamResponseHeaders(responseHeaders = {}) {
+  const connectionTokens = new Set(
+    String(responseHeaders.connection || '')
+      .split(',')
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const filtered = {};
+  for (const [key, value] of Object.entries(responseHeaders)) {
+    const lowered = String(key).toLowerCase();
+    if (lowered === 'content-length') {
+      continue;
+    }
+    if (HOP_BY_HOP_HEADERS.has(lowered) || connectionTokens.has(lowered)) {
+      continue;
+    }
+    filtered[key] = value;
+  }
+  return filtered;
+}
+
+function positiveIntOr(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
 class SentinelServer {
   constructor(config, options = {}) {
     ensureSentinelHome();
@@ -120,6 +151,11 @@ class SentinelServer {
       pii_provider_fallbacks: 0,
       rapidapi_error_count: 0,
       upstream_errors: 0,
+      egress_detected: 0,
+      egress_redacted: 0,
+      egress_blocked: 0,
+      egress_stream_redacted: 0,
+      scan_worker_fallbacks: 0,
       warnings_total: 0,
     };
 
@@ -138,6 +174,7 @@ class SentinelServer {
       localScanner: this.piiScanner,
       telemetry: this.telemetry,
     });
+    this.neuralInjectionClassifier = new NeuralInjectionClassifier(config.injection?.neural || {});
     this.circuitBreakers = new CircuitBreakerManager(config.runtime.upstream.circuit_breaker);
     this.upstreamClient = new UpstreamClient({
       timeoutMs: config.proxy.timeout_ms,
@@ -145,6 +182,13 @@ class SentinelServer {
       circuitBreakers: this.circuitBreakers,
       telemetry: this.telemetry,
     });
+    this.scanWorkerPool = null;
+    try {
+      this.scanWorkerPool = new ScanWorkerPool(config.runtime?.worker_pool || {});
+    } catch (error) {
+      logger.warn('Scan worker pool unavailable; using main-thread scanners', { error: error.message });
+      this.scanWorkerPool = null;
+    }
 
     this.overrideManager = new RuntimeOverrideManager(OVERRIDE_FILE_PATH);
     this.auditLogger = new AuditLogger(AUDIT_LOG_PATH);
@@ -187,6 +231,17 @@ class SentinelServer {
     this.statusStore.write(this.currentStatusPayload());
   }
 
+  getEgressConfig() {
+    const egress = this.config?.pii?.egress || {};
+    return {
+      enabled: egress.enabled !== false,
+      maxScanBytes: positiveIntOr(egress.max_scan_bytes, 65536),
+      streamEnabled: egress.stream_enabled !== false,
+      sseLineMaxBytes: positiveIntOr(egress.sse_line_max_bytes, 16384),
+      streamBlockMode: egress.stream_block_mode === 'terminate' ? 'terminate' : 'redact',
+    };
+  }
+
   setupApp() {
     this.app.use(
       express.raw({
@@ -219,6 +274,7 @@ class SentinelServer {
     this.app.all('*', async (req, res) => {
       const correlationId = uuidv4();
       const method = req.method.toUpperCase();
+      res.setHeader('x-sentinel-correlation-id', correlationId);
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       let bodyText = rawBody.toString('utf8');
       const parsedPath = new URL(req.originalUrl, 'http://localhost');
@@ -243,7 +299,7 @@ class SentinelServer {
           effective_mode: this.computeEffectiveMode(),
         };
         this.telemetry.recordLatencyMs(latencyMs, attrs);
-        if (decision === 'blocked_policy' || decision === 'blocked_pii') {
+        if (decision === 'blocked_policy' || decision === 'blocked_pii' || decision === 'blocked_egress') {
           this.telemetry.addBlocked(attrs);
         }
         if (decision === 'upstream_error' || decision === 'stream_error') {
@@ -251,6 +307,19 @@ class SentinelServer {
         }
         this.telemetry.endSpan(requestSpan, attrs, error);
       };
+
+      if (method === 'TRACE' || method === 'CONNECT') {
+        finalizeRequestTelemetry({
+          decision: 'method_not_allowed',
+          status: 405,
+          providerName: 'unknown',
+        });
+        return res.status(405).json({
+          error: 'METHOD_NOT_ALLOWED',
+          message: `HTTP method ${method} is not allowed by Sentinel.`,
+          correlation_id: correlationId,
+        });
+      }
 
       this.stats.requests_total += 1;
       this.telemetry.addRequest({
@@ -320,6 +389,49 @@ class SentinelServer {
       }
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
+      let precomputedLocalScan = null;
+      let precomputedInjection = null;
+
+      const canUseScanWorkers =
+        this.scanWorkerPool?.enabled === true &&
+        this.config.pii?.enabled !== false &&
+        this.config.pii?.semantic?.enabled !== true &&
+        bodyText.length > 0;
+      if (canUseScanWorkers) {
+        try {
+          const workerScan = await this.scanWorkerPool.scan({
+            text: bodyText,
+            pii: {
+              maxScanBytes: this.config.pii.max_scan_bytes,
+              regexSafetyCapBytes: this.config.pii.regex_safety_cap_bytes,
+            },
+            injection: {
+              enabled: this.config.injection?.enabled !== false,
+              maxScanBytes: this.config.injection?.max_scan_bytes,
+            },
+          });
+          precomputedLocalScan = workerScan.piiResult || null;
+          precomputedInjection = workerScan.injectionResult || null;
+        } catch (error) {
+          this.stats.scan_worker_fallbacks += 1;
+          warnings.push('scan_worker_fallback_main_thread');
+          this.stats.warnings_total += 1;
+        }
+      }
+
+      let injectionResult = precomputedInjection;
+      if (this.neuralInjectionClassifier.enabled && bodyText.length > 0) {
+        const baseInjection = injectionResult || this.policyEngine.scanInjection(bodyText);
+        const neuralResult = await this.neuralInjectionClassifier.classify(bodyText, {
+          maxScanBytes: this.config.injection?.neural?.max_scan_bytes,
+          timeoutMs: this.config.injection?.neural?.timeout_ms,
+        });
+        if (neuralResult.error) {
+          warnings.push('injection_neural_error');
+          this.stats.warnings_total += 1;
+        }
+        injectionResult = mergeInjectionResults(baseInjection, neuralResult, this.config.injection?.neural || {});
+      }
 
       let providerHostname;
       try {
@@ -352,6 +464,7 @@ class SentinelServer {
         headers: req.headers,
         provider,
         rateLimitKey: req.headers['x-sentinel-agent-id'],
+        injectionResult,
       });
 
       const injectionScore = Number(policyDecision.injection?.score || 0);
@@ -418,11 +531,14 @@ class SentinelServer {
       let redactedCount = 0;
       let piiTypes = [];
       let piiProviderUsed = 'local';
+      const egressConfig = this.getEgressConfig();
 
       if (this.config.pii.enabled) {
         let piiEvaluation;
         try {
-          piiEvaluation = await this.piiProviderEngine.scan(bodyText, req.headers);
+          piiEvaluation = await this.piiProviderEngine.scan(bodyText, req.headers, {
+            precomputedLocal: precomputedLocalScan,
+          });
         } catch (error) {
           if (String(error.kind || '').startsWith('rapidapi_')) {
             this.stats.rapidapi_error_count += 1;
@@ -589,7 +705,7 @@ class SentinelServer {
       if (!upstream.ok) {
         this.stats.upstream_errors += 1;
         responseHeaderDiagnostics(res, diagnostics);
-        for (const [key, value] of Object.entries(upstream.responseHeaders || {})) {
+        for (const [key, value] of Object.entries(filterUpstreamResponseHeaders(upstream.responseHeaders || {}))) {
           res.setHeader(key, value);
         }
 
@@ -622,22 +738,60 @@ class SentinelServer {
         responseHeaderDiagnostics(res, diagnostics);
       }
 
-      for (const [key, value] of Object.entries(upstream.responseHeaders || {})) {
-        if (key === 'transfer-encoding' || key === 'content-length' || key === 'connection') {
-          continue;
-        }
+      for (const [key, value] of Object.entries(filterUpstreamResponseHeaders(upstream.responseHeaders || {}))) {
         res.setHeader(key, value);
       }
 
       if (upstream.isStream) {
         res.status(upstream.status);
         let streamedBytes = 0;
+        let streamOut = upstream.bodyStream;
+        let streamTerminatedForPII = false;
+        const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
 
-        upstream.bodyStream.on('data', (chunk) => {
+        if (egressConfig.enabled && egressConfig.streamEnabled && upstreamContentType.includes('text/event-stream')) {
+          const streamRedactor = new SSERedactionTransform({
+            scanner: this.piiScanner,
+            maxScanBytes: egressConfig.maxScanBytes,
+            maxLineBytes: egressConfig.sseLineMaxBytes,
+            severityActions: this.config.pii?.severity_actions || {},
+            effectiveMode,
+            streamBlockMode: egressConfig.streamBlockMode,
+            onDetection: ({ action }) => {
+              this.stats.egress_detected += 1;
+              if (action === 'redact') {
+                this.stats.egress_stream_redacted += 1;
+              }
+              if (action === 'block' && egressConfig.streamBlockMode === 'terminate' && !streamTerminatedForPII) {
+                streamTerminatedForPII = true;
+                this.stats.blocked_total += 1;
+                this.stats.egress_blocked += 1;
+                res.setHeader('x-sentinel-egress-action', 'stream_terminate');
+                warnings.push('egress_stream_blocked');
+                this.stats.warnings_total += 1;
+                setImmediate(() => {
+                  if (typeof upstream.bodyStream.destroy === 'function') {
+                    upstream.bodyStream.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                  if (typeof streamOut.destroy === 'function') {
+                    streamOut.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                  if (!res.destroyed) {
+                    res.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                });
+              }
+            },
+          });
+          streamOut = streamOut.pipe(streamRedactor);
+          res.setHeader('x-sentinel-egress-stream', egressConfig.streamBlockMode === 'terminate' ? 'terminate' : 'redact');
+        }
+
+        streamOut.on('data', (chunk) => {
           streamedBytes += chunk.length;
         });
 
-        upstream.bodyStream.on('end', () => {
+        streamOut.on('end', () => {
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
             correlation_id: correlationId,
@@ -661,7 +815,31 @@ class SentinelServer {
           });
         });
 
-        upstream.bodyStream.on('error', (error) => {
+        streamOut.on('error', (error) => {
+          if (streamTerminatedForPII && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_egress_stream',
+              reasons: ['egress_stream_blocked'],
+              pii_types: piiTypes,
+              redactions: redactedCount,
+              duration_ms: Date.now() - start,
+              request_bytes: bodyBuffer.length,
+              response_status: 499,
+              response_bytes: streamedBytes,
+              provider,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_egress',
+              status: 499,
+              providerName: provider,
+            });
+            return;
+          }
           this.stats.upstream_errors += 1;
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
@@ -688,8 +866,80 @@ class SentinelServer {
           res.destroy(error);
         });
 
-        upstream.bodyStream.pipe(res);
+        streamOut.pipe(res);
         return;
+      }
+
+      let outboundBody = upstream.body;
+      if (egressConfig.enabled) {
+        const egressResult = scanBufferedResponse({
+          bodyBuffer: outboundBody,
+          contentType: upstream.responseHeaders?.['content-type'],
+          scanner: this.piiScanner,
+          maxScanBytes: egressConfig.maxScanBytes,
+          severityActions: this.config.pii?.severity_actions || {},
+          effectiveMode,
+        });
+
+        if (egressResult.detected) {
+          this.stats.egress_detected += 1;
+          warnings.push(`egress_pii:${egressResult.severity}`);
+          if (egressResult.redacted) {
+            this.stats.egress_redacted += 1;
+            outboundBody = egressResult.bodyBuffer;
+            res.setHeader('x-sentinel-egress-action', 'redact');
+          }
+          if (egressResult.redactionSkipped) {
+            warnings.push('egress_redaction_skipped_truncated');
+            this.stats.warnings_total += 1;
+          }
+
+          if (egressResult.blocked) {
+            this.stats.blocked_total += 1;
+            this.stats.egress_blocked += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider,
+              retryCount: upstream.diagnostics.retryCount || 0,
+              circuitState: this.circuitBreakers.getProviderState(provider).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            res.setHeader('x-sentinel-egress-action', 'block');
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_egress',
+              reasons: ['egress_pii_detected'],
+              pii_types: egressResult.piiTypes,
+              redactions: 0,
+              duration_ms: durationMs,
+              request_bytes: bodyBuffer.length,
+              response_status: 403,
+              response_bytes: 0,
+              provider,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_egress',
+              status: 403,
+              providerName: provider,
+            });
+            return res.status(403).json({
+              error: 'EGRESS_PII_DETECTED',
+              reason: 'egress_pii_detected',
+              pii_types: egressResult.piiTypes,
+              correlation_id: correlationId,
+            });
+          }
+        }
+      }
+
+      if (warnings.length > 0) {
+        res.setHeader('x-sentinel-warning', warnings.join(','));
       }
 
       this.auditLogger.write({
@@ -704,7 +954,7 @@ class SentinelServer {
         duration_ms: durationMs,
         request_bytes: bodyBuffer.length,
         response_status: upstream.status,
-        response_bytes: upstream.body.length,
+        response_bytes: outboundBody.length,
         provider,
       });
 
@@ -714,7 +964,7 @@ class SentinelServer {
         status: upstream.status,
         providerName: provider,
       });
-      res.status(upstream.status).send(upstream.body);
+      res.status(upstream.status).send(outboundBody);
     });
   }
 
@@ -764,6 +1014,9 @@ class SentinelServer {
     });
 
     await this.upstreamClient.close();
+    if (this.scanWorkerPool) {
+      await this.scanWorkerPool.close();
+    }
     await this.auditLogger.close({ timeoutMs: 5000 });
 
     if (fs.existsSync(PID_FILE_PATH)) {

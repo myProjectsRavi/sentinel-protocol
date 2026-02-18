@@ -1,4 +1,5 @@
 const { URL } = require('url');
+const crypto = require('crypto');
 
 function safeJsonParse(text) {
   try {
@@ -99,6 +100,54 @@ function classifyStatus(statusCode) {
   return 'rapidapi_error';
 }
 
+function classifyFetchError(error) {
+  const name = String(error?.name || '');
+  if (name === 'TimeoutError' || name === 'AbortError') {
+    return 'rapidapi_timeout';
+  }
+  return 'rapidapi_transport';
+}
+
+function hashText(input) {
+  return crypto.createHash('sha256').update(String(input || ''), 'utf8').digest('hex');
+}
+
+class LruTtlCache {
+  constructor(options = {}) {
+    this.maxEntries = Number(options.maxEntries || 1024);
+    this.ttlMs = Number(options.ttlMs || 300000);
+    this.map = new Map();
+  }
+
+  get(key) {
+    if (!this.map.has(key)) {
+      return null;
+    }
+    const entry = this.map.get(key);
+    if (Date.now() > entry.expiresAt) {
+      this.map.delete(key);
+      return null;
+    }
+    this.map.delete(key);
+    this.map.set(key, entry);
+    return entry.value;
+  }
+
+  set(key, value) {
+    if (this.maxEntries <= 0 || this.ttlMs < 0) {
+      return;
+    }
+    while (this.map.size >= this.maxEntries) {
+      const oldest = this.map.keys().next().value;
+      this.map.delete(oldest);
+    }
+    this.map.set(key, {
+      value,
+      expiresAt: Date.now() + this.ttlMs,
+    });
+  }
+}
+
 function validateEndpoint(endpoint, allowNonRapidApiHost) {
   let parsed;
   try {
@@ -125,7 +174,18 @@ function validateEndpoint(endpoint, allowNonRapidApiHost) {
 class RapidApiPIIClient {
   constructor(config = {}) {
     this.config = config;
-    this.timeoutMs = Number(config.timeout_ms ?? 4000);
+    this.maxTimeoutMs = Number(config.max_timeout_ms ?? 1500);
+    this.timeoutMs = Math.min(Number(config.timeout_ms ?? 4000), this.maxTimeoutMs);
+    this.cache = new LruTtlCache({
+      maxEntries: Number(config.cache_max_entries ?? 1024),
+      ttlMs: Number(config.cache_ttl_ms ?? 300000),
+    });
+  }
+
+  buildCacheKey(text, field, endpoint) {
+    const endpointKey = String(endpoint || '');
+    const fieldKey = String(field || 'text');
+    return `${endpointKey}|${fieldKey}|${hashText(text)}`;
   }
 
   async scan(text, requestHeaders = {}) {
@@ -139,22 +199,36 @@ class RapidApiPIIClient {
 
     const host = deriveRapidApiHost(endpoint, this.config.host);
     const field = this.config.request_body_field || 'text';
+    const cacheKey = this.buildCacheKey(text, field, endpoint);
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return {
+        ...cached,
+        cacheHit: true,
+      };
+    }
     const payload = {
       [field]: text,
       ...(typeof this.config.extra_body === 'object' && this.config.extra_body ? this.config.extra_body : {}),
     };
 
     const signal = AbortSignal.timeout(this.timeoutMs);
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-rapidapi-key': apiKey,
-        'x-rapidapi-host': host,
-      },
-      body: JSON.stringify(payload),
-      signal,
-    });
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-rapidapi-key': apiKey,
+          'x-rapidapi-host': host,
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+    } catch (error) {
+      error.kind = classifyFetchError(error);
+      throw error;
+    }
 
     const raw = await response.text();
     if (!response.ok) {
@@ -168,13 +242,22 @@ class RapidApiPIIClient {
     const json = safeJsonParse(raw);
     const extracted = extractResponsePayload(json);
 
-    return {
+    const result = {
       findings: extracted.findings,
       redactedText: extracted.redactedText || text,
       highestSeverity: highestSeverity(extracted.findings),
       scanTruncated: false,
       rawResponse: json,
+      cacheHit: false,
     };
+    this.cache.set(cacheKey, {
+      findings: result.findings,
+      redactedText: result.redactedText,
+      highestSeverity: result.highestSeverity,
+      scanTruncated: result.scanTruncated,
+      rawResponse: result.rawResponse,
+    });
+    return result;
   }
 }
 

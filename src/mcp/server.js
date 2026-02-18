@@ -4,6 +4,8 @@ const util = require('util');
 const { PIIScanner } = require('../engines/pii-scanner');
 const { PolicyEngine } = require('../engines/policy-engine');
 const { InMemoryRateLimiter } = require('../engines/rate-limiter');
+const { NeuralInjectionClassifier } = require('../engines/neural-injection-classifier');
+const { mergeInjectionResults } = require('../engines/injection-merge');
 const { PIIProviderEngine } = require('../pii/provider-engine');
 const { resolveProvider } = require('../upstream/router');
 
@@ -35,6 +37,7 @@ class SentinelMCPGovernance {
     this.config = config;
     this.rateLimiter = new InMemoryRateLimiter();
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
+    this.neuralInjectionClassifier = new NeuralInjectionClassifier(config.injection?.neural || {});
     this.piiScanner = new PIIScanner({
       maxScanBytes: config.pii.max_scan_bytes,
       regexSafetyCapBytes: config.pii.regex_safety_cap_bytes,
@@ -73,6 +76,15 @@ class SentinelMCPGovernance {
       bodyText = JSON.stringify(bodyJson);
     }
 
+    let injectionResult = this.policyEngine.scanInjection(bodyText || '');
+    if (this.neuralInjectionClassifier.enabled && bodyText) {
+      const neural = await this.neuralInjectionClassifier.classify(bodyText, {
+        maxScanBytes: this.config.injection?.neural?.max_scan_bytes,
+        timeoutMs: this.config.injection?.neural?.timeout_ms,
+      });
+      injectionResult = mergeInjectionResults(injectionResult, neural, this.config.injection?.neural || {});
+    }
+
     const policyDecision = this.policyEngine.check({
       method,
       hostname: resolved.upstreamHostname || new URL(resolved.baseUrl).hostname,
@@ -83,6 +95,7 @@ class SentinelMCPGovernance {
       headers,
       provider: resolved.provider,
       rateLimitKey: headers['x-sentinel-agent-id'] || 'mcp',
+      injectionResult,
     });
 
     const warnings = [];

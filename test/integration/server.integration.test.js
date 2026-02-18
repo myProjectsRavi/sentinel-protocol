@@ -159,6 +159,43 @@ describe('sentinel integration', () => {
     expect(response.headers['x-sentinel-warning']).toBeDefined();
   });
 
+  test('redacts medium PII from upstream buffered response', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ output: 'contact john@example.com' }));
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'enforce' }));
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'hello world' });
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('[REDACTED_EMAIL_ADDRESS]');
+    expect(response.text).not.toContain('john@example.com');
+    expect(response.headers['x-sentinel-egress-action']).toBe('redact');
+  });
+
+  test('blocks critical PII from upstream buffered response in enforce mode', async () => {
+    upstream = await startUpstream((req, res) =>
+      res.status(200).json({ output: 'openai key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefgh' })
+    );
+    sentinel = new SentinelServer(createBaseConfig({ mode: 'enforce' }));
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'hello world' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('EGRESS_PII_DETECTED');
+    expect(response.headers['x-sentinel-egress-action']).toBe('block');
+  });
+
   test('blocks prompt injection when injection_threshold rule matches', async () => {
     upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
     sentinel = new SentinelServer(

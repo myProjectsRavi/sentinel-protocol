@@ -105,8 +105,8 @@ class PIIProviderEngine {
     }
   }
 
-  async scanLocal(text) {
-    const local = this.localScanner.scan(text, {
+  async scanLocal(text, options = {}) {
+    const local = options.precomputedLocal || this.localScanner.scan(text, {
       maxScanBytes: this.config.max_scan_bytes,
       regexSafetyCapBytes: this.config.regex_safety_cap_bytes,
     });
@@ -118,12 +118,12 @@ class PIIProviderEngine {
     return this.rapidClient.scan(text, headers);
   }
 
-  async scan(text, headers = {}) {
+  async scan(text, headers = {}, options = {}) {
     const mode = String(this.config.provider_mode || 'local').toLowerCase();
     const fallbackEnabled = this.config.rapidapi?.fallback_to_local !== false;
 
     if (mode === 'local') {
-      const local = await this.scanLocal(text);
+      const local = await this.scanLocal(text, options);
       return {
         result: local.result,
         meta: {
@@ -153,7 +153,7 @@ class PIIProviderEngine {
           throw error;
         }
         this.telemetry?.addUpstreamError({ provider: 'rapidapi', reason: error.kind || 'rapidapi_error' });
-        const local = await this.scanLocal(text);
+        const local = await this.scanLocal(text, options);
         return {
           result: local.result,
           meta: {
@@ -168,7 +168,7 @@ class PIIProviderEngine {
     }
 
     // hybrid mode: local always + rapidapi best effort
-    const local = await this.scanLocal(text);
+    const local = await this.scanLocal(text, options);
     try {
       const rapid = await this.scanRapid(text, headers);
       return {
