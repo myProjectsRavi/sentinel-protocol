@@ -504,6 +504,70 @@ describe('sentinel integration', () => {
     expect(text).toContain('data: second');
   });
 
+  test('charges budget on partial stream bytes when egress kill-switch terminates stream', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'text/event-stream');
+      res.setHeader('cache-control', 'no-cache');
+      res.write('data: hello\\n\\n');
+      setTimeout(() => {
+        res.write('data: openai key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefgh\\n\\n');
+      }, 10);
+      setTimeout(() => {
+        res.end();
+      }, 40);
+    });
+
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'enforce',
+        runtime: {
+          budget: {
+            enabled: true,
+            action: 'block',
+            daily_limit_usd: 5,
+            chars_per_token: 1,
+            input_cost_per_1k_tokens: 1,
+            output_cost_per_1k_tokens: 1,
+            store_file: path.join(os.tmpdir(), `sentinel-budget-stream-${Date.now()}.json`),
+          },
+        },
+        pii: {
+          severity_actions: {
+            critical: 'block',
+            high: 'block',
+            medium: 'redact',
+            low: 'log',
+          },
+          egress: {
+            enabled: true,
+            max_scan_bytes: 65536,
+            stream_enabled: true,
+            sse_line_max_bytes: 16384,
+            stream_block_mode: 'terminate',
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    await request(server)
+      .post('/v1/stream')
+      .set('accept', 'text/event-stream')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ stream: true, messages: [{ role: 'user', content: 'stream me' }] })
+      .catch(() => undefined);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(sentinel.stats.budget_charged_usd).toBeGreaterThan(0);
+    const snapshot = sentinel.budgetStore.snapshot();
+    expect(snapshot.requests).toBeGreaterThan(0);
+    expect(snapshot.spentUsd).toBeGreaterThan(0);
+  });
+
   test('retries once on upstream 429 for idempotent method', async () => {
     let hits = 0;
     upstream = await startUpstream((req, res) => {

@@ -1098,26 +1098,40 @@ class SentinelServer {
           streamedBytes += chunk.length;
         });
 
-        streamOut.on('end', async () => {
-          let budgetCharge = null;
-          try {
-            budgetCharge = await this.budgetStore.recordStream({
-              provider: routedProvider,
-              requestBodyBuffer: bodyBuffer,
-              streamedBytes,
-              replayedFromVcr,
-              replayedFromSemanticCache,
-              correlationId,
-            });
-            if (budgetCharge.charged) {
-              this.stats.budget_charged_usd = Number(
-                (this.stats.budget_charged_usd + Number(budgetCharge.chargedUsd || 0)).toFixed(6)
-              );
-            }
-          } catch {
-            warnings.push('budget_record_error');
-            this.stats.warnings_total += 1;
+        let streamBudgetFinalizePromise = null;
+        const finalizeStreamBudget = async () => {
+          if (streamBudgetFinalizePromise) {
+            return streamBudgetFinalizePromise;
           }
+
+          streamBudgetFinalizePromise = (async () => {
+            try {
+              const budgetCharge = await this.budgetStore.recordStream({
+                provider: routedProvider,
+                requestBodyBuffer: bodyBuffer,
+                streamedBytes,
+                replayedFromVcr,
+                replayedFromSemanticCache,
+                correlationId,
+              });
+              if (budgetCharge?.charged) {
+                this.stats.budget_charged_usd = Number(
+                  (this.stats.budget_charged_usd + Number(budgetCharge.chargedUsd || 0)).toFixed(6)
+                );
+              }
+              return budgetCharge;
+            } catch {
+              warnings.push('budget_record_error');
+              this.stats.warnings_total += 1;
+              return null;
+            }
+          })();
+
+          return streamBudgetFinalizePromise;
+        };
+
+        streamOut.on('end', async () => {
+          const budgetCharge = await finalizeStreamBudget();
 
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
@@ -1155,22 +1169,57 @@ class SentinelServer {
         });
 
         streamOut.on('error', (error) => {
-          if (streamTerminatedForPII && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
+          void (async () => {
+            const budgetCharge = await finalizeStreamBudget();
+            if (streamTerminatedForPII && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
+              this.auditLogger.write({
+                timestamp: new Date().toISOString(),
+                correlation_id: correlationId,
+                config_version: this.config.version,
+                mode: effectiveMode,
+                decision: 'blocked_egress_stream',
+                reasons: ['egress_stream_blocked'],
+                pii_types: piiTypes,
+                egress_pii_types: Array.from(streamEgressTypes).sort(),
+                egress_projected_redaction: streamProjectedRedaction || undefined,
+                egress_block_severity: streamBlockedSeverity || undefined,
+                redactions: redactedCount,
+                duration_ms: Date.now() - start,
+                request_bytes: bodyBuffer.length,
+                response_status: 499,
+                response_bytes: streamedBytes,
+                provider: routedProvider,
+                upstream_target: routedTarget,
+                failover_used: upstream.route?.failoverUsed === true,
+                route_source: routePlan.routeSource,
+                route_group: routePlan.selectedGroup || undefined,
+                route_contract: routePlan.desiredContract,
+                requested_target: routePlan.requestedTarget,
+                budget_charged_usd: budgetCharge?.chargedUsd,
+                budget_spent_usd: budgetCharge?.spentUsd,
+                budget_remaining_usd: budgetCharge?.remainingUsd,
+              });
+              this.writeStatus();
+              finalizeRequestTelemetry({
+                decision: 'blocked_egress',
+                status: 499,
+                providerName: routedProvider,
+              });
+              return;
+            }
+            this.stats.upstream_errors += 1;
             this.auditLogger.write({
               timestamp: new Date().toISOString(),
               correlation_id: correlationId,
               config_version: this.config.version,
               mode: effectiveMode,
-              decision: 'blocked_egress_stream',
-              reasons: ['egress_stream_blocked'],
+              decision: 'stream_error',
+              reasons: [error.message || 'stream_error'],
               pii_types: piiTypes,
-              egress_pii_types: Array.from(streamEgressTypes).sort(),
-              egress_projected_redaction: streamProjectedRedaction || undefined,
-              egress_block_severity: streamBlockedSeverity || undefined,
               redactions: redactedCount,
               duration_ms: Date.now() - start,
               request_bytes: bodyBuffer.length,
-              response_status: 499,
+              response_status: upstream.status,
               response_bytes: streamedBytes,
               provider: routedProvider,
               upstream_target: routedTarget,
@@ -1179,45 +1228,26 @@ class SentinelServer {
               route_group: routePlan.selectedGroup || undefined,
               route_contract: routePlan.desiredContract,
               requested_target: routePlan.requestedTarget,
+              budget_charged_usd: budgetCharge?.chargedUsd,
+              budget_spent_usd: budgetCharge?.spentUsd,
+              budget_remaining_usd: budgetCharge?.remainingUsd,
             });
             this.writeStatus();
             finalizeRequestTelemetry({
-              decision: 'blocked_egress',
-              status: 499,
+              decision: 'stream_error',
+              status: upstream.status,
               providerName: routedProvider,
+              error,
             });
-            return;
-          }
-          this.stats.upstream_errors += 1;
-          this.auditLogger.write({
-            timestamp: new Date().toISOString(),
-            correlation_id: correlationId,
-            config_version: this.config.version,
-            mode: effectiveMode,
-            decision: 'stream_error',
-            reasons: [error.message || 'stream_error'],
-            pii_types: piiTypes,
-            redactions: redactedCount,
-            duration_ms: Date.now() - start,
-            request_bytes: bodyBuffer.length,
-            response_status: upstream.status,
-            response_bytes: streamedBytes,
-            provider: routedProvider,
-            upstream_target: routedTarget,
-            failover_used: upstream.route?.failoverUsed === true,
-            route_source: routePlan.routeSource,
-            route_group: routePlan.selectedGroup || undefined,
-            route_contract: routePlan.desiredContract,
-            requested_target: routePlan.requestedTarget,
+            if (!res.destroyed) {
+              res.destroy(error);
+            }
+          })().catch((handlerError) => {
+            logger.warn('stream error handler failed', {
+              correlationId,
+              error: handlerError.message,
+            });
           });
-          this.writeStatus();
-          finalizeRequestTelemetry({
-            decision: 'stream_error',
-            status: upstream.status,
-            providerName: routedProvider,
-            error,
-          });
-          res.destroy(error);
         });
 
         streamOut.pipe(res);
