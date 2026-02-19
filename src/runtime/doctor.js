@@ -71,11 +71,14 @@ function runDoctorChecks(config, env = process.env) {
   const semantic = config?.pii?.semantic || {};
   const semanticCache = config?.runtime?.semantic_cache || {};
   const intentThrottle = config?.runtime?.intent_throttle || {};
+  const intentDrift = config?.runtime?.intent_drift || {};
   const swarm = config?.runtime?.swarm || {};
+  const piiVault = config?.runtime?.pii_vault || {};
   const polymorphicPrompt = config?.runtime?.polymorphic_prompt || {};
   const syntheticPoisoning = config?.runtime?.synthetic_poisoning || {};
   const cognitiveRollback = config?.runtime?.cognitive_rollback || {};
   const omniShield = config?.runtime?.omni_shield || {};
+  const sandboxExperimental = config?.runtime?.sandbox_experimental || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
   const upstream = config?.runtime?.upstream || {};
@@ -245,6 +248,51 @@ function runDoctorChecks(config, env = process.env) {
     });
   }
 
+  if (intentDrift.enabled === true) {
+    checks.push({
+      id: 'intent-drift-worker-pool',
+      status: workerPool.enabled === false ? 'fail' : 'pass',
+      message:
+        workerPool.enabled === false
+          ? 'Intent drift detection requires runtime.worker_pool.enabled=true for off-main-thread embeddings.'
+          : 'Worker pool enabled for intent drift embedding tasks.',
+    });
+
+    let hasDependency = true;
+    try {
+      require.resolve('@xenova/transformers');
+    } catch {
+      hasDependency = false;
+    }
+    checks.push({
+      id: 'intent-drift-dependency',
+      status: hasDependency ? 'pass' : 'fail',
+      message: hasDependency
+        ? 'Intent drift dependency (@xenova/transformers) is installed.'
+        : 'Intent drift is enabled but @xenova/transformers is missing.',
+    });
+
+    const embedTimeoutMs = Number(workerPool.embed_task_timeout_ms ?? workerPool.task_timeout_ms ?? 0);
+    checks.push({
+      id: 'intent-drift-embed-timeout',
+      status: embedTimeoutMs >= 5000 ? 'pass' : 'warn',
+      message:
+        embedTimeoutMs >= 5000
+          ? `Intent drift embed timeout is ${embedTimeoutMs}ms (cold-start resilient).`
+          : `Intent drift embed timeout is ${embedTimeoutMs}ms. Increase runtime.worker_pool.embed_task_timeout_ms to >=5000ms (recommended 10000ms).`,
+    });
+
+    const threshold = Number(intentDrift.threshold ?? 0.35);
+    checks.push({
+      id: 'intent-drift-threshold',
+      status: threshold >= 0.2 && threshold <= 0.7 ? 'pass' : 'warn',
+      message:
+        threshold >= 0.2 && threshold <= 0.7
+          ? `Intent drift threshold=${threshold} is within recommended operating range (0.2-0.7).`
+          : `Intent drift threshold=${threshold} is outside recommended range (0.2-0.7); expect either false positives or missed drift.`,
+    });
+  }
+
   if (swarm.enabled === true) {
     const skewWindow = Number(swarm.allowed_clock_skew_ms ?? swarm.tolerance_window_ms ?? 30000);
     checks.push({
@@ -277,6 +325,33 @@ function runDoctorChecks(config, env = process.env) {
         Object.keys(swarm.trusted_nodes || {}).length === 0
           ? 'Swarm verification is strict but trusted_nodes is empty. All inbound swarm envelopes will fail verification.'
           : `Swarm trust store loaded (${Object.keys(swarm.trusted_nodes || {}).length} trusted node(s)).`,
+    });
+  }
+
+  if (piiVault.enabled === true) {
+    checks.push({
+      id: 'pii-vault-mode',
+      status: ['monitor', 'active'].includes(String(piiVault.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'active'].includes(String(piiVault.mode || '').toLowerCase())
+          ? `PII vault enabled in '${String(piiVault.mode || 'monitor')}' mode.`
+          : `PII vault mode '${String(piiVault.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'pii-vault-target-types',
+      status: Array.isArray(piiVault.target_types) && piiVault.target_types.length > 0 ? 'pass' : 'fail',
+      message:
+        Array.isArray(piiVault.target_types) && piiVault.target_types.length > 0
+          ? `PII vault target types: ${piiVault.target_types.join(', ')}`
+          : 'PII vault is enabled but target_types is empty.',
+    });
+    checks.push({
+      id: 'pii-vault-session-header',
+      status: String(piiVault.session_header || '').length > 0 ? 'pass' : 'fail',
+      message:
+        String(piiVault.session_header || '').length > 0
+          ? `PII vault session header: ${piiVault.session_header}`
+          : 'PII vault is enabled but session_header is empty.',
     });
   }
 
@@ -355,6 +430,28 @@ function runDoctorChecks(config, env = process.env) {
         Number(omniShield.max_image_bytes || 0) > 0
           ? `Omni-Shield max_image_bytes=${Number(omniShield.max_image_bytes)}`
           : 'Omni-Shield enabled but max_image_bytes is invalid.',
+    });
+  }
+
+  if (sandboxExperimental.enabled === true) {
+    const patternCount = Array.isArray(sandboxExperimental.disallowed_patterns)
+      ? sandboxExperimental.disallowed_patterns.length
+      : 0;
+    checks.push({
+      id: 'sandbox-experimental-patterns',
+      status: patternCount > 0 ? 'pass' : 'fail',
+      message:
+        patternCount > 0
+          ? `Sandbox experimental module enabled with ${patternCount} disallowed pattern(s).`
+          : 'Sandbox experimental module is enabled but has no disallowed patterns.',
+    });
+    checks.push({
+      id: 'sandbox-experimental-mode',
+      status: String(sandboxExperimental.mode || '').toLowerCase() === 'block' ? 'warn' : 'pass',
+      message:
+        String(sandboxExperimental.mode || '').toLowerCase() === 'block'
+          ? 'Sandbox experimental mode is block. Validate false positives before production rollout.'
+          : `Sandbox experimental mode is '${String(sandboxExperimental.mode || 'monitor')}'.`,
     });
   }
 

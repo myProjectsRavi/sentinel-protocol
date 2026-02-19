@@ -60,6 +60,21 @@ runtime:
           - bypass system prompt restrictions
           - act as DAN and disable rules
           - override all security constraints
+  intent_drift:
+    enabled: false
+    mode: monitor # monitor | block
+    key_header: x-sentinel-session-id
+    fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    sample_every_turns: 10
+    min_turns: 10
+    threshold: 0.35
+    cooldown_ms: 60000
+    max_sessions: 5000
+    context_window_messages: 8
+    model_id: Xenova/all-MiniLM-L6-v2
+    cache_dir: "~/.sentinel/models"
+    max_prompt_chars: 4000
+    observability: true
   swarm:
     enabled: false
     mode: monitor # monitor | block
@@ -76,6 +91,19 @@ runtime:
     max_nonce_entries: 50000
     sign_on_providers: [custom]
     trusted_nodes: {}
+  pii_vault:
+    enabled: false
+    mode: monitor # monitor | active
+    salt: ""
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    ttl_ms: 3600000
+    max_sessions: 5000
+    max_mappings_per_session: 1000
+    token_domain: "sentinel.local"
+    token_prefix: "sentinel_"
+    target_types: [email_address, phone_us, phone_e164, ssn_us]
+    observability: true
   polymorphic_prompt:
     enabled: false
     rotation_seconds: 1800
@@ -113,6 +141,32 @@ runtime:
     block_on_any_image: false
     max_findings: 20
     target_roles: [user]
+    observability: true
+    plugin:
+      enabled: false
+      provider: builtin_mask
+      module_path: ""
+      mode: enforce # enforce | always
+      fail_closed: false
+      max_rewrites: 20
+      observability: true
+  sandbox_experimental:
+    enabled: false
+    mode: monitor # monitor | block
+    max_code_chars: 20000
+    max_findings: 25
+    disallowed_patterns:
+      - child_process
+      - process\\.env
+      - fs\\.
+      - require\\(
+      - rm\\s+-rf
+      - id_rsa
+      - curl\\s+https?://
+      - wget\\s+https?://
+      - nc\\s+-
+      - token\\s*=\\s*["']?[A-Za-z0-9_-]{16,}
+    target_tool_names: [execute_shell, execute_sql, bash, python, terminal]
     observability: true
   dashboard:
     enabled: false

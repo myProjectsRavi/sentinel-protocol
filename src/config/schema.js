@@ -15,11 +15,14 @@ const RUNTIME_KEYS = new Set([
   'vcr',
   'semantic_cache',
   'intent_throttle',
+  'intent_drift',
   'swarm',
+  'pii_vault',
   'polymorphic_prompt',
   'synthetic_poisoning',
   'cognitive_rollback',
   'omni_shield',
+  'sandbox_experimental',
   'dashboard',
   'budget',
   'loop_breaker',
@@ -71,6 +74,23 @@ const INTENT_THROTTLE_KEYS = new Set([
 ]);
 const INTENT_THROTTLE_MODES = new Set(['monitor', 'block']);
 const INTENT_THROTTLE_CLUSTER_KEYS = new Set(['name', 'phrases', 'min_similarity']);
+const INTENT_DRIFT_KEYS = new Set([
+  'enabled',
+  'mode',
+  'key_header',
+  'fallback_key_headers',
+  'sample_every_turns',
+  'min_turns',
+  'threshold',
+  'cooldown_ms',
+  'max_sessions',
+  'context_window_messages',
+  'model_id',
+  'cache_dir',
+  'max_prompt_chars',
+  'observability',
+]);
+const INTENT_DRIFT_MODES = new Set(['monitor', 'block']);
 const SWARM_KEYS = new Set([
   'enabled',
   'mode',
@@ -90,6 +110,21 @@ const SWARM_KEYS = new Set([
 ]);
 const SWARM_MODES = new Set(['monitor', 'block']);
 const SWARM_TRUSTED_NODE_KEYS = new Set(['public_key_pem']);
+const PII_VAULT_KEYS = new Set([
+  'enabled',
+  'mode',
+  'salt',
+  'session_header',
+  'fallback_headers',
+  'ttl_ms',
+  'max_sessions',
+  'max_mappings_per_session',
+  'token_domain',
+  'token_prefix',
+  'target_types',
+  'observability',
+]);
+const PII_VAULT_MODES = new Set(['monitor', 'active']);
 const POLYMORPHIC_PROMPT_KEYS = new Set([
   'enabled',
   'rotation_seconds',
@@ -133,8 +168,29 @@ const OMNI_SHIELD_KEYS = new Set([
   'max_findings',
   'target_roles',
   'observability',
+  'plugin',
 ]);
 const OMNI_SHIELD_MODES = new Set(['monitor', 'block']);
+const OMNI_SHIELD_PLUGIN_KEYS = new Set([
+  'enabled',
+  'provider',
+  'module_path',
+  'mode',
+  'fail_closed',
+  'max_rewrites',
+  'observability',
+]);
+const OMNI_SHIELD_PLUGIN_MODES = new Set(['enforce', 'always']);
+const SANDBOX_EXPERIMENTAL_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_code_chars',
+  'max_findings',
+  'disallowed_patterns',
+  'target_tool_names',
+  'observability',
+]);
+const SANDBOX_EXPERIMENTAL_MODES = new Set(['monitor', 'block']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const BUDGET_KEYS = new Set([
   'enabled',
@@ -591,6 +647,27 @@ function applyDefaults(config) {
       })
     : [];
 
+  normalized.runtime.intent_drift = normalized.runtime.intent_drift || {};
+  const intentDrift = normalized.runtime.intent_drift;
+  intentDrift.enabled = intentDrift.enabled === true;
+  intentDrift.mode = INTENT_DRIFT_MODES.has(String(intentDrift.mode || '').toLowerCase())
+    ? String(intentDrift.mode).toLowerCase()
+    : 'monitor';
+  intentDrift.key_header = String(intentDrift.key_header || 'x-sentinel-session-id').toLowerCase();
+  intentDrift.fallback_key_headers = Array.isArray(intentDrift.fallback_key_headers)
+    ? intentDrift.fallback_key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  intentDrift.sample_every_turns = Number(intentDrift.sample_every_turns ?? 10);
+  intentDrift.min_turns = Number(intentDrift.min_turns ?? 10);
+  intentDrift.threshold = Number(intentDrift.threshold ?? 0.35);
+  intentDrift.cooldown_ms = Number(intentDrift.cooldown_ms ?? 60000);
+  intentDrift.max_sessions = Number(intentDrift.max_sessions ?? 5000);
+  intentDrift.context_window_messages = Number(intentDrift.context_window_messages ?? 8);
+  intentDrift.model_id = String(intentDrift.model_id || 'Xenova/all-MiniLM-L6-v2');
+  intentDrift.cache_dir = String(intentDrift.cache_dir || '~/.sentinel/models');
+  intentDrift.max_prompt_chars = Number(intentDrift.max_prompt_chars ?? 4000);
+  intentDrift.observability = intentDrift.observability !== false;
+
   normalized.runtime.swarm = normalized.runtime.swarm || {};
   const swarm = normalized.runtime.swarm;
   swarm.enabled = swarm.enabled === true;
@@ -627,6 +704,27 @@ function applyDefaults(config) {
     normalizedNode.public_key_pem = String(normalizedNode.public_key_pem || '');
     swarm.trusted_nodes[nodeId] = normalizedNode;
   }
+
+  normalized.runtime.pii_vault = normalized.runtime.pii_vault || {};
+  const piiVault = normalized.runtime.pii_vault;
+  piiVault.enabled = piiVault.enabled === true;
+  piiVault.mode = PII_VAULT_MODES.has(String(piiVault.mode || '').toLowerCase())
+    ? String(piiVault.mode).toLowerCase()
+    : 'monitor';
+  piiVault.salt = String(piiVault.salt || '');
+  piiVault.session_header = String(piiVault.session_header || 'x-sentinel-session-id').toLowerCase();
+  piiVault.fallback_headers = Array.isArray(piiVault.fallback_headers)
+    ? piiVault.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  piiVault.ttl_ms = Number(piiVault.ttl_ms ?? 3600000);
+  piiVault.max_sessions = Number(piiVault.max_sessions ?? 5000);
+  piiVault.max_mappings_per_session = Number(piiVault.max_mappings_per_session ?? 1000);
+  piiVault.token_domain = String(piiVault.token_domain || 'sentinel.local');
+  piiVault.token_prefix = String(piiVault.token_prefix || 'sentinel_');
+  piiVault.target_types = Array.isArray(piiVault.target_types)
+    ? piiVault.target_types.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['email_address', 'phone_us', 'phone_e164', 'ssn_us'];
+  piiVault.observability = piiVault.observability !== false;
 
   normalized.runtime.polymorphic_prompt = normalized.runtime.polymorphic_prompt || {};
   const polymorphicPrompt = normalized.runtime.polymorphic_prompt;
@@ -699,6 +797,46 @@ function applyDefaults(config) {
     ? omniShield.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
     : ['user'];
   omniShield.observability = omniShield.observability !== false;
+  omniShield.plugin =
+    omniShield.plugin && typeof omniShield.plugin === 'object' && !Array.isArray(omniShield.plugin)
+      ? omniShield.plugin
+      : {};
+  omniShield.plugin.enabled = omniShield.plugin.enabled === true;
+  omniShield.plugin.provider = String(omniShield.plugin.provider || 'builtin_mask').toLowerCase();
+  omniShield.plugin.module_path = String(omniShield.plugin.module_path || '');
+  omniShield.plugin.mode = OMNI_SHIELD_PLUGIN_MODES.has(String(omniShield.plugin.mode || '').toLowerCase())
+    ? String(omniShield.plugin.mode).toLowerCase()
+    : 'enforce';
+  omniShield.plugin.fail_closed = omniShield.plugin.fail_closed === true;
+  omniShield.plugin.max_rewrites = Number(omniShield.plugin.max_rewrites ?? 20);
+  omniShield.plugin.observability = omniShield.plugin.observability !== false;
+
+  normalized.runtime.sandbox_experimental = normalized.runtime.sandbox_experimental || {};
+  const sandboxExperimental = normalized.runtime.sandbox_experimental;
+  sandboxExperimental.enabled = sandboxExperimental.enabled === true;
+  sandboxExperimental.mode = SANDBOX_EXPERIMENTAL_MODES.has(String(sandboxExperimental.mode || '').toLowerCase())
+    ? String(sandboxExperimental.mode).toLowerCase()
+    : 'monitor';
+  sandboxExperimental.max_code_chars = Number(sandboxExperimental.max_code_chars ?? 20000);
+  sandboxExperimental.max_findings = Number(sandboxExperimental.max_findings ?? 25);
+  sandboxExperimental.disallowed_patterns = Array.isArray(sandboxExperimental.disallowed_patterns)
+    ? sandboxExperimental.disallowed_patterns.map((item) => String(item || '')).filter(Boolean)
+    : [
+        'child_process',
+        'process\\.env',
+        'fs\\.',
+        'require\\(',
+        'rm\\s+-rf',
+        'id_rsa',
+        'curl\\s+https?://',
+        'wget\\s+https?://',
+        'nc\\s+-',
+        "token\\s*=\\s*['\\\"]?[A-Za-z0-9_-]{16,}",
+      ];
+  sandboxExperimental.target_tool_names = Array.isArray(sandboxExperimental.target_tool_names)
+    ? sandboxExperimental.target_tool_names.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['execute_shell', 'execute_sql', 'bash', 'python', 'terminal'];
+  sandboxExperimental.observability = sandboxExperimental.observability !== false;
 
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
@@ -1144,6 +1282,88 @@ function validateConfigShape(config) {
     }
   }
 
+  const intentDrift = runtime.intent_drift || {};
+  if (runtime.intent_drift !== undefined) {
+    assertNoUnknownKeys(intentDrift, INTENT_DRIFT_KEYS, 'runtime.intent_drift', details);
+    assertType(typeof intentDrift.enabled === 'boolean', '`runtime.intent_drift.enabled` must be boolean', details);
+    assertType(
+      INTENT_DRIFT_MODES.has(String(intentDrift.mode)),
+      '`runtime.intent_drift.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof intentDrift.key_header === 'string' && intentDrift.key_header.length > 0,
+      '`runtime.intent_drift.key_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(intentDrift.fallback_key_headers),
+      '`runtime.intent_drift.fallback_key_headers` must be array',
+      details
+    );
+    if (Array.isArray(intentDrift.fallback_key_headers)) {
+      intentDrift.fallback_key_headers.forEach((header, idx) => {
+        assertType(
+          typeof header === 'string' && header.length > 0,
+          `runtime.intent_drift.fallback_key_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(intentDrift.sample_every_turns) && intentDrift.sample_every_turns > 0,
+      '`runtime.intent_drift.sample_every_turns` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentDrift.min_turns) && intentDrift.min_turns > 0,
+      '`runtime.intent_drift.min_turns` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(intentDrift.threshold)) &&
+        Number(intentDrift.threshold) >= 0 &&
+        Number(intentDrift.threshold) <= 1,
+      '`runtime.intent_drift.threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(intentDrift.cooldown_ms) && intentDrift.cooldown_ms > 0,
+      '`runtime.intent_drift.cooldown_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentDrift.max_sessions) && intentDrift.max_sessions > 0,
+      '`runtime.intent_drift.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentDrift.context_window_messages) && intentDrift.context_window_messages > 0,
+      '`runtime.intent_drift.context_window_messages` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof intentDrift.model_id === 'string' && intentDrift.model_id.length > 0,
+      '`runtime.intent_drift.model_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof intentDrift.cache_dir === 'string' && intentDrift.cache_dir.length > 0,
+      '`runtime.intent_drift.cache_dir` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(intentDrift.max_prompt_chars) && intentDrift.max_prompt_chars > 0,
+      '`runtime.intent_drift.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof intentDrift.observability === 'boolean',
+      '`runtime.intent_drift.observability` must be boolean',
+      details
+    );
+  }
+
   const swarm = runtime.swarm || {};
   if (runtime.swarm !== undefined) {
     assertNoUnknownKeys(swarm, SWARM_KEYS, 'runtime.swarm', details);
@@ -1218,6 +1438,63 @@ function validateConfigShape(config) {
   }
 
   const polymorphicPrompt = runtime.polymorphic_prompt || {};
+  const piiVault = runtime.pii_vault || {};
+  if (runtime.pii_vault !== undefined) {
+    assertNoUnknownKeys(piiVault, PII_VAULT_KEYS, 'runtime.pii_vault', details);
+    assertType(typeof piiVault.enabled === 'boolean', '`runtime.pii_vault.enabled` must be boolean', details);
+    assertType(
+      PII_VAULT_MODES.has(String(piiVault.mode)),
+      '`runtime.pii_vault.mode` must be monitor|active',
+      details
+    );
+    assertType(typeof piiVault.salt === 'string', '`runtime.pii_vault.salt` must be string', details);
+    assertType(
+      typeof piiVault.session_header === 'string' && piiVault.session_header.length > 0,
+      '`runtime.pii_vault.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(piiVault.fallback_headers),
+      '`runtime.pii_vault.fallback_headers` must be array',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.ttl_ms) && piiVault.ttl_ms > 0,
+      '`runtime.pii_vault.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.max_sessions) && piiVault.max_sessions > 0,
+      '`runtime.pii_vault.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.max_mappings_per_session) && piiVault.max_mappings_per_session > 0,
+      '`runtime.pii_vault.max_mappings_per_session` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof piiVault.token_domain === 'string' && piiVault.token_domain.length > 0,
+      '`runtime.pii_vault.token_domain` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof piiVault.token_prefix === 'string' && piiVault.token_prefix.length > 0,
+      '`runtime.pii_vault.token_prefix` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(piiVault.target_types) && piiVault.target_types.length > 0,
+      '`runtime.pii_vault.target_types` must be non-empty array',
+      details
+    );
+    assertType(
+      typeof piiVault.observability === 'boolean',
+      '`runtime.pii_vault.observability` must be boolean',
+      details
+    );
+  }
+
   if (runtime.polymorphic_prompt !== undefined) {
     assertNoUnknownKeys(polymorphicPrompt, POLYMORPHIC_PROMPT_KEYS, 'runtime.polymorphic_prompt', details);
     assertType(typeof polymorphicPrompt.enabled === 'boolean', '`runtime.polymorphic_prompt.enabled` must be boolean', details);
@@ -1393,6 +1670,113 @@ function validateConfigShape(config) {
     assertType(
       typeof omniShield.observability === 'boolean',
       '`runtime.omni_shield.observability` must be boolean',
+      details
+    );
+    const omniPlugin = omniShield.plugin || {};
+    assertType(
+      omniPlugin && typeof omniPlugin === 'object' && !Array.isArray(omniPlugin),
+      '`runtime.omni_shield.plugin` must be object',
+      details
+    );
+    if (omniPlugin && typeof omniPlugin === 'object' && !Array.isArray(omniPlugin)) {
+      assertNoUnknownKeys(omniPlugin, OMNI_SHIELD_PLUGIN_KEYS, 'runtime.omni_shield.plugin', details);
+      assertType(
+        typeof omniPlugin.enabled === 'boolean',
+        '`runtime.omni_shield.plugin.enabled` must be boolean',
+        details
+      );
+      assertType(
+        typeof omniPlugin.provider === 'string' && omniPlugin.provider.length > 0,
+        '`runtime.omni_shield.plugin.provider` must be non-empty string',
+        details
+      );
+      assertType(
+        typeof omniPlugin.module_path === 'string',
+        '`runtime.omni_shield.plugin.module_path` must be string',
+        details
+      );
+      assertType(
+        OMNI_SHIELD_PLUGIN_MODES.has(String(omniPlugin.mode)),
+        '`runtime.omni_shield.plugin.mode` must be enforce|always',
+        details
+      );
+      assertType(
+        typeof omniPlugin.fail_closed === 'boolean',
+        '`runtime.omni_shield.plugin.fail_closed` must be boolean',
+        details
+      );
+      assertType(
+        Number.isInteger(omniPlugin.max_rewrites) && omniPlugin.max_rewrites > 0,
+        '`runtime.omni_shield.plugin.max_rewrites` must be integer > 0',
+        details
+      );
+      assertType(
+        typeof omniPlugin.observability === 'boolean',
+        '`runtime.omni_shield.plugin.observability` must be boolean',
+        details
+      );
+    }
+  }
+
+  const sandboxExperimental = runtime.sandbox_experimental || {};
+  if (runtime.sandbox_experimental !== undefined) {
+    assertNoUnknownKeys(
+      sandboxExperimental,
+      SANDBOX_EXPERIMENTAL_KEYS,
+      'runtime.sandbox_experimental',
+      details
+    );
+    assertType(
+      typeof sandboxExperimental.enabled === 'boolean',
+      '`runtime.sandbox_experimental.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SANDBOX_EXPERIMENTAL_MODES.has(String(sandboxExperimental.mode)),
+      '`runtime.sandbox_experimental.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(sandboxExperimental.max_code_chars) && sandboxExperimental.max_code_chars > 0,
+      '`runtime.sandbox_experimental.max_code_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(sandboxExperimental.max_findings) && sandboxExperimental.max_findings > 0,
+      '`runtime.sandbox_experimental.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(sandboxExperimental.disallowed_patterns) && sandboxExperimental.disallowed_patterns.length > 0,
+      '`runtime.sandbox_experimental.disallowed_patterns` must be non-empty array',
+      details
+    );
+    if (Array.isArray(sandboxExperimental.disallowed_patterns)) {
+      sandboxExperimental.disallowed_patterns.forEach((pattern, idx) => {
+        assertType(
+          typeof pattern === 'string' && pattern.length > 0,
+          `runtime.sandbox_experimental.disallowed_patterns[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(sandboxExperimental.target_tool_names),
+      '`runtime.sandbox_experimental.target_tool_names` must be array',
+      details
+    );
+    if (Array.isArray(sandboxExperimental.target_tool_names)) {
+      sandboxExperimental.target_tool_names.forEach((toolName, idx) => {
+        assertType(
+          typeof toolName === 'string' && toolName.length > 0,
+          `runtime.sandbox_experimental.target_tool_names[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof sandboxExperimental.observability === 'boolean',
+      '`runtime.sandbox_experimental.observability` must be boolean',
       details
     );
   }

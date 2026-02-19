@@ -136,6 +136,29 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'intent-throttle-worker-pool' && check.status === 'fail')).toBe(true);
   });
 
+  test('fails when intent drift enabled but worker pool disabled', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        worker_pool: { enabled: false },
+        intent_drift: { enabled: true },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'intent-drift-worker-pool' && check.status === 'fail')).toBe(true);
+  });
+
+  test('warns when intent drift threshold is outside recommended range', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        intent_drift: {
+          enabled: true,
+          threshold: 0.9,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'intent-drift-threshold' && check.status === 'warn')).toBe(true);
+  });
+
   test('warns when strict swarm verification has empty trust store', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {
@@ -151,6 +174,21 @@ describe('doctor checks', () => {
       },
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'swarm-trust-store' && check.status === 'warn')).toBe(true);
+  });
+
+  test('passes pii vault checks when configured', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        pii_vault: {
+          enabled: true,
+          mode: 'active',
+          session_header: 'x-sentinel-session-id',
+          target_types: ['email_address', 'phone_us'],
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'pii-vault-mode' && check.status === 'pass')).toBe(true);
+    expect(report.checks.some((check) => check.id === 'pii-vault-target-types' && check.status === 'pass')).toBe(true);
   });
 
   test('warns when swarm skew window is too strict', () => {
@@ -219,6 +257,19 @@ describe('doctor checks', () => {
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'omni-shield-mode' && check.status === 'pass')).toBe(true);
     expect(report.checks.some((check) => check.id === 'omni-shield-image-budget' && check.status === 'pass')).toBe(true);
+  });
+
+  test('fails when experimental sandbox enabled without patterns', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        sandbox_experimental: {
+          enabled: true,
+          mode: 'monitor',
+          disallowed_patterns: [],
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'sandbox-experimental-patterns' && check.status === 'fail')).toBe(true);
   });
 
   test('warns when budget enabled with zero pricing model', () => {

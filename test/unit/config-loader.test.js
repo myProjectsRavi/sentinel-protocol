@@ -161,6 +161,36 @@ describe('config loader and migration', () => {
       sign_on_providers: ['custom'],
       trusted_nodes: {},
     };
+    base.runtime.pii_vault = {
+      enabled: true,
+      mode: 'active',
+      salt: '',
+      session_header: 'x-sentinel-session-id',
+      fallback_headers: ['x-sentinel-agent-id', 'x-forwarded-for'],
+      ttl_ms: 3600000,
+      max_sessions: 2000,
+      max_mappings_per_session: 1000,
+      token_domain: 'sentinel.local',
+      token_prefix: 'sentinel_',
+      target_types: ['email_address', 'phone_us'],
+      observability: true,
+    };
+    base.runtime.intent_drift = {
+      enabled: true,
+      mode: 'monitor',
+      key_header: 'x-sentinel-session-id',
+      fallback_key_headers: ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'],
+      sample_every_turns: 10,
+      min_turns: 8,
+      threshold: 0.35,
+      cooldown_ms: 60000,
+      max_sessions: 5000,
+      context_window_messages: 8,
+      model_id: 'Xenova/all-MiniLM-L6-v2',
+      cache_dir: '~/.sentinel/models',
+      max_prompt_chars: 4000,
+      observability: true,
+    };
     base.runtime.polymorphic_prompt = {
       enabled: true,
       rotation_seconds: 1800,
@@ -202,15 +232,37 @@ describe('config loader and migration', () => {
       max_findings: 20,
       target_roles: ['user'],
       observability: true,
+      plugin: {
+        enabled: true,
+        provider: 'builtin_mask',
+        module_path: '',
+        mode: 'enforce',
+        fail_closed: false,
+        max_rewrites: 10,
+        observability: true,
+      },
+    };
+    base.runtime.sandbox_experimental = {
+      enabled: true,
+      mode: 'monitor',
+      max_code_chars: 20000,
+      max_findings: 25,
+      disallowed_patterns: ['child_process', 'process\\.env'],
+      target_tool_names: ['execute_shell'],
+      observability: true,
     };
     writeYamlConfig(configPath, base);
 
     const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
     expect(loaded.config.runtime.swarm.enabled).toBe(true);
+    expect(loaded.config.runtime.pii_vault.enabled).toBe(true);
+    expect(loaded.config.runtime.intent_drift.enabled).toBe(true);
     expect(loaded.config.runtime.polymorphic_prompt.enabled).toBe(true);
     expect(loaded.config.runtime.synthetic_poisoning.enabled).toBe(true);
     expect(loaded.config.runtime.cognitive_rollback.enabled).toBe(true);
     expect(loaded.config.runtime.omni_shield.enabled).toBe(true);
+    expect(loaded.config.runtime.omni_shield.plugin.enabled).toBe(true);
+    expect(loaded.config.runtime.sandbox_experimental.enabled).toBe(true);
   });
 
   test('accepts egress entropy analyzer config in strict mode', () => {

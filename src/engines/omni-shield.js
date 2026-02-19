@@ -1,3 +1,8 @@
+const path = require('path');
+
+const PLACEHOLDER_BASE64_PNG =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+XjT0AAAAASUVORK5CYII=';
+
 function toObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -20,6 +25,11 @@ function clampPositiveInt(value, fallback, min = 1, max = 100 * 1024 * 1024) {
 function normalizeMode(value, fallback = 'monitor') {
   const normalized = String(value || fallback).toLowerCase();
   return normalized === 'block' ? 'block' : 'monitor';
+}
+
+function normalizePluginMode(value, fallback = 'enforce') {
+  const normalized = String(value || fallback).toLowerCase();
+  return normalized === 'always' ? 'always' : 'enforce';
 }
 
 function approximateBase64Bytes(data) {
@@ -59,6 +69,17 @@ class OmniShield {
         : ['user']
     );
     this.observability = normalized.observability !== false;
+    const plugin = toObject(normalized.plugin);
+    this.plugin = {
+      enabled: plugin.enabled === true,
+      provider: String(plugin.provider || 'builtin_mask').toLowerCase(),
+      modulePath: String(plugin.module_path || '').trim(),
+      mode: normalizePluginMode(plugin.mode, 'enforce'),
+      failClosed: plugin.fail_closed === true,
+      maxRewrites: clampPositiveInt(plugin.max_rewrites, 20, 1, 1000),
+      observability: plugin.observability !== false,
+    };
+    this.loadedPlugin = null;
   }
 
   isEnabled() {
@@ -70,6 +91,174 @@ class OmniShield {
       return true;
     }
     return this.targetRoles.has(String(role || '').toLowerCase());
+  }
+
+  shouldRunPlugin(effectiveMode = 'monitor') {
+    if (!this.plugin.enabled) {
+      return false;
+    }
+    if (this.plugin.mode === 'always') {
+      return true;
+    }
+    return String(effectiveMode || '').toLowerCase() === 'enforce';
+  }
+
+  getPlaceholderDataUrl(mediaType = 'image/png') {
+    const normalizedType = String(mediaType || 'image/png').toLowerCase();
+    const safeType = normalizedType.startsWith('image/') ? normalizedType : 'image/png';
+    return `data:${safeType};base64,${PLACEHOLDER_BASE64_PNG}`;
+  }
+
+  resolvePlugin() {
+    if (this.loadedPlugin) {
+      return this.loadedPlugin;
+    }
+    if (!this.plugin.modulePath) {
+      this.loadedPlugin = this.builtinSanitize.bind(this);
+      return this.loadedPlugin;
+    }
+    const absolute = path.isAbsolute(this.plugin.modulePath)
+      ? this.plugin.modulePath
+      : path.resolve(process.cwd(), this.plugin.modulePath);
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    const mod = require(absolute);
+    const fn =
+      typeof mod === 'function'
+        ? mod
+        : typeof mod?.sanitizeImagePayload === 'function'
+          ? mod.sanitizeImagePayload
+          : typeof mod?.default === 'function'
+            ? mod.default
+            : null;
+    if (!fn) {
+      throw new Error(`Invalid omni shield plugin module: ${absolute}`);
+    }
+    this.loadedPlugin = fn;
+    return this.loadedPlugin;
+  }
+
+  builtinSanitize({ bodyJson, findings }) {
+    if (!bodyJson || typeof bodyJson !== 'object' || !Array.isArray(bodyJson.messages)) {
+      return {
+        applied: false,
+        rewrites: 0,
+        unsupported: 0,
+        bodyJson,
+      };
+    }
+    const out = JSON.parse(JSON.stringify(bodyJson));
+    let rewrites = 0;
+    let unsupported = 0;
+
+    for (const finding of findings || []) {
+      if (rewrites >= this.plugin.maxRewrites) {
+        break;
+      }
+      const msgIndex = Number(finding?.message_index);
+      const partIndex = Number(finding?.part_index);
+      if (!Number.isInteger(msgIndex) || !Number.isInteger(partIndex)) {
+        continue;
+      }
+      const message = out.messages[msgIndex];
+      if (!message || !Array.isArray(message.content)) {
+        continue;
+      }
+      const part = message.content[partIndex];
+      if (!part || typeof part !== 'object') {
+        continue;
+      }
+
+      if (finding.kind === 'image_data_url') {
+        const mediaType = String(finding.media_type || 'image/png');
+        const replacement = this.getPlaceholderDataUrl(mediaType);
+        if (typeof part.image_url === 'string') {
+          part.image_url = replacement;
+          rewrites += 1;
+          continue;
+        }
+        if (part.image_url && typeof part.image_url === 'object' && typeof part.image_url.url === 'string') {
+          part.image_url.url = replacement;
+          rewrites += 1;
+          continue;
+        }
+        if (typeof part.input_image === 'string') {
+          part.input_image = replacement;
+          rewrites += 1;
+          continue;
+        }
+        if (part.input_image && typeof part.input_image === 'object' && typeof part.input_image.url === 'string') {
+          part.input_image.url = replacement;
+          rewrites += 1;
+          continue;
+        }
+        unsupported += 1;
+        continue;
+      }
+
+      if (finding.kind === 'image_base64_payload') {
+        if (part.source && typeof part.source === 'object') {
+          part.source.data = PLACEHOLDER_BASE64_PNG;
+          rewrites += 1;
+          continue;
+        }
+        unsupported += 1;
+        continue;
+      }
+
+      unsupported += 1;
+    }
+
+    return {
+      applied: rewrites > 0,
+      rewrites,
+      unsupported,
+      bodyJson: out,
+    };
+  }
+
+  sanitizePayload({ bodyJson, findings, effectiveMode = 'monitor' } = {}) {
+    if (!this.shouldRunPlugin(effectiveMode)) {
+      return {
+        enabled: this.plugin.enabled,
+        applied: false,
+        rewrites: 0,
+        unsupported: 0,
+        shouldBlock: false,
+        reason: this.plugin.enabled ? 'mode_bypass' : 'disabled',
+        bodyJson,
+      };
+    }
+    try {
+      const sanitizer = this.resolvePlugin();
+      const result = sanitizer({
+        bodyJson,
+        findings: Array.isArray(findings) ? findings : [],
+        pluginConfig: this.plugin,
+      }) || { applied: false, rewrites: 0, unsupported: 0, bodyJson };
+      const unsupported = Number(result.unsupported || 0);
+      const shouldBlock = this.plugin.failClosed && unsupported > 0 && String(effectiveMode || '') === 'enforce';
+      return {
+        enabled: true,
+        applied: result.applied === true,
+        rewrites: Number(result.rewrites || 0),
+        unsupported,
+        shouldBlock,
+        reason: shouldBlock ? 'plugin_fail_closed' : 'ok',
+        bodyJson: result.bodyJson || bodyJson,
+      };
+    } catch (error) {
+      const shouldBlock = this.plugin.failClosed && String(effectiveMode || '') === 'enforce';
+      return {
+        enabled: true,
+        applied: false,
+        rewrites: 0,
+        unsupported: 0,
+        shouldBlock,
+        reason: 'plugin_error',
+        error: String(error.message || error),
+        bodyJson,
+      };
+    }
   }
 
   inspectUrl(url, meta = {}) {
@@ -231,4 +420,5 @@ module.exports = {
   OmniShield,
   approximateBase64Bytes,
   parseDataImageUrl,
+  PLACEHOLDER_BASE64_PNG,
 };
