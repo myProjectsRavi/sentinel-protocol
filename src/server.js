@@ -1897,7 +1897,9 @@ class SentinelServer {
         honeytoken_token_hash: honeytokenDecision?.token_hash,
       });
 
-      this.latencyNormalizer.recordSuccess(Date.now() - requestStart);
+      if (upstream.status < 400) {
+        this.latencyNormalizer.recordSuccess(Date.now() - requestStart);
+      }
       this.writeStatus();
       finalizeRequestTelemetry({
         decision: 'forwarded',
