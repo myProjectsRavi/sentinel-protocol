@@ -2,6 +2,10 @@ const fs = require('fs');
 
 const { loadAndValidateConfig } = require('./config/loader');
 const { SentinelServer } = require('./server');
+const { createSentinel } = require('./embed');
+const { PolicyBundle } = require('./governance/policy-bundle');
+const { RedTeamEngine } = require('./governance/red-team');
+const { ComplianceEngine } = require('./governance/compliance-engine');
 const { RuntimeOverrideManager } = require('./runtime/override');
 const { runDoctorChecks, formatDoctorReport } = require('./runtime/doctor');
 const logger = require('./utils/logger');
@@ -294,4 +298,8 @@ module.exports = {
   doctorServer,
   loadConfigForStart,
   installSignalHandlers,
+  createSentinel,
+  PolicyBundle,
+  RedTeamEngine,
+  ComplianceEngine,
 };

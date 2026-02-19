@@ -1,54 +1,13 @@
 const crypto = require('crypto');
-
-function toObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return value;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 1000000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function clampProbability(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-    return fallback;
-  }
-  return parsed;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
-
-function mapHeaderValue(headers = {}, headerName) {
-  const wanted = String(headerName || '').toLowerCase();
-  for (const [key, value] of Object.entries(headers || {})) {
-    if (String(key).toLowerCase() === wanted) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeSessionPart(value) {
-  const out = String(value || '').trim();
-  if (!out) {
-    return '';
-  }
-  return out.length > 256 ? out.slice(0, 256) : out;
-}
+const {
+  toObject,
+  clampPositiveInt,
+  clampProbability,
+  normalizeMode,
+  mapHeaderValue,
+  normalizeSessionValue,
+  cosineSimilarity,
+} = require('../utils/primitives');
 
 function extractMessageText(message) {
   if (!message || typeof message !== 'object') {
@@ -118,32 +77,11 @@ function countKeywordHits(text, keywords = []) {
   return hits;
 }
 
-function cosineSimilarity(a = [], b = []) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
-    return 0;
-  }
-  const len = Math.min(a.length, b.length);
-  let dot = 0;
-  let aNorm = 0;
-  let bNorm = 0;
-  for (let i = 0; i < len; i += 1) {
-    const av = Number(a[i] || 0);
-    const bv = Number(b[i] || 0);
-    dot += av * bv;
-    aNorm += av * av;
-    bNorm += bv * bv;
-  }
-  if (aNorm <= 0 || bNorm <= 0) {
-    return 0;
-  }
-  return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
-}
-
 class IntentDriftDetector {
   constructor(config = {}, deps = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'block']);
     this.keyHeader = String(normalized.key_header || 'x-sentinel-session-id').toLowerCase();
     this.fallbackHeaders = Array.isArray(normalized.fallback_key_headers)
       ? normalized.fallback_key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
@@ -191,17 +129,17 @@ class IntentDriftDetector {
   }
 
   deriveSessionKey(headers = {}, correlationId = '') {
-    const primary = normalizeSessionPart(mapHeaderValue(headers, this.keyHeader));
+    const primary = normalizeSessionValue(mapHeaderValue(headers, this.keyHeader));
     if (primary) {
       return `hdr:${this.keyHeader}:${primary}`;
     }
     for (const header of this.fallbackHeaders) {
-      const value = normalizeSessionPart(mapHeaderValue(headers, header));
+      const value = normalizeSessionValue(mapHeaderValue(headers, header));
       if (value) {
         return `hdr:${header}:${value}`;
       }
     }
-    const fallback = normalizeSessionPart(correlationId);
+    const fallback = normalizeSessionValue(correlationId);
     if (fallback) {
       return `corr:${fallback}`;
     }

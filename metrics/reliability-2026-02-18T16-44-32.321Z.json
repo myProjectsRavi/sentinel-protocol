@@ -1,0 +1,119 @@
+{
+  "generated_at": "2026-02-18T16:44:18.716Z",
+  "benchmark": {
+    "duration_seconds": 8,
+    "connections": 40,
+    "chaos_requests": 20,
+    "timeout_requests": 12
+  },
+  "scenarios": {
+    "stress": {
+      "duration_seconds": 8,
+      "connections": 40,
+      "requests_total": 44900,
+      "errors": 0,
+      "timeouts": 0,
+      "non2xx": 0,
+      "requests_per_sec": 5613,
+      "latency_ms": {
+        "avg": 6.6,
+        "p95": 11,
+        "p99": 14,
+        "max": 106
+      },
+      "status_snapshot": {
+        "service_status": "running",
+        "configured_mode": "monitor",
+        "effective_mode": "monitor",
+        "emergency_open": false,
+        "providers": {
+          "custom": {
+            "circuit_state": "closed",
+            "failure_rate_window": 0,
+            "consecutive_timeouts": 0,
+            "total_forwarded": 44913,
+            "total_failures": 0,
+            "open_until": 0,
+            "half_open_successes": 0
+          }
+        },
+        "pii_provider_mode": "local",
+        "pii_provider_fallbacks": 0,
+        "rapidapi_error_count": 0,
+        "vcr_mode": "off",
+        "semantic_cache_enabled": false,
+        "dashboard_enabled": false,
+        "dashboard_host": "127.0.0.1",
+        "dashboard_port": 8788,
+        "uptime_seconds": 8,
+        "version": 1,
+        "counters": {
+          "requests_total": 44939,
+          "blocked_total": 0,
+          "policy_blocked": 0,
+          "pii_blocked": 0,
+          "injection_detected": 0,
+          "injection_blocked": 0,
+          "pii_provider_fallbacks": 0,
+          "rapidapi_error_count": 0,
+          "upstream_errors": 0,
+          "egress_detected": 0,
+          "egress_redacted": 0,
+          "egress_blocked": 0,
+          "egress_stream_redacted": 0,
+          "scan_worker_fallbacks": 0,
+          "warnings_total": 0,
+          "vcr_replay_hits": 0,
+          "vcr_replay_misses": 0,
+          "vcr_records": 0,
+          "semantic_cache_hits": 0,
+          "semantic_cache_misses": 0,
+          "semantic_cache_stores": 0
+        },
+        "pid": 78721
+      }
+    },
+    "chaos_503": {
+      "requests_sent": 20,
+      "upstream_hits": 16,
+      "responses_by_status": {
+        "503": 20
+      },
+      "upstream_attributed_errors": 20,
+      "circuit_open_fast_fails": 12,
+      "provider_state": {
+        "circuit_state": "open",
+        "failure_rate_window": 1,
+        "consecutive_timeouts": 0,
+        "total_forwarded": 8,
+        "total_failures": 8,
+        "open_until": 1771433069979,
+        "half_open_successes": 0
+      }
+    },
+    "chaos_timeout": {
+      "requests_sent": 12,
+      "upstream_hits": 10,
+      "responses_by_status": {
+        "503": 7,
+        "504": 5
+      },
+      "timeout_errors": 5,
+      "circuit_open_fast_fails": 7,
+      "provider_state": {
+        "circuit_state": "open",
+        "failure_rate_window": 1,
+        "consecutive_timeouts": 5,
+        "total_forwarded": 5,
+        "total_failures": 5,
+        "open_until": 1771433074311,
+        "half_open_successes": 0
+      }
+    }
+  },
+  "gates": {
+    "stress_no_errors": true,
+    "chaos_503_circuit_opened": true,
+    "chaos_timeout_circuit_opened": true
+  }
+}

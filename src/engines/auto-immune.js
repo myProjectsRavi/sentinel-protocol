@@ -1,32 +1,9 @@
 const crypto = require('crypto');
-
-function clampPositiveInt(value, fallback, min = 1, max = 86400000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function clampProbability(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  if (parsed < 0 || parsed > 1) {
-    return fallback;
-  }
-  return parsed;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
+const {
+  clampPositiveInt,
+  clampProbability,
+  normalizeMode,
+} = require('../utils/primitives');
 
 function normalizeForFingerprint(text = '') {
   let out = String(text || '');
@@ -57,7 +34,7 @@ function hashFingerprint(text) {
 class AutoImmune {
   constructor(config = {}, deps = {}) {
     this.enabled = config.enabled === true;
-    this.mode = normalizeMode(config.mode, 'monitor');
+    this.mode = normalizeMode(config.mode, 'monitor', ['monitor', 'block']);
     this.ttlMs = clampPositiveInt(config.ttl_ms, 24 * 3600000, 1000, 30 * 24 * 3600000);
     this.maxEntries = clampPositiveInt(config.max_entries, 20000, 1, 1000000);
     this.maxScanBytes = clampPositiveInt(config.max_scan_bytes, 32768, 256, 10 * 1024 * 1024);

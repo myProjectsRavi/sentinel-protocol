@@ -1,50 +1,12 @@
 const crypto = require('crypto');
-
-function clampPositiveInt(value, fallback, min = 1, max = 86400000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function clampProbability(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  if (parsed < 0 || parsed > 1) {
-    return fallback;
-  }
-  return parsed;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
-
-function mapHeaderValue(headers = {}, name) {
-  const target = String(name || '').toLowerCase();
-  for (const [key, value] of Object.entries(headers || {})) {
-    if (String(key).toLowerCase() === target) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeSessionValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return '';
-  }
-  return raw.length > 256 ? raw.slice(0, 256) : raw;
-}
+const {
+  clampPositiveInt,
+  clampProbability,
+  normalizeMode,
+  mapHeaderValue,
+  normalizeSessionValue,
+  cosineSimilarity,
+} = require('../utils/primitives');
 
 function extractMessageText(message) {
   if (!message || typeof message !== 'object') {
@@ -78,30 +40,10 @@ function normalizeText(text) {
     .trim();
 }
 
-function cosineSimilarity(a = [], b = []) {
-  if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0 || a.length !== b.length) {
-    return 0;
-  }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    const av = Number(a[i] || 0);
-    const bv = Number(b[i] || 0);
-    dot += av * bv;
-    normA += av * av;
-    normB += bv * bv;
-  }
-  if (normA <= 0 || normB <= 0) {
-    return 0;
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
 class EpistemicAnchor {
   constructor(config = {}, deps = {}) {
     this.enabled = config.enabled === true;
-    this.mode = normalizeMode(config.mode, 'monitor');
+    this.mode = normalizeMode(config.mode, 'monitor', ['monitor', 'block']);
     this.requiredAcknowledgement = String(
       config.required_acknowledgement || 'I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL'
     );

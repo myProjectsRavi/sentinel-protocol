@@ -1,33 +1,16 @@
 const crypto = require('crypto');
 const { Transform } = require('stream');
 const { StringDecoder } = require('string_decoder');
-
-function toObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return value;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 86400000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const {
+  toObject,
+  clampPositiveInt,
+  normalizeMode,
+  mapHeaderValue,
+  normalizeSessionValue,
+} = require('../utils/primitives');
 
 function utf8Bytes(value) {
   return Buffer.byteLength(String(value || ''), 'utf8');
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'active' ? 'active' : 'monitor';
 }
 
 function maskHash(input, salt = '') {
@@ -61,24 +44,6 @@ function hashLetters(input, count, salt = '') {
 
 function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function mapHeaderValue(headers = {}, name) {
-  const target = String(name || '').toLowerCase();
-  for (const [key, value] of Object.entries(headers || {})) {
-    if (String(key).toLowerCase() === target) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeSessionValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return '';
-  }
-  return raw.length > 256 ? raw.slice(0, 256) : raw;
 }
 
 function looksTextualContentType(contentType = '') {
@@ -191,7 +156,7 @@ class TwoWayPIIVault {
   constructor(config = {}, deps = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'active']);
     this.salt = String(normalized.salt || process.env.SENTINEL_PII_VAULT_SALT || '');
     this.sessionHeader = String(normalized.session_header || 'x-sentinel-session-id').toLowerCase();
     this.fallbackHeaders = Array.isArray(normalized.fallback_headers)

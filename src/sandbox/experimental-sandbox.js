@@ -1,32 +1,9 @@
-const crypto = require('crypto');
-
-function toObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return value;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 1000000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
-
-function snippetHash(text) {
-  return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex').slice(0, 16);
-}
+const {
+  toObject,
+  clampPositiveInt,
+  normalizeMode,
+  snippetHash,
+} = require('../utils/primitives');
 
 function decodeEscapedSequences(text) {
   return String(text || '')
@@ -237,7 +214,7 @@ class ExperimentalSandbox {
   constructor(config = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'block']);
     this.maxCodeChars = clampPositiveInt(normalized.max_code_chars, 20000, 256, 2000000);
     this.maxFindings = clampPositiveInt(normalized.max_findings, 25, 1, 1000);
     this.normalizeEvasion = normalized.normalize_evasion !== false;

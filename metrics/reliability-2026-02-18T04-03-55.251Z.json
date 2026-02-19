@@ -1,0 +1,108 @@
+{
+  "generated_at": "2026-02-18T04:03:40.786Z",
+  "benchmark": {
+    "duration_seconds": 8,
+    "connections": 40,
+    "chaos_requests": 20,
+    "timeout_requests": 12
+  },
+  "scenarios": {
+    "stress": {
+      "duration_seconds": 8,
+      "connections": 40,
+      "requests_total": 28836,
+      "errors": 0,
+      "timeouts": 0,
+      "non2xx": 0,
+      "requests_per_sec": 3605.5,
+      "latency_ms": {
+        "avg": 10.61,
+        "p95": 21,
+        "p99": 30,
+        "max": 130
+      },
+      "status_snapshot": {
+        "service_status": "running",
+        "configured_mode": "monitor",
+        "effective_mode": "monitor",
+        "emergency_open": false,
+        "providers": {
+          "custom": {
+            "circuit_state": "closed",
+            "failure_rate_window": 0,
+            "consecutive_timeouts": 0,
+            "total_forwarded": 28847,
+            "total_failures": 0,
+            "open_until": 0,
+            "half_open_successes": 0
+          }
+        },
+        "pii_provider_mode": "local",
+        "pii_provider_fallbacks": 0,
+        "rapidapi_error_count": 0,
+        "uptime_seconds": 8,
+        "version": 1,
+        "counters": {
+          "requests_total": 28876,
+          "blocked_total": 0,
+          "policy_blocked": 0,
+          "pii_blocked": 0,
+          "injection_detected": 0,
+          "injection_blocked": 0,
+          "pii_provider_fallbacks": 0,
+          "rapidapi_error_count": 0,
+          "upstream_errors": 0,
+          "egress_detected": 0,
+          "egress_redacted": 0,
+          "egress_blocked": 0,
+          "egress_stream_redacted": 0,
+          "scan_worker_fallbacks": 0,
+          "warnings_total": 0
+        },
+        "pid": 18107
+      }
+    },
+    "chaos_503": {
+      "requests_sent": 20,
+      "upstream_hits": 16,
+      "responses_by_status": {
+        "503": 20
+      },
+      "upstream_attributed_errors": 20,
+      "circuit_open_fast_fails": 12,
+      "provider_state": {
+        "circuit_state": "open",
+        "failure_rate_window": 1,
+        "consecutive_timeouts": 0,
+        "total_forwarded": 8,
+        "total_failures": 8,
+        "open_until": 1771387433186,
+        "half_open_successes": 0
+      }
+    },
+    "chaos_timeout": {
+      "requests_sent": 12,
+      "upstream_hits": 10,
+      "responses_by_status": {
+        "503": 7,
+        "504": 5
+      },
+      "timeout_errors": 5,
+      "circuit_open_fast_fails": 7,
+      "provider_state": {
+        "circuit_state": "open",
+        "failure_rate_window": 1,
+        "consecutive_timeouts": 5,
+        "total_forwarded": 5,
+        "total_failures": 5,
+        "open_until": 1771387437235,
+        "half_open_successes": 0
+      }
+    }
+  },
+  "gates": {
+    "stress_no_errors": true,
+    "chaos_503_circuit_opened": true,
+    "chaos_timeout_circuit_opened": true
+  }
+}

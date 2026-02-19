@@ -12,7 +12,13 @@
   ],
   "license": "MIT",
   "main": "src/index.js",
+  "types": "index.d.ts",
   "type": "commonjs",
+  "exports": {
+    ".": "./src/index.js",
+    "./embed": "./embed.js",
+    "./package.json": "./package.json"
+  },
   "bin": {
     "sentinel": "cli/sentinel.js"
   },
@@ -21,9 +27,12 @@
   },
   "scripts": {
     "start": "node ./cli/sentinel.js start",
+    "lint": "node ./scripts/lint-basic.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand test/unit",
     "test:integration": "jest --runInBand test/integration",
+    "test:coverage": "jest --runInBand --coverage",
+    "openapi:validate": "node ./scripts/validate-openapi.js",
     "benchmark": "node ./scripts/benchmark-overhead.js",
     "reliability": "node ./scripts/reliability-proof.js"
   },

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
+const path = require('path');
 const yaml = require('js-yaml');
 const { Command } = require('commander');
 
@@ -8,6 +9,9 @@ const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeY
 const { migrateConfig, CURRENT_CONFIG_VERSION } = require('../src/config/migrations');
 const { ConfigValidationError } = require('../src/config/schema');
 const { SemanticScanner } = require('../src/engines/semantic-scanner');
+const { PolicyBundle } = require('../src/governance/policy-bundle');
+const { RedTeamEngine } = require('../src/governance/red-team');
+const { ComplianceEngine } = require('../src/governance/compliance-engine');
 const { startMCPServer } = require('../src/mcp/server');
 const { startMonitorTUI } = require('../src/monitor/tui');
 const {
@@ -17,7 +21,7 @@ const {
   setEmergencyOpen,
   doctorServer,
 } = require('../src');
-const { DEFAULT_CONFIG_PATH } = require('../src/utils/paths');
+const { DEFAULT_CONFIG_PATH, AUDIT_LOG_PATH } = require('../src/utils/paths');
 
 const program = new Command();
 
@@ -301,6 +305,125 @@ modelsCommand
       console.log(`Ready in ${elapsedMs}ms`);
     } catch (error) {
       console.error(`Model download failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const policyCommand = program.command('policy').description('Policy bundle signing and verification');
+
+policyCommand
+  .command('sign')
+  .description('Sign a policy/config file into a cryptographic policy bundle')
+  .requiredOption('--private-key <path>', 'Private key PEM path (ed25519 recommended)')
+  .option('--config <path>', 'Policy/config YAML path', DEFAULT_CONFIG_PATH)
+  .option('--out <path>', 'Output bundle JSON path', './policy.bundle.json')
+  .option('--issuer <name>', 'Issuer name', 'sentinel-local')
+  .option('--key-id <id>', 'Signing key id', 'sentinel-default')
+  .action((options) => {
+    try {
+      const config = readYamlConfig(options.config);
+      const privateKeyPem = fs.readFileSync(options.privateKey, 'utf8');
+      const bundle = PolicyBundle.sign(config, privateKeyPem, {
+        issuer: options.issuer,
+        keyId: options.keyId,
+      });
+      const outPath = path.resolve(options.out);
+      fs.writeFileSync(outPath, `${JSON.stringify(bundle, null, 2)}\n`, 'utf8');
+      console.log(`Signed policy bundle written to ${outPath}`);
+    } catch (error) {
+      console.error(`Policy signing failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+policyCommand
+  .command('verify')
+  .description('Verify a signed policy bundle')
+  .requiredOption('--bundle <path>', 'Bundle JSON path')
+  .requiredOption('--public-key <path>', 'Public key PEM path')
+  .action((options) => {
+    try {
+      const bundle = JSON.parse(fs.readFileSync(options.bundle, 'utf8'));
+      const publicKeyPem = fs.readFileSync(options.publicKey, 'utf8');
+      const result = PolicyBundle.verify(bundle, publicKeyPem);
+      console.log(JSON.stringify(result, null, 2));
+      if (!result.valid) {
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      console.error(`Policy verification failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const redTeamCommand = program.command('red-team').description('Run built-in adversarial simulation suites');
+
+redTeamCommand
+  .command('run')
+  .description('Execute red-team suite against a running Sentinel endpoint')
+  .option('--url <baseUrl>', 'Sentinel base URL', 'http://127.0.0.1:8787')
+  .option('--target <target>', 'x-sentinel-target provider', 'openai')
+  .option('--path <path>', 'Proxy path', '/v1/chat/completions')
+  .option('--out <path>', 'Write JSON report to path')
+  .action(async (options) => {
+    try {
+      const engine = new RedTeamEngine(options.url, {
+        target: options.target,
+        targetPath: options.path,
+      });
+      const report = await engine.runFullSuite();
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        console.log(`Red-team report written: ${outPath}`);
+      } else {
+        console.log(JSON.stringify(report, null, 2));
+      }
+      if (report.score_percent < 50) {
+        process.exitCode = 1;
+      }
+    } catch (error) {
+      console.error(`Red-team run failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const complianceCommand = program.command('compliance').description('Generate compliance evidence reports from audit logs');
+
+complianceCommand
+  .command('report')
+  .description('Generate SOC2/GDPR/HIPAA summary evidence report')
+  .option('--framework <name>', 'soc2 | gdpr | hipaa', 'soc2')
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--out <path>', 'Write report JSON to path')
+  .action((options) => {
+    try {
+      const engine = new ComplianceEngine({
+        auditPath: options.auditPath,
+      });
+      const limit = Number(options.limit);
+      const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200000;
+      const framework = String(options.framework || 'soc2').toLowerCase();
+
+      let report;
+      if (framework === 'gdpr') {
+        report = engine.generateGDPREvidence({ limit: normalizedLimit });
+      } else if (framework === 'hipaa') {
+        report = engine.generateHIPAAEvidence({ limit: normalizedLimit });
+      } else {
+        report = engine.generateSOC2Evidence({ limit: normalizedLimit });
+      }
+
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        console.log(`Compliance report written: ${outPath}`);
+      } else {
+        console.log(JSON.stringify(report, null, 2));
+      }
+    } catch (error) {
+      console.error(`Compliance report failed: ${error.message}`);
       process.exitCode = 1;
     }
   });

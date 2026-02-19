@@ -63,12 +63,103 @@ http://127.0.0.1:8787
 Use `x-sentinel-target: anthropic|openai|google|ollama|custom` to route providers.
 `custom` targets are disabled by default and require explicit allowlisting in config.
 
+## Programmatic Embedding API
+
+```js
+const express = require('express');
+const { createSentinel } = require('sentinel-protocol/embed');
+
+const app = express();
+const sentinel = createSentinel({
+  version: 1,
+  mode: 'monitor',
+  proxy: { host: '127.0.0.1', port: 8787, timeout_ms: 30000, max_body_bytes: 1048576 },
+  runtime: {
+    fail_open: false,
+    scanner_error_action: 'allow',
+    upstream: {
+      retry: { enabled: true, max_attempts: 1, allow_post_with_idempotency_key: false },
+      circuit_breaker: {
+        enabled: true,
+        open_seconds: 20,
+        window_size: 20,
+        min_failures_to_evaluate: 8,
+        failure_rate_threshold: 0.5,
+        consecutive_timeout_threshold: 5,
+        half_open_success_threshold: 3,
+      },
+      custom_targets: { enabled: false, allowlist: [], block_private_networks: true },
+    },
+  },
+  pii: {
+    enabled: true,
+    provider_mode: 'local',
+    max_scan_bytes: 262144,
+    regex_safety_cap_bytes: 51200,
+    severity_actions: { critical: 'block', high: 'block', medium: 'redact', low: 'log' },
+    rapidapi: {
+      endpoint: 'https://pii-firewall-edge.p.rapidapi.com/redact',
+      host: 'pii-firewall-edge.p.rapidapi.com',
+      timeout_ms: 4000,
+      request_body_field: 'text',
+      fallback_to_local: true,
+      allow_non_rapidapi_host: false,
+      api_key: '',
+      extra_body: {},
+    },
+  },
+  injection: { enabled: true, threshold: 0.8, max_scan_bytes: 131072, action: 'block' },
+  rules: [],
+  whitelist: { domains: [] },
+  logging: { level: 'info' },
+});
+
+sentinel.use({
+  name: 'example-plugin',
+  hooks: {
+    'request:prepared': async (ctx) => {
+      if (ctx.get('path') === '/v1/private') {
+        ctx.block({ statusCode: 403, body: { error: 'PLUGIN_DENY' }, reason: 'example_policy' });
+      }
+    },
+  },
+});
+
+app.use('/v1', sentinel.middleware());
+app.listen(3000);
+```
+
+## Control-plane Endpoints
+
+- `GET /_sentinel/health`
+- `GET /_sentinel/metrics` (Prometheus text exposition)
+- `GET /_sentinel/provenance/public-key`
+- `GET /_sentinel/swarm/public-key`
+
+OpenAPI contract: `docs/openapi.yaml`
+
 ## Local Development Quick Start
 
 ```bash
 npm install
 node ./cli/sentinel.js init
 node ./cli/sentinel.js start
+```
+
+## Governance Tooling
+
+```bash
+# Sign a policy bundle (ed25519 private key PEM)
+sentinel policy sign --config ~/.sentinel/sentinel.yaml --private-key ./keys/policy_private.pem --out ./policy.bundle.json
+
+# Verify a signed policy bundle
+sentinel policy verify --bundle ./policy.bundle.json --public-key ./keys/policy_public.pem
+
+# Run built-in adversarial simulation suite
+sentinel red-team run --url http://127.0.0.1:8787 --target openai --out ./red-team-report.json
+
+# Generate compliance evidence from audit logs
+sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
 ```
 
 ## PII Provider Modes

@@ -1,44 +1,10 @@
-function clampPositiveInt(value, fallback, min = 1, max = 86400000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
-
-function toObject(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  return value;
-}
-
-function normalizeSessionValue(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return '';
-  }
-  return raw.length > 256 ? raw.slice(0, 256) : raw;
-}
-
-function mapHeaderValue(headers = {}, name) {
-  const target = String(name || '').toLowerCase();
-  for (const [key, value] of Object.entries(headers || {})) {
-    if (String(key).toLowerCase() === target) {
-      return value;
-    }
-  }
-  return undefined;
-}
+const {
+  clampPositiveInt,
+  normalizeMode,
+  toObject,
+  normalizeSessionValue,
+  mapHeaderValue,
+} = require('../utils/primitives');
 
 function extractToolNameFromCall(toolCall) {
   if (!toolCall || typeof toolCall !== 'object') {
@@ -102,7 +68,7 @@ class ShadowOS {
   constructor(config = {}, deps = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'block']);
     this.windowMs = clampPositiveInt(normalized.window_ms, 15 * 60 * 1000, 1000, 24 * 60 * 60 * 1000);
     this.maxSessions = clampPositiveInt(normalized.max_sessions, 5000, 1, 500000);
     this.maxHistoryPerSession = clampPositiveInt(normalized.max_history_per_session, 128, 8, 50000);

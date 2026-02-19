@@ -1,0 +1,110 @@
+openapi: 3.1.0
+info:
+  title: Sentinel Protocol API
+  version: 1.0.0
+  description: Local AI governance proxy and control-plane endpoints.
+servers:
+  - url: http://127.0.0.1:8787
+paths:
+  /_sentinel/health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /_sentinel/metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /_sentinel/provenance/public-key:
+    get:
+      summary: Provenance signer public metadata
+      operationId: getProvenancePublicKey
+      responses:
+        '200':
+          description: Provenance signer metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Provenance disabled.
+  /_sentinel/swarm/public-key:
+    get:
+      summary: Swarm protocol public metadata
+      operationId: getSwarmPublicKey
+      responses:
+        '200':
+          description: Swarm key metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Swarm disabled.
+  /{proxyPath}:
+    parameters:
+      - name: proxyPath
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Upstream provider path (forwards to selected target).
+    post:
+      summary: Forward proxied request
+      operationId: proxyPost
+      parameters:
+        - name: x-sentinel-target
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [openai, anthropic, google, ollama, custom]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Forwarded response.
+        '4XX':
+          description: Sentinel block/validation response.
+        '5XX':
+          description: Upstream or Sentinel runtime error.
+    get:
+      summary: Forward proxied request
+      operationId: proxyGet
+      parameters:
+        - name: x-sentinel-target
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [openai, anthropic, google, ollama, custom]
+      responses:
+        '200':
+          description: Forwarded response.
