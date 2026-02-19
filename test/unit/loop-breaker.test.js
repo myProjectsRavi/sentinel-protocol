@@ -101,4 +101,53 @@ describe('LoopBreaker', () => {
     expect(second.detected).toBe(true);
     expect(second.shouldBlock).toBe(false);
   });
+
+  test('ignores volatile metadata when fingerprinting conversation state', () => {
+    const breaker = new LoopBreaker({
+      enabled: true,
+      action: 'block',
+      repeat_threshold: 3,
+      max_recent: 5,
+      window_ms: 30000,
+    });
+
+    const makeBody = (traceId, timestamp) => ({
+      trace_id: traceId,
+      timestamp,
+      messages: [
+        { role: 'system', content: 'You are a planner.' },
+        { role: 'user', content: 'Generate next tool call.' },
+      ],
+    });
+
+    const first = breaker.evaluate({
+      headers: { 'x-sentinel-agent-id': 'agent-loop' },
+      provider: 'openai',
+      path: '/v1/chat/completions',
+      method: 'POST',
+      bodyJson: makeBody('trace-1', 1000),
+      now: 1000,
+    });
+    const second = breaker.evaluate({
+      headers: { 'x-sentinel-agent-id': 'agent-loop' },
+      provider: 'openai',
+      path: '/v1/chat/completions',
+      method: 'POST',
+      bodyJson: makeBody('trace-2', 2000),
+      now: 2000,
+    });
+    const third = breaker.evaluate({
+      headers: { 'x-sentinel-agent-id': 'agent-loop' },
+      provider: 'openai',
+      path: '/v1/chat/completions',
+      method: 'POST',
+      bodyJson: makeBody('trace-3', 3000),
+      now: 3000,
+    });
+
+    expect(first.detected).toBe(false);
+    expect(second.detected).toBe(false);
+    expect(third.detected).toBe(true);
+    expect(third.shouldBlock).toBe(true);
+  });
 });

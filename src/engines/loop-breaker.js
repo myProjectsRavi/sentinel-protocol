@@ -34,17 +34,164 @@ function toCanonicalObject(value) {
   return out;
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isVolatileKey(key) {
+  const normalized = String(key || '').toLowerCase();
+  return normalized === 'metadata'
+    || normalized === 'id'
+    || normalized === 'trace_id'
+    || normalized === 'traceid'
+    || normalized === 'timestamp'
+    || normalized === 'request_id'
+    || normalized === 'requestid'
+    || normalized === 'run_id'
+    || normalized === 'span_id'
+    || normalized === 'session_id'
+    || normalized === 'nonce'
+    || normalized === 'uuid'
+    || normalized === 'created_at'
+    || normalized === 'updated_at';
+}
+
+function normalizeStructuredValue(value) {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return normalizeText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeStructuredValue(item));
+  }
+  if (typeof value !== 'object') {
+    return value;
+  }
+
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    if (isVolatileKey(key)) {
+      continue;
+    }
+    out[key] = normalizeStructuredValue(value[key]);
+  }
+  return out;
+}
+
+function normalizeMessages(messages) {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  return messages.map((message) => {
+    if (typeof message === 'string') {
+      return normalizeText(message);
+    }
+    if (!message || typeof message !== 'object') {
+      return message;
+    }
+
+    const normalized = {};
+    if (message.role !== undefined) {
+      normalized.role = normalizeText(message.role);
+    }
+    if (message.name !== undefined) {
+      normalized.name = normalizeText(message.name);
+    }
+    if (message.content !== undefined) {
+      normalized.content = normalizeStructuredValue(message.content);
+    }
+    if (message.function_call && typeof message.function_call === 'object') {
+      normalized.function_call = {
+        name: normalizeText(message.function_call.name || ''),
+        arguments: normalizeStructuredValue(message.function_call.arguments),
+      };
+    }
+    if (Array.isArray(message.tool_calls)) {
+      normalized.tool_calls = message.tool_calls.map((toolCall) => {
+        if (!toolCall || typeof toolCall !== 'object') {
+          return normalizeStructuredValue(toolCall);
+        }
+        const out = {};
+        if (toolCall.type !== undefined) {
+          out.type = normalizeText(toolCall.type);
+        }
+        if (toolCall.function && typeof toolCall.function === 'object') {
+          out.function = {
+            name: normalizeText(toolCall.function.name || ''),
+            arguments: normalizeStructuredValue(toolCall.function.arguments),
+          };
+        }
+        return out;
+      });
+    }
+
+    return normalized;
+  });
+}
+
+function normalizeConversationState(bodyJson) {
+  if (!bodyJson || typeof bodyJson !== 'object') {
+    return null;
+  }
+
+  const conversation = {};
+
+  if (Array.isArray(bodyJson.messages)) {
+    conversation.messages = normalizeMessages(bodyJson.messages);
+  }
+  if (bodyJson.input !== undefined) {
+    conversation.input = normalizeStructuredValue(bodyJson.input);
+  }
+  if (bodyJson.prompt !== undefined) {
+    conversation.prompt = normalizeStructuredValue(bodyJson.prompt);
+  }
+  if (bodyJson.model !== undefined) {
+    conversation.model = normalizeText(bodyJson.model);
+  }
+  if (Array.isArray(bodyJson.tools)) {
+    conversation.tools = bodyJson.tools.map((tool) => {
+      if (!tool || typeof tool !== 'object') {
+        return normalizeStructuredValue(tool);
+      }
+      const out = {};
+      if (tool.type !== undefined) {
+        out.type = normalizeText(tool.type);
+      }
+      if (tool.function && typeof tool.function === 'object') {
+        out.function = {
+          name: normalizeText(tool.function.name || ''),
+          description: normalizeStructuredValue(tool.function.description),
+          parameters: normalizeStructuredValue(tool.function.parameters),
+        };
+      }
+      return out;
+    });
+  }
+
+  if (Object.keys(conversation).length === 0) {
+    return null;
+  }
+  return JSON.stringify(toCanonicalObject(conversation));
+}
+
 function normalizeBody(bodyText, bodyJson) {
   if (bodyJson && typeof bodyJson === 'object') {
+    const conversationState = normalizeConversationState(bodyJson);
+    if (conversationState) {
+      return conversationState;
+    }
     try {
-      return JSON.stringify(toCanonicalObject(bodyJson));
+      return JSON.stringify(toCanonicalObject(normalizeStructuredValue(bodyJson)));
     } catch {
       // fall through to text normalization
     }
   }
-  return String(bodyText || '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return normalizeText(bodyText);
 }
 
 function extractAgentId(headers = {}, keyHeader = 'x-sentinel-agent-id') {
