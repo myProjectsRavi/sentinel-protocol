@@ -4,7 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        PRELOAD_SEMANTIC_MODEL: ${PRELOAD_SEMANTIC_MODEL:-false}
+        PRELOAD_SEMANTIC_MODEL: ${PRELOAD_SEMANTIC_MODEL:-true}
+        PRELOAD_NEURAL_MODEL: ${PRELOAD_NEURAL_MODEL:-true}
     image: sentinel-protocol:latest
     container_name: sentinel-protocol
     command: ["start", "--config", "/etc/sentinel/sentinel.yaml", "--port", "8787"]

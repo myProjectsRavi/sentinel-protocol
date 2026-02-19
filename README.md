@@ -1,5 +1,7 @@
 # Sentinel Protocol (v1.0)
 
+![Sentinel Protocol Hero Demo](docs/assets/sentinel-hero.gif)
+
 Sentinel Protocol is a local firewall for AI agents.
 
 Sentinel is the only Open Source AI Firewall that runs PII detection in Worker Threads and performs Real-Time Neural Injection analysis without blocking the Event Loop. It supports Bi-directional SSE Stream Redaction out of the box.
@@ -31,9 +33,8 @@ It provides:
 ## Quick Start
 
 ```bash
-npm install
-node ./cli/sentinel.js init
-node ./cli/sentinel.js start
+git clone https://github.com/myProjectsRavi/sentinel-protocol.git && cd sentinel-protocol
+docker-compose up -d
 ```
 
 Then point your agent base URL to:
@@ -44,6 +45,14 @@ http://127.0.0.1:8787
 
 Use `x-sentinel-target: anthropic|openai|google|custom` to route providers.
 `custom` targets are disabled by default and require explicit allowlisting in config.
+
+## Local Development Quick Start
+
+```bash
+npm install
+node ./cli/sentinel.js init
+node ./cli/sentinel.js start
+```
 
 ## PII Provider Modes
 
@@ -189,12 +198,13 @@ Build image (Debian slim, non-root runtime):
 docker build -t sentinel-protocol:latest .
 ```
 
-Optional: preload semantic and neural models during build to remove first-request model download latency:
+Models are preloaded by default during image build to avoid first-request latency spikes.
+To disable preload explicitly:
 
 ```bash
 docker build -t sentinel-protocol:latest \
-  --build-arg PRELOAD_SEMANTIC_MODEL=true \
-  --build-arg PRELOAD_NEURAL_MODEL=true .
+  --build-arg PRELOAD_SEMANTIC_MODEL=false \
+  --build-arg PRELOAD_NEURAL_MODEL=false .
 ```
 
 Run with one command (read-only config mount + writable runtime state volume):
@@ -214,7 +224,7 @@ The included `docker-compose.yml` already mounts a writable model cache volume:
 Compose (hardened defaults: `read_only`, `no-new-privileges`, `cap_drop: ALL`):
 
 ```bash
-docker compose up --build
+docker-compose up -d
 ```
 
 Pre-download semantic model manually:

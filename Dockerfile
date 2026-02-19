@@ -19,9 +19,9 @@ COPY README.md LICENSE ./
 
 FROM node:20-bookworm-slim AS runtime
 
-ARG PRELOAD_SEMANTIC_MODEL=false
+ARG PRELOAD_SEMANTIC_MODEL=true
 ARG PRELOAD_MODEL_ID=Xenova/bert-base-NER
-ARG PRELOAD_NEURAL_MODEL=false
+ARG PRELOAD_NEURAL_MODEL=true
 ARG PRELOAD_NEURAL_MODEL_ID=Xenova/all-MiniLM-L6-v2
 
 ENV NODE_ENV=production \
@@ -50,7 +50,7 @@ RUN cp ./src/config/default.yaml /etc/sentinel/sentinel.yaml \
 
 USER sentinel
 
-# Optional warmup: downloads semantic model at build time to avoid first-request latency spikes.
+# Default warmup: downloads semantic/neural models at build time to avoid first-request latency spikes.
 RUN if [ "$PRELOAD_SEMANTIC_MODEL" = "true" ]; then \
       node ./cli/sentinel.js models download --model-id "$PRELOAD_MODEL_ID" --cache-dir /home/sentinel/.sentinel/models ; \
     else \

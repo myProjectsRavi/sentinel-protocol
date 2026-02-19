@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.0 - 2026-02-19
+
+### Added
+- Budget Enforcer with deterministic spend tracking and kill-switch behavior.
+- Resilience Mesh routing (`runtime.upstream.resilience_mesh`) with safe failover paths.
+- Sticky Canary A/B routing (`runtime.upstream.canary`) with observability headers.
+- Cross-provider adapter contracts for OpenAI-compatible contract routing.
+- Stream budget accounting on both stream completion and stream error paths.
+
+### Changed
+- Docker and compose defaults now preload semantic + neural ONNX models.
+- README quickstart is Docker-first for a 2-minute install path.
+
+### Fixed
+- Restored backward-compatible circuit-breaker keys for direct providers (`openai|anthropic|google|custom`).
+- Fixed partial-stream under-accounting by charging for streamed bytes on stream error paths.
+
 ## 0.2.0 - 2026-02-17
 
 ### Added
