@@ -41,6 +41,17 @@ runtime:
     port: 8788
     auth_token: ""
     allow_remote: false
+  budget:
+    enabled: false
+    action: block
+    daily_limit_usd: 5
+    store_file: "~/.sentinel/budget-ledger.json"
+    reset_timezone: utc
+    chars_per_token: 4
+    input_cost_per_1k_tokens: 0
+    output_cost_per_1k_tokens: 0
+    charge_replay_hits: false
+    retention_days: 90
   telemetry:
     enabled: true
   upstream:
@@ -60,6 +71,21 @@ runtime:
       enabled: false
       allowlist: []
       block_private_networks: true
+    resilience_mesh:
+      enabled: false
+      contract: passthrough
+      default_group: ""
+      max_failover_hops: 1
+      allow_post_with_idempotency_key: false
+      failover_on_status: [429, 500, 502, 503, 504]
+      failover_on_error_types: [timeout, transport, circuit_open]
+      groups: {}
+      targets: {}
+    canary:
+      enabled: false
+      key_header: x-sentinel-canary-key
+      fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+      splits: []
 
 pii:
   enabled: true

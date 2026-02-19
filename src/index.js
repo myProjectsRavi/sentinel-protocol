@@ -155,7 +155,15 @@ function statusServer(asJson = false) {
   const status = store.read();
   if (!status) {
     return asJson
-      ? { service_status: 'stopped', pii_provider_mode: 'unknown', pii_provider_fallbacks: 0, rapidapi_error_count: 0 }
+      ? {
+          service_status: 'stopped',
+          pii_provider_mode: 'unknown',
+          pii_provider_fallbacks: 0,
+          rapidapi_error_count: 0,
+          budget_enabled: false,
+          budget_spent_usd_today: 0,
+          budget_remaining_usd_today: 0,
+        }
       : [
           'Service status: stopped',
           'Configured mode: unknown',
@@ -167,6 +175,9 @@ function statusServer(asJson = false) {
           'PII provider mode: unknown',
           'PII provider fallbacks: 0',
           'RapidAPI errors: 0',
+          'Failover events: 0',
+          'Canary routed: 0',
+          'Budget: disabled',
         ].join('\n');
   }
 
@@ -191,6 +202,9 @@ function statusServer(asJson = false) {
     `PII provider mode: ${status.pii_provider_mode || 'unknown'}`,
     `PII provider fallbacks: ${status.pii_provider_fallbacks ?? status.counters?.pii_provider_fallbacks ?? 0}`,
     `RapidAPI errors: ${status.rapidapi_error_count ?? status.counters?.rapidapi_error_count ?? 0}`,
+    `Failover events: ${status.counters?.failover_events ?? 0}`,
+    `Canary routed: ${status.counters?.canary_routed ?? 0}`,
+    `Budget: ${status.budget_enabled ? `enabled (${status.budget_action}, day=${status.budget_day_key}, spent=$${status.budget_spent_usd_today}, remaining=$${status.budget_remaining_usd_today})` : 'disabled'}`,
     `Uptime (s): ${status.uptime_seconds}`,
     `Version: ${status.version}`,
     'Providers:',

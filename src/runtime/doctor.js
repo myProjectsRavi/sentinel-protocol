@@ -60,6 +60,10 @@ function runDoctorChecks(config, env = process.env) {
   const semantic = config?.pii?.semantic || {};
   const semanticCache = config?.runtime?.semantic_cache || {};
   const dashboard = config?.runtime?.dashboard || {};
+  const budget = config?.runtime?.budget || {};
+  const upstream = config?.runtime?.upstream || {};
+  const mesh = upstream.resilience_mesh || {};
+  const canary = upstream.canary || {};
   const workerPool = config?.runtime?.worker_pool || {};
   const fallbackToLocal = rapidapi.fallback_to_local !== false;
   const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
@@ -196,6 +200,68 @@ function runDoctorChecks(config, env = process.env) {
         dashboard.allow_remote === true
           ? 'Dashboard allow_remote=true. Prefer local-only mode unless protected by token and network ACL.'
           : 'Dashboard is local-only (allow_remote=false).',
+    });
+  }
+
+  if (budget.enabled === true) {
+    checks.push({
+      id: 'budget-limit',
+      status: Number(budget.daily_limit_usd) > 0 ? 'pass' : 'fail',
+      message:
+        Number(budget.daily_limit_usd) > 0
+          ? `Daily budget limit configured: $${Number(budget.daily_limit_usd).toFixed(2)}`
+          : 'Budget enabled but daily_limit_usd is invalid.',
+    });
+    checks.push({
+      id: 'budget-cost-model',
+      status:
+        Number(budget.input_cost_per_1k_tokens) > 0 || Number(budget.output_cost_per_1k_tokens) > 0
+          ? 'pass'
+          : 'warn',
+      message:
+        Number(budget.input_cost_per_1k_tokens) > 0 || Number(budget.output_cost_per_1k_tokens) > 0
+          ? 'Budget token pricing is configured.'
+          : 'Budget enabled with zero token pricing. Accounting will track tokens but estimated spend will remain $0.',
+    });
+  }
+
+  if (mesh.enabled === true) {
+    const groupCount = mesh.groups && typeof mesh.groups === 'object' ? Object.keys(mesh.groups).length : 0;
+    checks.push({
+      id: 'mesh-groups',
+      status: groupCount > 0 ? 'pass' : 'fail',
+      message:
+        groupCount > 0
+          ? `Resilience mesh enabled with ${groupCount} group(s).`
+          : 'Resilience mesh enabled but no groups are defined.',
+    });
+    checks.push({
+      id: 'mesh-failover-hops',
+      status: Number(mesh.max_failover_hops) > 0 ? 'pass' : 'warn',
+      message:
+        Number(mesh.max_failover_hops) > 0
+          ? `Failover hops configured: ${Number(mesh.max_failover_hops)}`
+          : 'Mesh failover is effectively disabled because max_failover_hops=0.',
+    });
+  }
+
+  if (canary.enabled === true) {
+    checks.push({
+      id: 'canary-mesh-dependency',
+      status: mesh.enabled === true ? 'pass' : 'warn',
+      message:
+        mesh.enabled === true
+          ? 'Canary routing has resilience mesh enabled.'
+          : 'Canary is enabled but resilience mesh is disabled; canary splits will not route.',
+    });
+    const splitCount = Array.isArray(canary.splits) ? canary.splits.length : 0;
+    checks.push({
+      id: 'canary-splits',
+      status: splitCount > 0 ? 'pass' : 'warn',
+      message:
+        splitCount > 0
+          ? `Canary configured with ${splitCount} split rule(s).`
+          : 'Canary enabled without splits; no traffic will be split.',
     });
   }
 

@@ -1,5 +1,15 @@
+const crypto = require('crypto');
 const dns = require('dns').promises;
 const net = require('net');
+
+const DEFAULT_FAILOVER_STATUS = [429, 500, 502, 503, 504];
+const DEFAULT_FAILOVER_ERRORS = ['timeout', 'transport', 'circuit_open'];
+const SUPPORTED_CONTRACTS = new Set([
+  'passthrough',
+  'openai_chat_v1',
+  'anthropic_messages_v1',
+  'google_generative_v1',
+]);
 
 function normalizeAllowlist(rawList) {
   if (!Array.isArray(rawList)) {
@@ -109,6 +119,223 @@ function validateAllowlist(urlObj, allowlist) {
   }
 }
 
+function toPositiveInt(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeProvider(provider, fallback = 'openai') {
+  const lowered = String(provider || fallback).toLowerCase();
+  if (['openai', 'anthropic', 'google', 'custom'].includes(lowered)) {
+    return lowered;
+  }
+  return fallback;
+}
+
+function normalizeContract(value, fallback = 'passthrough') {
+  const lowered = String(value || fallback).toLowerCase();
+  if (SUPPORTED_CONTRACTS.has(lowered)) {
+    return lowered;
+  }
+  return fallback;
+}
+
+function defaultContractForProvider(provider) {
+  switch (provider) {
+    case 'openai':
+      return 'openai_chat_v1';
+    case 'anthropic':
+      return 'anthropic_messages_v1';
+    case 'google':
+      return 'google_generative_v1';
+    default:
+      return 'passthrough';
+  }
+}
+
+function normalizeStaticHeaders(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
+  }
+  const headers = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!key) {
+      continue;
+    }
+    if (value === null || value === undefined) {
+      continue;
+    }
+    headers[String(key).toLowerCase()] = String(value);
+  }
+  return headers;
+}
+
+function getBaseUrlForProvider(provider) {
+  if (provider === 'anthropic') {
+    return process.env.SENTINEL_ANTHROPIC_URL || 'https://api.anthropic.com';
+  }
+  if (provider === 'google') {
+    return process.env.SENTINEL_GOOGLE_URL || 'https://generativelanguage.googleapis.com';
+  }
+  if (provider === 'openai') {
+    return process.env.SENTINEL_OPENAI_URL || 'https://api.openai.com';
+  }
+  return null;
+}
+
+function toDescriptor({
+  targetName,
+  provider,
+  baseUrl,
+  contract,
+  resolvedIp,
+  resolvedFamily,
+  staticHeaders,
+  source,
+}) {
+  const parsed = new URL(baseUrl);
+  const normalizedProvider = normalizeProvider(provider);
+  return {
+    targetName,
+    provider: normalizedProvider,
+    baseUrl,
+    upstreamHostname: parsed.hostname,
+    upstreamHostHeader: parsed.host,
+    resolvedIp: resolvedIp || null,
+    resolvedFamily: resolvedFamily || null,
+    staticHeaders: normalizeStaticHeaders(staticHeaders),
+    contract: normalizeContract(contract, defaultContractForProvider(normalizedProvider)),
+    source: source || 'builtin',
+    breakerKey: `${normalizedProvider}:${targetName}`,
+  };
+}
+
+function normalizeMeshConfig(raw = {}) {
+  const groups = raw.groups && typeof raw.groups === 'object' && !Array.isArray(raw.groups)
+    ? raw.groups
+    : {};
+  const targets = raw.targets && typeof raw.targets === 'object' && !Array.isArray(raw.targets)
+    ? raw.targets
+    : {};
+
+  const failoverOnStatus = Array.isArray(raw.failover_on_status)
+    ? raw.failover_on_status
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value >= 100 && value <= 599)
+    : DEFAULT_FAILOVER_STATUS;
+
+  const failoverOnErrors = Array.isArray(raw.failover_on_error_types)
+    ? raw.failover_on_error_types
+        .map((value) => String(value).toLowerCase())
+        .filter((value) => value === 'timeout' || value === 'transport' || value === 'circuit_open')
+    : DEFAULT_FAILOVER_ERRORS;
+
+  return {
+    enabled: raw.enabled === true,
+    maxFailoverHops: toPositiveInt(raw.max_failover_hops, 1),
+    allowPostWithIdempotencyKey: raw.allow_post_with_idempotency_key === true,
+    failoverOnStatus: failoverOnStatus.length > 0 ? failoverOnStatus : DEFAULT_FAILOVER_STATUS,
+    failoverOnErrors: failoverOnErrors.length > 0 ? failoverOnErrors : DEFAULT_FAILOVER_ERRORS,
+    defaultGroup: raw.default_group ? String(raw.default_group).toLowerCase() : '',
+    contract: normalizeContract(raw.contract, 'passthrough'),
+    groups,
+    targets,
+  };
+}
+
+function normalizeCanaryConfig(raw = {}) {
+  return {
+    enabled: raw.enabled === true,
+    keyHeader: String(raw.key_header || 'x-sentinel-canary-key').toLowerCase(),
+    fallbackHeaders: Array.isArray(raw.fallback_key_headers)
+      ? raw.fallback_key_headers.map((item) => String(item).toLowerCase()).filter(Boolean)
+      : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'],
+    splits: Array.isArray(raw.splits) ? raw.splits : [],
+  };
+}
+
+function hashToBucket(input, modulo) {
+  const digest = crypto.createHash('sha256').update(String(input)).digest('hex').slice(0, 8);
+  const numeric = Number.parseInt(digest, 16);
+  if (!Number.isFinite(numeric) || modulo <= 0) {
+    return 0;
+  }
+  return numeric % modulo;
+}
+
+function deriveCanaryKey(req, config) {
+  const headers = req.headers || {};
+  const direct = headers[config.keyHeader];
+  if (direct) {
+    return String(direct);
+  }
+  for (const headerName of config.fallbackHeaders) {
+    const value = headers[headerName];
+    if (!value) {
+      continue;
+    }
+    if (headerName === 'x-forwarded-for') {
+      return String(value).split(',')[0].trim();
+    }
+    return String(value);
+  }
+  return '';
+}
+
+function selectCanaryGroup(req, requestedTarget, canaryConfig) {
+  if (!canaryConfig.enabled || canaryConfig.splits.length === 0) {
+    return null;
+  }
+
+  const target = String(requestedTarget || 'openai').toLowerCase();
+  const split = canaryConfig.splits.find((candidate) => {
+    const matchTarget = String(candidate.match_target || '*').toLowerCase();
+    return matchTarget === '*' || matchTarget === target;
+  });
+
+  if (!split) {
+    return null;
+  }
+
+  const name = String(split.name || `${target}-split`);
+  const groupA = String(split.group_a || '').toLowerCase();
+  const groupB = String(split.group_b || '').toLowerCase();
+  if (!groupA || !groupB) {
+    return null;
+  }
+
+  const weightA = Math.max(0, Number(split.weight_a ?? 90));
+  const weightB = Math.max(0, Number(split.weight_b ?? 10));
+  const totalWeight = weightA + weightB;
+  if (!(totalWeight > 0)) {
+    return null;
+  }
+
+  const sticky = split.sticky !== false;
+  const canaryKey = deriveCanaryKey(req, canaryConfig);
+  const bucket = sticky
+    ? hashToBucket(`${name}:${canaryKey || 'anonymous'}`, totalWeight)
+    : Math.floor(Math.random() * totalWeight);
+
+  const selectedGroup = bucket < weightA ? groupA : groupB;
+  return {
+    name,
+    selectedGroup,
+    sticky,
+    bucket,
+    totalWeight,
+    canaryKeyHash: canaryKey
+      ? crypto.createHash('sha256').update(canaryKey).digest('hex').slice(0, 12)
+      : null,
+    splitWeights: {
+      groupA,
+      weightA,
+      groupB,
+      weightB,
+    },
+  };
+}
+
 async function validateCustomTargetUrl(customUrl, customTargetsConfig = {}) {
   if (!customTargetsConfig.enabled) {
     throw new Error('Custom targets are disabled. Enable runtime.upstream.custom_targets.enabled in config.');
@@ -196,64 +423,244 @@ async function validateCustomTargetUrl(customUrl, customTargetsConfig = {}) {
   };
 }
 
-async function resolveProvider(req, config = {}) {
-  const target = String(req.headers['x-sentinel-target'] || 'openai').toLowerCase();
+async function resolveMeshTargetDescriptor(targetName, targetConfig, config) {
+  const normalizedTargetName = String(targetName || '').toLowerCase();
+  const provider = normalizeProvider(targetConfig.provider || normalizedTargetName, 'custom');
+  const enabled = targetConfig.enabled !== false;
+  const staticHeaders = normalizeStaticHeaders(targetConfig.headers || {});
+  const declaredContract = normalizeContract(
+    targetConfig.contract,
+    defaultContractForProvider(provider)
+  );
 
-  if (target === 'anthropic') {
-    const baseUrl = process.env.SENTINEL_ANTHROPIC_URL || 'https://api.anthropic.com';
-    const parsed = new URL(baseUrl);
+  if (provider === 'custom') {
+    const customTargetConfig = config.runtime?.upstream?.custom_targets || {};
+    const rawCustomUrl = targetConfig.custom_url || targetConfig.base_url;
+    if (!rawCustomUrl) {
+      throw new Error(`Mesh target ${normalizedTargetName} requires custom_url or base_url`);
+    }
+    const validated = await validateCustomTargetUrl(rawCustomUrl, customTargetConfig);
     return {
-      provider: 'anthropic',
-      baseUrl,
-      upstreamHostname: parsed.hostname,
-      upstreamHostHeader: parsed.host,
-      resolvedIp: null,
-      resolvedFamily: null,
+      ...toDescriptor({
+        targetName: normalizedTargetName,
+        provider: 'custom',
+        baseUrl: validated.url,
+        contract: declaredContract,
+        resolvedIp: validated.resolvedIp,
+        resolvedFamily: validated.resolvedFamily,
+        staticHeaders,
+        source: 'mesh_target',
+      }),
+      enabled,
     };
   }
-  if (target === 'google') {
-    const baseUrl = process.env.SENTINEL_GOOGLE_URL || 'https://generativelanguage.googleapis.com';
-    const parsed = new URL(baseUrl);
-    return {
-      provider: 'google',
-      baseUrl,
-      upstreamHostname: parsed.hostname,
-      upstreamHostHeader: parsed.host,
-      resolvedIp: null,
-      resolvedFamily: null,
-    };
+
+  const baseUrl = String(targetConfig.base_url || getBaseUrlForProvider(provider) || '');
+  if (!baseUrl) {
+    throw new Error(`Mesh target ${normalizedTargetName} has no resolvable base URL`);
   }
-  if (target === 'custom') {
+
+  return {
+    ...toDescriptor({
+      targetName: normalizedTargetName,
+      provider,
+      baseUrl,
+      contract: declaredContract,
+      staticHeaders,
+      source: 'mesh_target',
+    }),
+    enabled,
+  };
+}
+
+async function resolveBuiltinTargetDescriptor(target, req, config) {
+  const normalizedTarget = String(target || 'openai').toLowerCase();
+
+  if (normalizedTarget === 'custom') {
     const customUrl = req.headers['x-sentinel-custom-url'];
     if (!customUrl) {
       throw new Error('x-sentinel-custom-url is required when x-sentinel-target=custom');
     }
     const customTargetConfig = config.runtime?.upstream?.custom_targets || {};
     const validatedTarget = await validateCustomTargetUrl(customUrl, customTargetConfig);
-    return {
+    return toDescriptor({
+      targetName: 'custom',
       provider: 'custom',
       baseUrl: validatedTarget.url,
-      upstreamHostname: validatedTarget.hostname,
-      upstreamHostHeader: validatedTarget.hostHeader,
+      contract: 'passthrough',
       resolvedIp: validatedTarget.resolvedIp,
       resolvedFamily: validatedTarget.resolvedFamily,
-    };
+      staticHeaders: {},
+      source: 'header_target',
+    });
   }
 
-  const baseUrl = process.env.SENTINEL_OPENAI_URL || 'https://api.openai.com';
-  const parsed = new URL(baseUrl);
-  return {
-    provider: 'openai',
+  const provider = normalizeProvider(normalizedTarget, 'openai');
+  const baseUrl = getBaseUrlForProvider(provider);
+  if (!baseUrl) {
+    throw new Error(`Unknown upstream target: ${normalizedTarget}`);
+  }
+
+  return toDescriptor({
+    targetName: provider,
+    provider,
     baseUrl,
-    upstreamHostname: parsed.hostname,
-    upstreamHostHeader: parsed.host,
-    resolvedIp: null,
-    resolvedFamily: null,
+    contract: defaultContractForProvider(provider),
+    staticHeaders: {},
+    source: 'builtin',
+  });
+}
+
+async function resolveTargetDescriptor(targetName, req, config, meshConfig) {
+  const normalizedTargetName = String(targetName || '').toLowerCase();
+  const meshTargets = meshConfig.targets || {};
+  if (meshTargets[normalizedTargetName]) {
+    return resolveMeshTargetDescriptor(normalizedTargetName, meshTargets[normalizedTargetName], config);
+  }
+
+  return resolveBuiltinTargetDescriptor(normalizedTargetName, req, config);
+}
+
+function getGroupConfig(meshConfig, groupName) {
+  const groups = meshConfig.groups || {};
+  const raw = groups[groupName];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const targets = Array.isArray(raw.targets)
+    ? raw.targets.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : [];
+  return {
+    name: groupName,
+    enabled: raw.enabled !== false,
+    contract: normalizeContract(raw.contract, ''),
+    targets,
+  };
+}
+
+function normalizeRequestedTarget(req) {
+  return String(req.headers['x-sentinel-target'] || 'openai').toLowerCase();
+}
+
+function normalizeRequestedGroup(req) {
+  const raw = req.headers['x-sentinel-target-group'];
+  if (!raw) {
+    return '';
+  }
+  return String(raw).toLowerCase();
+}
+
+function normalizeRequestedContract(req) {
+  const raw = req.headers['x-sentinel-contract'];
+  if (!raw) {
+    return '';
+  }
+  return normalizeContract(raw, '');
+}
+
+async function resolveUpstreamPlan(req, config = {}) {
+  const requestedTarget = normalizeRequestedTarget(req);
+  const meshConfig = normalizeMeshConfig(config.runtime?.upstream?.resilience_mesh || {});
+  const canaryConfig = normalizeCanaryConfig(config.runtime?.upstream?.canary || {});
+
+  const explicitGroup = normalizeRequestedGroup(req);
+  let selectedGroup = '';
+  let routeSource = 'target';
+  let canaryDecision = null;
+
+  if (meshConfig.enabled && explicitGroup) {
+    selectedGroup = explicitGroup;
+    routeSource = 'group_header';
+  } else if (meshConfig.enabled) {
+    canaryDecision = selectCanaryGroup(req, requestedTarget, canaryConfig);
+    if (canaryDecision) {
+      selectedGroup = canaryDecision.selectedGroup;
+      routeSource = 'canary';
+    } else if (meshConfig.defaultGroup) {
+      selectedGroup = meshConfig.defaultGroup;
+      routeSource = 'default_group';
+    }
+  }
+
+  let groupContract = '';
+  let targetNames;
+
+  if (meshConfig.enabled && selectedGroup) {
+    const group = getGroupConfig(meshConfig, selectedGroup);
+    if (!group || group.enabled === false) {
+      throw new Error(`Unknown or disabled upstream group: ${selectedGroup}`);
+    }
+    if (group.targets.length === 0) {
+      throw new Error(`Upstream group ${selectedGroup} has no targets`);
+    }
+    targetNames = group.targets;
+    groupContract = group.contract;
+  } else {
+    targetNames = [requestedTarget];
+  }
+
+  const candidates = [];
+  for (const targetName of targetNames) {
+    const descriptor = await resolveTargetDescriptor(targetName, req, config, meshConfig);
+    if (descriptor.enabled === false) {
+      continue;
+    }
+    candidates.push(descriptor);
+  }
+
+  if (candidates.length === 0) {
+    throw new Error('No enabled upstream targets available for selected route plan');
+  }
+
+  const requestedContract = normalizeRequestedContract(req);
+  const desiredContract = normalizeContract(
+    requestedContract || groupContract || meshConfig.contract || candidates[0].contract,
+    'passthrough'
+  );
+
+  const failoverEnabled = meshConfig.enabled && candidates.length > 1;
+  const maxFailoverHops = failoverEnabled
+    ? Math.min(meshConfig.maxFailoverHops, Math.max(0, candidates.length - 1))
+    : 0;
+
+  return {
+    requestedTarget,
+    selectedGroup: selectedGroup || null,
+    routeSource,
+    desiredContract,
+    canary: canaryDecision,
+    candidates,
+    primary: candidates[0],
+    failover: {
+      enabled: failoverEnabled,
+      maxFailoverHops,
+      allowPostWithIdempotencyKey: meshConfig.allowPostWithIdempotencyKey,
+      onStatus: meshConfig.failoverOnStatus,
+      onErrorTypes: meshConfig.failoverOnErrors,
+    },
+  };
+}
+
+async function resolveProvider(req, config = {}) {
+  const plan = await resolveUpstreamPlan(req, config);
+  const primary = plan.primary;
+  return {
+    provider: primary.provider,
+    baseUrl: primary.baseUrl,
+    upstreamHostname: primary.upstreamHostname,
+    upstreamHostHeader: primary.upstreamHostHeader,
+    resolvedIp: primary.resolvedIp,
+    resolvedFamily: primary.resolvedFamily,
   };
 }
 
 module.exports = {
   resolveProvider,
+  resolveUpstreamPlan,
   validateCustomTargetUrl,
   isPrivateAddress,
+  normalizeMeshConfig,
+  normalizeCanaryConfig,
+  normalizeContract,
+  defaultContractForProvider,
 };

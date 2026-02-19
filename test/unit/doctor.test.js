@@ -111,4 +111,41 @@ describe('doctor checks', () => {
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'semantic-cache-embed-timeout' && check.status === 'warn')).toBe(true);
   });
+
+  test('warns when budget enabled with zero pricing model', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        budget: {
+          enabled: true,
+          action: 'block',
+          daily_limit_usd: 5,
+          input_cost_per_1k_tokens: 0,
+          output_cost_per_1k_tokens: 0,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+
+    expect(report.checks.some((check) => check.id === 'budget-limit' && check.status === 'pass')).toBe(true);
+    expect(report.checks.some((check) => check.id === 'budget-cost-model' && check.status === 'warn')).toBe(true);
+  });
+
+  test('warns when canary is enabled without mesh groups', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        upstream: {
+          resilience_mesh: {
+            enabled: false,
+            groups: {},
+          },
+          canary: {
+            enabled: true,
+            splits: [],
+          },
+        },
+      },
+    }), { NODE_ENV: 'production' });
+
+    expect(report.checks.some((check) => check.id === 'canary-mesh-dependency' && check.status === 'warn')).toBe(true);
+    expect(report.checks.some((check) => check.id === 'canary-splits' && check.status === 'warn')).toBe(true);
+  });
 });

@@ -6,9 +6,19 @@ const VALID_SCANNER_ACTIONS = new Set(['allow', 'block']);
 const VALID_PII_PROVIDER_MODES = new Set(['local', 'rapidapi', 'hybrid']);
 const ROOT_KEYS = new Set(['version', 'mode', 'proxy', 'runtime', 'pii', 'injection', 'rules', 'whitelist', 'logging']);
 const PROXY_KEYS = new Set(['host', 'port', 'timeout_ms', 'max_body_bytes']);
-const RUNTIME_KEYS = new Set(['fail_open', 'scanner_error_action', 'telemetry', 'upstream', 'worker_pool', 'vcr', 'semantic_cache', 'dashboard']);
+const RUNTIME_KEYS = new Set([
+  'fail_open',
+  'scanner_error_action',
+  'telemetry',
+  'upstream',
+  'worker_pool',
+  'vcr',
+  'semantic_cache',
+  'dashboard',
+  'budget',
+]);
 const TELEMETRY_KEYS = new Set(['enabled']);
-const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets']);
+const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary']);
 const WORKER_POOL_KEYS = new Set([
   'enabled',
   'size',
@@ -33,6 +43,20 @@ const SEMANTIC_CACHE_KEYS = new Set([
   'failure_cooldown_ms',
 ]);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
+const BUDGET_KEYS = new Set([
+  'enabled',
+  'action',
+  'daily_limit_usd',
+  'store_file',
+  'reset_timezone',
+  'chars_per_token',
+  'input_cost_per_1k_tokens',
+  'output_cost_per_1k_tokens',
+  'charge_replay_hits',
+  'retention_days',
+]);
+const BUDGET_ACTIONS = new Set(['block', 'warn']);
+const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
 const CIRCUIT_BREAKER_KEYS = new Set([
   'enabled',
@@ -44,6 +68,21 @@ const CIRCUIT_BREAKER_KEYS = new Set([
   'half_open_success_threshold',
 ]);
 const CUSTOM_TARGET_KEYS = new Set(['enabled', 'allowlist', 'block_private_networks']);
+const RESILIENCE_MESH_KEYS = new Set([
+  'enabled',
+  'contract',
+  'default_group',
+  'max_failover_hops',
+  'allow_post_with_idempotency_key',
+  'failover_on_status',
+  'failover_on_error_types',
+  'groups',
+  'targets',
+]);
+const RESILIENCE_GROUP_KEYS = new Set(['enabled', 'contract', 'targets']);
+const RESILIENCE_TARGET_KEYS = new Set(['enabled', 'provider', 'contract', 'base_url', 'custom_url', 'headers']);
+const CANARY_KEYS = new Set(['enabled', 'key_header', 'fallback_key_headers', 'splits']);
+const CANARY_SPLIT_KEYS = new Set(['name', 'match_target', 'group_a', 'group_b', 'weight_a', 'weight_b', 'sticky']);
 const PII_KEYS = new Set([
   'enabled',
   'provider_mode',
@@ -189,6 +228,76 @@ function applyDefaults(config) {
   customTargets.allowlist = Array.isArray(customTargets.allowlist) ? customTargets.allowlist : [];
   customTargets.block_private_networks = customTargets.block_private_networks !== false;
 
+  normalized.runtime.upstream.resilience_mesh = normalized.runtime.upstream.resilience_mesh || {};
+  const resilienceMesh = normalized.runtime.upstream.resilience_mesh;
+  resilienceMesh.enabled = resilienceMesh.enabled === true;
+  resilienceMesh.contract = String(resilienceMesh.contract || 'passthrough');
+  resilienceMesh.default_group = String(resilienceMesh.default_group || '').toLowerCase();
+  resilienceMesh.max_failover_hops = Number(resilienceMesh.max_failover_hops ?? 1);
+  resilienceMesh.allow_post_with_idempotency_key = resilienceMesh.allow_post_with_idempotency_key === true;
+  resilienceMesh.failover_on_status = Array.isArray(resilienceMesh.failover_on_status)
+    ? resilienceMesh.failover_on_status.map((status) => Number(status))
+    : [429, 500, 502, 503, 504];
+  resilienceMesh.failover_on_error_types = Array.isArray(resilienceMesh.failover_on_error_types)
+    ? resilienceMesh.failover_on_error_types.map((value) => String(value).toLowerCase())
+    : ['timeout', 'transport', 'circuit_open'];
+  resilienceMesh.groups =
+    resilienceMesh.groups && typeof resilienceMesh.groups === 'object' && !Array.isArray(resilienceMesh.groups)
+      ? resilienceMesh.groups
+      : {};
+  resilienceMesh.targets =
+    resilienceMesh.targets && typeof resilienceMesh.targets === 'object' && !Array.isArray(resilienceMesh.targets)
+      ? resilienceMesh.targets
+      : {};
+  for (const [groupName, groupConfig] of Object.entries(resilienceMesh.groups)) {
+    const normalizedGroup =
+      groupConfig && typeof groupConfig === 'object' && !Array.isArray(groupConfig) ? groupConfig : {};
+    normalizedGroup.enabled = normalizedGroup.enabled !== false;
+    normalizedGroup.contract = String(normalizedGroup.contract || '');
+    normalizedGroup.targets = Array.isArray(normalizedGroup.targets)
+      ? normalizedGroup.targets.map((value) => String(value).toLowerCase()).filter(Boolean)
+      : [];
+    resilienceMesh.groups[groupName] = normalizedGroup;
+  }
+  for (const [targetName, targetConfig] of Object.entries(resilienceMesh.targets)) {
+    const normalizedTarget =
+      targetConfig && typeof targetConfig === 'object' && !Array.isArray(targetConfig) ? targetConfig : {};
+    normalizedTarget.enabled = normalizedTarget.enabled !== false;
+    normalizedTarget.provider = String(normalizedTarget.provider || targetName).toLowerCase();
+    normalizedTarget.contract = String(normalizedTarget.contract || '');
+    if (normalizedTarget.base_url !== undefined) {
+      normalizedTarget.base_url = String(normalizedTarget.base_url);
+    }
+    if (normalizedTarget.custom_url !== undefined) {
+      normalizedTarget.custom_url = String(normalizedTarget.custom_url);
+    }
+    normalizedTarget.headers =
+      normalizedTarget.headers && typeof normalizedTarget.headers === 'object' && !Array.isArray(normalizedTarget.headers)
+        ? normalizedTarget.headers
+        : {};
+    resilienceMesh.targets[targetName] = normalizedTarget;
+  }
+
+  normalized.runtime.upstream.canary = normalized.runtime.upstream.canary || {};
+  const canary = normalized.runtime.upstream.canary;
+  canary.enabled = canary.enabled === true;
+  canary.key_header = String(canary.key_header || 'x-sentinel-canary-key').toLowerCase();
+  canary.fallback_key_headers = Array.isArray(canary.fallback_key_headers)
+    ? canary.fallback_key_headers.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  canary.splits = Array.isArray(canary.splits) ? canary.splits : [];
+  canary.splits = canary.splits.map((split, idx) => {
+    const normalizedSplit = split && typeof split === 'object' && !Array.isArray(split) ? split : {};
+    normalizedSplit.name = String(normalizedSplit.name || `split-${idx + 1}`);
+    normalizedSplit.match_target = String(normalizedSplit.match_target || '*').toLowerCase();
+    normalizedSplit.group_a = String(normalizedSplit.group_a || '').toLowerCase();
+    normalizedSplit.group_b = String(normalizedSplit.group_b || '').toLowerCase();
+    normalizedSplit.weight_a = Number(normalizedSplit.weight_a ?? 90);
+    normalizedSplit.weight_b = Number(normalizedSplit.weight_b ?? 10);
+    normalizedSplit.sticky = normalizedSplit.sticky !== false;
+    return normalizedSplit;
+  });
+
   normalized.runtime.worker_pool = normalized.runtime.worker_pool || {};
   const workerPool = normalized.runtime.worker_pool;
   workerPool.enabled = workerPool.enabled !== false;
@@ -231,6 +340,23 @@ function applyDefaults(config) {
   dashboard.port = Number(dashboard.port ?? 8788);
   dashboard.auth_token = String(dashboard.auth_token || process.env.SENTINEL_DASHBOARD_TOKEN || '');
   dashboard.allow_remote = dashboard.allow_remote === true;
+
+  normalized.runtime.budget = normalized.runtime.budget || {};
+  const budget = normalized.runtime.budget;
+  budget.enabled = budget.enabled === true;
+  budget.action = BUDGET_ACTIONS.has(String(budget.action).toLowerCase())
+    ? String(budget.action).toLowerCase()
+    : 'block';
+  budget.daily_limit_usd = Number(budget.daily_limit_usd ?? 5);
+  budget.store_file = String(budget.store_file || '~/.sentinel/budget-ledger.json');
+  budget.reset_timezone = BUDGET_RESET_TIMEZONES.has(String(budget.reset_timezone).toLowerCase())
+    ? String(budget.reset_timezone).toLowerCase()
+    : 'utc';
+  budget.chars_per_token = Number(budget.chars_per_token ?? 4);
+  budget.input_cost_per_1k_tokens = Number(budget.input_cost_per_1k_tokens ?? 0);
+  budget.output_cost_per_1k_tokens = Number(budget.output_cost_per_1k_tokens ?? 0);
+  budget.charge_replay_hits = budget.charge_replay_hits === true;
+  budget.retention_days = Number(budget.retention_days ?? 90);
 
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
@@ -454,6 +580,57 @@ function validateConfigShape(config) {
     }
   }
 
+  const budget = runtime.budget || {};
+  if (runtime.budget !== undefined) {
+    assertNoUnknownKeys(budget, BUDGET_KEYS, 'runtime.budget', details);
+    assertType(typeof budget.enabled === 'boolean', '`runtime.budget.enabled` must be boolean', details);
+    assertType(
+      BUDGET_ACTIONS.has(String(budget.action)),
+      '`runtime.budget.action` must be block|warn',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budget.daily_limit_usd)) && Number(budget.daily_limit_usd) > 0,
+      '`runtime.budget.daily_limit_usd` must be number > 0',
+      details
+    );
+    assertType(
+      typeof budget.store_file === 'string' && budget.store_file.length > 0,
+      '`runtime.budget.store_file` must be non-empty string',
+      details
+    );
+    assertType(
+      BUDGET_RESET_TIMEZONES.has(String(budget.reset_timezone)),
+      '`runtime.budget.reset_timezone` must be utc|local',
+      details
+    );
+    assertType(
+      Number.isInteger(budget.chars_per_token) && budget.chars_per_token > 0,
+      '`runtime.budget.chars_per_token` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budget.input_cost_per_1k_tokens)) && Number(budget.input_cost_per_1k_tokens) >= 0,
+      '`runtime.budget.input_cost_per_1k_tokens` must be number >= 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budget.output_cost_per_1k_tokens)) && Number(budget.output_cost_per_1k_tokens) >= 0,
+      '`runtime.budget.output_cost_per_1k_tokens` must be number >= 0',
+      details
+    );
+    assertType(
+      typeof budget.charge_replay_hits === 'boolean',
+      '`runtime.budget.charge_replay_hits` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(budget.retention_days) && budget.retention_days > 0,
+      '`runtime.budget.retention_days` must be integer > 0',
+      details
+    );
+  }
+
   const retry = runtime.upstream?.retry || {};
   const upstream = runtime.upstream || {};
   assertNoUnknownKeys(upstream, UPSTREAM_KEYS, 'runtime.upstream', details);
@@ -478,6 +655,204 @@ function validateConfigShape(config) {
     );
     if (customTargets.enabled && Array.isArray(customTargets.allowlist) && customTargets.allowlist.length === 0) {
       details.push('`runtime.upstream.custom_targets.allowlist` must not be empty when custom targets are enabled');
+    }
+  }
+
+  const resilienceMesh = runtime.upstream?.resilience_mesh;
+  if (resilienceMesh !== undefined) {
+    assertNoUnknownKeys(resilienceMesh, RESILIENCE_MESH_KEYS, 'runtime.upstream.resilience_mesh', details);
+    assertType(
+      typeof resilienceMesh.enabled === 'boolean',
+      '`runtime.upstream.resilience_mesh.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof resilienceMesh.contract === 'string',
+      '`runtime.upstream.resilience_mesh.contract` must be string',
+      details
+    );
+    assertType(
+      typeof resilienceMesh.default_group === 'string',
+      '`runtime.upstream.resilience_mesh.default_group` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(resilienceMesh.max_failover_hops) && resilienceMesh.max_failover_hops >= 0,
+      '`runtime.upstream.resilience_mesh.max_failover_hops` must be integer >= 0',
+      details
+    );
+    assertType(
+      typeof resilienceMesh.allow_post_with_idempotency_key === 'boolean',
+      '`runtime.upstream.resilience_mesh.allow_post_with_idempotency_key` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(resilienceMesh.failover_on_status),
+      '`runtime.upstream.resilience_mesh.failover_on_status` must be an array',
+      details
+    );
+    if (Array.isArray(resilienceMesh.failover_on_status)) {
+      resilienceMesh.failover_on_status.forEach((status, idx) => {
+        assertType(
+          Number.isInteger(status) && status >= 100 && status <= 599,
+          `runtime.upstream.resilience_mesh.failover_on_status[${idx}] must be HTTP status integer`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(resilienceMesh.failover_on_error_types),
+      '`runtime.upstream.resilience_mesh.failover_on_error_types` must be an array',
+      details
+    );
+    if (Array.isArray(resilienceMesh.failover_on_error_types)) {
+      resilienceMesh.failover_on_error_types.forEach((item, idx) => {
+        const normalized = String(item).toLowerCase();
+        assertType(
+          ['timeout', 'transport', 'circuit_open'].includes(normalized),
+          `runtime.upstream.resilience_mesh.failover_on_error_types[${idx}] must be timeout|transport|circuit_open`,
+          details
+        );
+      });
+    }
+    assertType(
+      resilienceMesh.groups && typeof resilienceMesh.groups === 'object' && !Array.isArray(resilienceMesh.groups),
+      '`runtime.upstream.resilience_mesh.groups` must be an object',
+      details
+    );
+    if (resilienceMesh.groups && typeof resilienceMesh.groups === 'object' && !Array.isArray(resilienceMesh.groups)) {
+      Object.entries(resilienceMesh.groups).forEach(([groupName, groupConfig]) => {
+        assertType(
+          groupConfig && typeof groupConfig === 'object' && !Array.isArray(groupConfig),
+          `runtime.upstream.resilience_mesh.groups.${groupName} must be object`,
+          details
+        );
+        if (!groupConfig || typeof groupConfig !== 'object' || Array.isArray(groupConfig)) {
+          return;
+        }
+        assertNoUnknownKeys(
+          groupConfig,
+          RESILIENCE_GROUP_KEYS,
+          `runtime.upstream.resilience_mesh.groups.${groupName}`,
+          details
+        );
+        assertType(
+          typeof groupConfig.enabled === 'boolean',
+          `runtime.upstream.resilience_mesh.groups.${groupName}.enabled must be boolean`,
+          details
+        );
+        assertType(
+          typeof groupConfig.contract === 'string',
+          `runtime.upstream.resilience_mesh.groups.${groupName}.contract must be string`,
+          details
+        );
+        assertType(
+          Array.isArray(groupConfig.targets),
+          `runtime.upstream.resilience_mesh.groups.${groupName}.targets must be array`,
+          details
+        );
+      });
+    }
+    assertType(
+      resilienceMesh.targets && typeof resilienceMesh.targets === 'object' && !Array.isArray(resilienceMesh.targets),
+      '`runtime.upstream.resilience_mesh.targets` must be an object',
+      details
+    );
+    if (resilienceMesh.targets && typeof resilienceMesh.targets === 'object' && !Array.isArray(resilienceMesh.targets)) {
+      Object.entries(resilienceMesh.targets).forEach(([targetName, targetConfig]) => {
+        assertType(
+          targetConfig && typeof targetConfig === 'object' && !Array.isArray(targetConfig),
+          `runtime.upstream.resilience_mesh.targets.${targetName} must be object`,
+          details
+        );
+        if (!targetConfig || typeof targetConfig !== 'object' || Array.isArray(targetConfig)) {
+          return;
+        }
+        assertNoUnknownKeys(
+          targetConfig,
+          RESILIENCE_TARGET_KEYS,
+          `runtime.upstream.resilience_mesh.targets.${targetName}`,
+          details
+        );
+        assertType(
+          typeof targetConfig.enabled === 'boolean',
+          `runtime.upstream.resilience_mesh.targets.${targetName}.enabled must be boolean`,
+          details
+        );
+        assertType(
+          typeof targetConfig.provider === 'string',
+          `runtime.upstream.resilience_mesh.targets.${targetName}.provider must be string`,
+          details
+        );
+        assertType(
+          ['openai', 'anthropic', 'google', 'custom'].includes(String(targetConfig.provider).toLowerCase()),
+          `runtime.upstream.resilience_mesh.targets.${targetName}.provider must be openai|anthropic|google|custom`,
+          details
+        );
+        assertType(
+          typeof targetConfig.contract === 'string',
+          `runtime.upstream.resilience_mesh.targets.${targetName}.contract must be string`,
+          details
+        );
+        if (targetConfig.base_url !== undefined) {
+          assertType(
+            typeof targetConfig.base_url === 'string' && targetConfig.base_url.length > 0,
+            `runtime.upstream.resilience_mesh.targets.${targetName}.base_url must be non-empty string`,
+            details
+          );
+        }
+        if (targetConfig.custom_url !== undefined) {
+          assertType(
+            typeof targetConfig.custom_url === 'string' && targetConfig.custom_url.length > 0,
+            `runtime.upstream.resilience_mesh.targets.${targetName}.custom_url must be non-empty string`,
+            details
+          );
+        }
+        if (targetConfig.headers !== undefined) {
+          assertType(
+            targetConfig.headers && typeof targetConfig.headers === 'object' && !Array.isArray(targetConfig.headers),
+            `runtime.upstream.resilience_mesh.targets.${targetName}.headers must be object`,
+            details
+          );
+        }
+      });
+    }
+  }
+
+  const canary = runtime.upstream?.canary;
+  if (canary !== undefined) {
+    assertNoUnknownKeys(canary, CANARY_KEYS, 'runtime.upstream.canary', details);
+    assertType(typeof canary.enabled === 'boolean', '`runtime.upstream.canary.enabled` must be boolean', details);
+    assertType(typeof canary.key_header === 'string', '`runtime.upstream.canary.key_header` must be string', details);
+    assertType(
+      Array.isArray(canary.fallback_key_headers),
+      '`runtime.upstream.canary.fallback_key_headers` must be array',
+      details
+    );
+    assertType(Array.isArray(canary.splits), '`runtime.upstream.canary.splits` must be array', details);
+    if (Array.isArray(canary.splits)) {
+      canary.splits.forEach((split, idx) => {
+        assertType(split && typeof split === 'object' && !Array.isArray(split), `runtime.upstream.canary.splits[${idx}] must be object`, details);
+        if (!split || typeof split !== 'object' || Array.isArray(split)) {
+          return;
+        }
+        assertNoUnknownKeys(split, CANARY_SPLIT_KEYS, `runtime.upstream.canary.splits[${idx}]`, details);
+        assertType(typeof split.name === 'string', `runtime.upstream.canary.splits[${idx}].name must be string`, details);
+        assertType(typeof split.match_target === 'string', `runtime.upstream.canary.splits[${idx}].match_target must be string`, details);
+        assertType(typeof split.group_a === 'string', `runtime.upstream.canary.splits[${idx}].group_a must be string`, details);
+        assertType(typeof split.group_b === 'string', `runtime.upstream.canary.splits[${idx}].group_b must be string`, details);
+        assertType(
+          Number.isFinite(Number(split.weight_a)) && Number(split.weight_a) >= 0,
+          `runtime.upstream.canary.splits[${idx}].weight_a must be number >= 0`,
+          details
+        );
+        assertType(
+          Number.isFinite(Number(split.weight_b)) && Number(split.weight_b) >= 0,
+          `runtime.upstream.canary.splits[${idx}].weight_b must be number >= 0`,
+          details
+        );
+        assertType(typeof split.sticky === 'boolean', `runtime.upstream.canary.splits[${idx}].sticky must be boolean`, details);
+      });
     }
   }
 

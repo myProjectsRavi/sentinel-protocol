@@ -14,6 +14,10 @@ It provides:
 - Optional neural injection classifier (`injection.neural.*`) with weighted merge
 - VCR mode for deterministic API testing (`runtime.vcr.mode: record|replay`)
 - Experimental semantic cache (opt-in, off by default) to reduce repeat LLM calls
+- Local budget enforcer with deterministic kill-switch (`runtime.budget.*`)
+- Resilience Mesh safe failover (`runtime.upstream.resilience_mesh.*`)
+- Sticky Canary A/B routing (`runtime.upstream.canary.*`)
+- Explicit cross-provider contracts (`x-sentinel-contract`) with adapter support
 - Local-only live dashboard (`runtime.dashboard.enabled: true`) on `127.0.0.1:8788`
 - Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
@@ -86,6 +90,29 @@ runtime:
     max_ram_mb: 64
     max_consecutive_errors: 3
     failure_cooldown_ms: 30000
+  budget:
+    enabled: false
+    action: block # block | warn
+    daily_limit_usd: 5
+    chars_per_token: 4
+    input_cost_per_1k_tokens: 0
+    output_cost_per_1k_tokens: 0
+  upstream:
+    resilience_mesh:
+      enabled: false
+      contract: passthrough # passthrough | openai_chat_v1
+      default_group: ""
+      max_failover_hops: 1
+      allow_post_with_idempotency_key: false
+      failover_on_status: [429, 500, 502, 503, 504]
+      failover_on_error_types: [timeout, transport, circuit_open]
+      groups: {}
+      targets: {}
+    canary:
+      enabled: false
+      key_header: x-sentinel-canary-key
+      fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+      splits: []
   dashboard:
     enabled: false
     host: 127.0.0.1
@@ -107,6 +134,10 @@ BYOK policy:
 - Prefer `SENTINEL_RAPIDAPI_KEY` over storing keys in `sentinel.yaml`.
 
 `x-sentinel-*` headers are stripped before forwarding upstream, so Sentinel-only routing and keys are not leaked to OpenAI/Anthropic/Google/custom providers.
+
+Mesh/canary routing controls:
+- Request: `x-sentinel-target-group`, `x-sentinel-contract`, `x-sentinel-canary-key`
+- Response: `x-sentinel-failover-used`, `x-sentinel-failover-count`, `x-sentinel-failover-chain`, `x-sentinel-upstream-target`
 
 Preflight check before startup:
 
@@ -148,6 +179,7 @@ Security note:
 - `runtime.dashboard.allow_remote=true` requires `runtime.dashboard.auth_token` (enforced by config validation).
 - Semantic cache embeddings run in worker threads; keep `runtime.worker_pool.enabled=true`.
 - Keep `runtime.worker_pool.embed_task_timeout_ms` high enough for model cold starts (recommended: `>=10000`).
+- Budget headers (`x-sentinel-budget-*`) expose deterministic spend/remaining values per request.
 
 ## Docker
 

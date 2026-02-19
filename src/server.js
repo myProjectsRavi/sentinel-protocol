@@ -8,7 +8,7 @@ const { PolicyEngine } = require('./engines/policy-engine');
 const { InMemoryRateLimiter } = require('./engines/rate-limiter');
 const { NeuralInjectionClassifier } = require('./engines/neural-injection-classifier');
 const { mergeInjectionResults } = require('./engines/injection-merge');
-const { resolveProvider } = require('./upstream/router');
+const { resolveUpstreamPlan } = require('./upstream/router');
 const { UpstreamClient } = require('./upstream/client');
 const { RuntimeOverrideManager } = require('./runtime/override');
 const { CircuitBreakerManager } = require('./resilience/circuit-breaker');
@@ -22,6 +22,7 @@ const { SSERedactionTransform } = require('./egress/sse-redaction-transform');
 const { ScanWorkerPool } = require('./workers/scan-pool');
 const { VCRStore } = require('./runtime/vcr-store');
 const { SemanticCache } = require('./cache/semantic-cache');
+const { BudgetStore } = require('./accounting/budget-store');
 const { DashboardServer } = require('./monitor/dashboard-server');
 const {
   PID_FILE_PATH,
@@ -89,6 +90,21 @@ function responseHeaderDiagnostics(res, diagnostics) {
   res.setHeader('x-sentinel-retry-count', String(diagnostics.retryCount));
   res.setHeader('x-sentinel-circuit-state', diagnostics.circuitState);
   res.setHeader('x-sentinel-correlation-id', diagnostics.correlationId);
+}
+
+function formatBudgetUsd(value) {
+  return Number(Number(value || 0).toFixed(6)).toString();
+}
+
+function setBudgetHeaders(res, budget) {
+  if (!budget || budget.enabled !== true) {
+    return;
+  }
+  res.setHeader('x-sentinel-budget-action', budget.action);
+  res.setHeader('x-sentinel-budget-day', budget.dayKey);
+  res.setHeader('x-sentinel-budget-limit-usd', formatBudgetUsd(budget.dailyLimitUsd));
+  res.setHeader('x-sentinel-budget-spent-usd', formatBudgetUsd(budget.spentUsd));
+  res.setHeader('x-sentinel-budget-remaining-usd', formatBudgetUsd(budget.remainingUsd));
 }
 
 function scrubForwardHeaders(inputHeaders = {}) {
@@ -166,6 +182,11 @@ class SentinelServer {
       semantic_cache_hits: 0,
       semantic_cache_misses: 0,
       semantic_cache_stores: 0,
+      budget_blocked: 0,
+      budget_limit_warnings: 0,
+      budget_charged_usd: 0,
+      failover_events: 0,
+      canary_routed: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -209,6 +230,7 @@ class SentinelServer {
     this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {}, {
       scanWorkerPool: this.scanWorkerPool,
     });
+    this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -235,6 +257,7 @@ class SentinelServer {
   }
 
   currentStatusPayload() {
+    const budgetSnapshot = this.budgetStore.snapshot();
     return {
       service_status: this.server ? 'running' : 'stopped',
       configured_mode: this.config.mode,
@@ -246,6 +269,13 @@ class SentinelServer {
       rapidapi_error_count: this.stats.rapidapi_error_count,
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
       semantic_cache_enabled: this.semanticCache.isEnabled(),
+      budget_enabled: budgetSnapshot.enabled,
+      budget_action: budgetSnapshot.action,
+      budget_day_key: budgetSnapshot.dayKey,
+      budget_daily_limit_usd: budgetSnapshot.dailyLimitUsd,
+      budget_spent_usd_today: budgetSnapshot.spentUsd,
+      budget_remaining_usd_today: budgetSnapshot.remainingUsd,
+      budget_requests_today: budgetSnapshot.requests,
       dashboard_enabled: this.config.runtime?.dashboard?.enabled === true,
       dashboard_host: this.config.runtime?.dashboard?.host || '127.0.0.1',
       dashboard_port: this.config.runtime?.dashboard?.port || 8788,
@@ -356,20 +386,41 @@ class SentinelServer {
         route: parsedPath.pathname,
       });
 
+      let routePlan;
       let provider;
       let baseUrl;
       let resolvedIp = null;
       let resolvedFamily = null;
       let upstreamHostname = null;
       let upstreamHostHeader = null;
+      let breakerKey = null;
+      let cacheProviderKey = null;
       try {
-        const resolved = await resolveProvider(req, this.config);
-        provider = resolved.provider;
-        baseUrl = resolved.baseUrl;
-        resolvedIp = resolved.resolvedIp || null;
-        resolvedFamily = resolved.resolvedFamily || null;
-        upstreamHostname = resolved.upstreamHostname || null;
-        upstreamHostHeader = resolved.upstreamHostHeader || null;
+        routePlan = await resolveUpstreamPlan(req, this.config);
+        const primary = routePlan.primary;
+        provider = primary.provider;
+        baseUrl = primary.baseUrl;
+        resolvedIp = primary.resolvedIp || null;
+        resolvedFamily = primary.resolvedFamily || null;
+        upstreamHostname = primary.upstreamHostname || null;
+        upstreamHostHeader = primary.upstreamHostHeader || null;
+        breakerKey = primary.breakerKey || provider;
+        cacheProviderKey = routePlan.selectedGroup || routePlan.requestedTarget || provider;
+
+        res.setHeader('x-sentinel-route-target', routePlan.requestedTarget);
+        res.setHeader('x-sentinel-route-contract', routePlan.desiredContract);
+        res.setHeader('x-sentinel-route-source', routePlan.routeSource);
+        if (routePlan.selectedGroup) {
+          res.setHeader('x-sentinel-route-group', routePlan.selectedGroup);
+        }
+        if (routePlan.canary) {
+          this.stats.canary_routed += 1;
+          res.setHeader('x-sentinel-canary-split', routePlan.canary.name);
+          res.setHeader('x-sentinel-canary-bucket', String(routePlan.canary.bucket));
+          if (routePlan.canary.canaryKeyHash) {
+            res.setHeader('x-sentinel-canary-key-hash', routePlan.canary.canaryKeyHash);
+          }
+        }
       } catch (error) {
         const diagnostics = {
           errorSource: 'sentinel',
@@ -398,7 +449,7 @@ class SentinelServer {
             upstreamError: false,
             provider,
             retryCount: 0,
-            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
             correlationId,
           };
           responseHeaderDiagnostics(res, diagnostics);
@@ -515,7 +566,7 @@ class SentinelServer {
             upstreamError: false,
             provider,
             retryCount: 0,
-            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
             correlationId,
           };
 
@@ -579,7 +630,7 @@ class SentinelServer {
             upstreamError: false,
             provider,
             retryCount: 0,
-            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
             correlationId,
           };
           responseHeaderDiagnostics(res, diagnostics);
@@ -647,7 +698,7 @@ class SentinelServer {
           upstreamError: false,
           provider,
           retryCount: 0,
-          circuitState: this.circuitBreakers.getProviderState(provider).state,
+          circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
           correlationId,
         };
         responseHeaderDiagnostics(res, diagnostics);
@@ -707,10 +758,80 @@ class SentinelServer {
       const wantsStream =
         String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
         (bodyJson && bodyJson.stream === true);
+
+      const budgetEstimate = this.budgetStore.estimateRequest({
+        provider,
+        method,
+        requestBodyBuffer: bodyBuffer,
+      });
+      if (budgetEstimate.enabled === true) {
+        setBudgetHeaders(res, budgetEstimate);
+        if (budgetEstimate.applies) {
+          res.setHeader('x-sentinel-budget-estimated-request-usd', formatBudgetUsd(budgetEstimate.estimatedRequestCostUsd));
+          res.setHeader('x-sentinel-budget-projected-usd', formatBudgetUsd(budgetEstimate.projectedUsd));
+        }
+      }
+      if (!budgetEstimate.allowed && budgetEstimate.reason === 'daily_limit_exceeded') {
+        if (effectiveMode === 'enforce' && this.budgetStore.action === 'block') {
+          this.stats.blocked_total += 1;
+          this.stats.budget_blocked += 1;
+
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'blocked_budget',
+            reasons: ['daily_budget_exceeded'],
+            pii_types: piiTypes,
+            redactions: redactedCount,
+            duration_ms: Date.now() - requestStart,
+            request_bytes: bodyBuffer.length,
+            response_status: 402,
+            response_bytes: 0,
+            provider,
+            budget_limit_usd: budgetEstimate.dailyLimitUsd,
+            budget_spent_usd: budgetEstimate.spentUsd,
+            budget_projected_usd: budgetEstimate.projectedUsd,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_budget',
+            status: 402,
+            providerName: provider,
+          });
+          return res.status(402).json({
+            error: 'BUDGET_EXCEEDED',
+            reason: 'daily_budget_exceeded',
+            budget: {
+              daily_limit_usd: budgetEstimate.dailyLimitUsd,
+              spent_usd: budgetEstimate.spentUsd,
+              projected_usd: budgetEstimate.projectedUsd,
+              remaining_usd: budgetEstimate.remainingUsd,
+              estimated_request_usd: budgetEstimate.estimatedRequestCostUsd,
+            },
+            correlation_id: correlationId,
+          });
+        }
+
+        warnings.push('budget_limit_exceeded');
+        this.stats.budget_limit_warnings += 1;
+        this.stats.warnings_total += 1;
+      }
+
       const start = Date.now();
       const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
       const vcrRequestMeta = {
-        provider,
+        provider: cacheProviderKey,
         method,
         pathWithQuery,
         bodyBuffer,
@@ -747,7 +868,7 @@ class SentinelServer {
             upstreamError: false,
             provider,
             retryCount: 0,
-            circuitState: this.circuitBreakers.getProviderState(provider).state,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
             correlationId,
           },
         };
@@ -761,7 +882,7 @@ class SentinelServer {
               upstreamError: false,
               provider,
               retryCount: 0,
-              circuitState: this.circuitBreakers.getProviderState(provider).state,
+              circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
               correlationId,
             };
             responseHeaderDiagnostics(res, diagnostics);
@@ -783,7 +904,7 @@ class SentinelServer {
         if (this.semanticCache.isEnabled()) {
           try {
             const cacheLookup = await this.semanticCache.lookup({
-              provider,
+              provider: cacheProviderKey,
               method,
               pathWithQuery,
               wantsStream,
@@ -805,7 +926,7 @@ class SentinelServer {
                   upstreamError: false,
                   provider,
                   retryCount: 0,
-                  circuitState: this.circuitBreakers.getProviderState(provider).state,
+                  circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
                   correlationId,
                 },
               };
@@ -825,18 +946,14 @@ class SentinelServer {
 
         if (!replayedFromSemanticCache) {
           upstream = await this.upstreamClient.forwardRequest({
-            provider,
-            baseUrl,
+            routePlan,
             req,
             pathWithQuery,
             method,
             bodyBuffer,
+            bodyJson,
             correlationId,
             wantsStream,
-            resolvedIp,
-            resolvedFamily,
-            upstreamHostname,
-            upstreamHostHeader,
             forwardHeaders,
           });
         }
@@ -844,6 +961,25 @@ class SentinelServer {
 
       const durationMs = Date.now() - start;
       const diagnostics = upstream.diagnostics;
+      const routedProvider = upstream.route?.selectedProvider || provider;
+      const routedTarget = upstream.route?.selectedTarget || routePlan.primary.targetName;
+      const routedBreakerKey = upstream.route?.selectedBreakerKey || breakerKey;
+
+      res.setHeader('x-sentinel-upstream-target', routedTarget);
+      if (upstream.route?.failoverUsed) {
+        this.stats.failover_events += 1;
+        res.setHeader('x-sentinel-failover-used', 'true');
+        res.setHeader('x-sentinel-failover-count', String(Math.max(0, upstream.route.failoverChain.length - 1)));
+        const chainHeader = upstream.route.failoverChain
+          .map((item) => `${item.target}:${item.status}`)
+          .join('>');
+        if (chainHeader.length > 0) {
+          res.setHeader('x-sentinel-failover-chain', chainHeader.slice(0, 256));
+        }
+      } else {
+        res.setHeader('x-sentinel-failover-used', 'false');
+        res.setHeader('x-sentinel-failover-count', '0');
+      }
 
       if (warnings.length > 0) {
         res.setHeader('x-sentinel-warning', warnings.join(','));
@@ -873,14 +1009,20 @@ class SentinelServer {
           request_bytes: bodyBuffer.length,
           response_status: upstream.status,
           response_bytes: Buffer.byteLength(JSON.stringify(upstream.body)),
-          provider,
+          provider: routedProvider,
+          upstream_target: routedTarget,
+          failover_used: upstream.route?.failoverUsed === true,
+          route_source: routePlan.routeSource,
+          route_group: routePlan.selectedGroup || undefined,
+          route_contract: routePlan.desiredContract,
+          requested_target: routePlan.requestedTarget,
         });
 
         this.writeStatus();
         finalizeRequestTelemetry({
           decision: 'upstream_error',
           status: upstream.status,
-          providerName: provider,
+          providerName: routedProvider,
         });
         return res.status(upstream.status).json(upstream.body);
       }
@@ -956,7 +1098,27 @@ class SentinelServer {
           streamedBytes += chunk.length;
         });
 
-        streamOut.on('end', () => {
+        streamOut.on('end', async () => {
+          let budgetCharge = null;
+          try {
+            budgetCharge = await this.budgetStore.recordStream({
+              provider: routedProvider,
+              requestBodyBuffer: bodyBuffer,
+              streamedBytes,
+              replayedFromVcr,
+              replayedFromSemanticCache,
+              correlationId,
+            });
+            if (budgetCharge.charged) {
+              this.stats.budget_charged_usd = Number(
+                (this.stats.budget_charged_usd + Number(budgetCharge.chargedUsd || 0)).toFixed(6)
+              );
+            }
+          } catch {
+            warnings.push('budget_record_error');
+            this.stats.warnings_total += 1;
+          }
+
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
             correlation_id: correlationId,
@@ -973,13 +1135,22 @@ class SentinelServer {
               request_bytes: bodyBuffer.length,
             response_status: upstream.status,
             response_bytes: streamedBytes,
-            provider,
+            provider: routedProvider,
+            upstream_target: routedTarget,
+            failover_used: upstream.route?.failoverUsed === true,
+            budget_charged_usd: budgetCharge?.chargedUsd,
+            budget_spent_usd: budgetCharge?.spentUsd,
+            budget_remaining_usd: budgetCharge?.remainingUsd,
+            route_source: routePlan.routeSource,
+            route_group: routePlan.selectedGroup || undefined,
+            route_contract: routePlan.desiredContract,
+            requested_target: routePlan.requestedTarget,
           });
           this.writeStatus();
           finalizeRequestTelemetry({
             decision: 'forwarded_stream',
             status: upstream.status,
-            providerName: provider,
+            providerName: routedProvider,
           });
         });
 
@@ -1001,13 +1172,19 @@ class SentinelServer {
               request_bytes: bodyBuffer.length,
               response_status: 499,
               response_bytes: streamedBytes,
-              provider,
+              provider: routedProvider,
+              upstream_target: routedTarget,
+              failover_used: upstream.route?.failoverUsed === true,
+              route_source: routePlan.routeSource,
+              route_group: routePlan.selectedGroup || undefined,
+              route_contract: routePlan.desiredContract,
+              requested_target: routePlan.requestedTarget,
             });
             this.writeStatus();
             finalizeRequestTelemetry({
               decision: 'blocked_egress',
               status: 499,
-              providerName: provider,
+              providerName: routedProvider,
             });
             return;
           }
@@ -1025,13 +1202,19 @@ class SentinelServer {
             request_bytes: bodyBuffer.length,
             response_status: upstream.status,
             response_bytes: streamedBytes,
-            provider,
+            provider: routedProvider,
+            upstream_target: routedTarget,
+            failover_used: upstream.route?.failoverUsed === true,
+            route_source: routePlan.routeSource,
+            route_group: routePlan.selectedGroup || undefined,
+            route_contract: routePlan.desiredContract,
+            requested_target: routePlan.requestedTarget,
           });
           this.writeStatus();
           finalizeRequestTelemetry({
             decision: 'stream_error',
             status: upstream.status,
-            providerName: provider,
+            providerName: routedProvider,
             error,
           });
           res.destroy(error);
@@ -1080,9 +1263,9 @@ class SentinelServer {
             const diagnostics = {
               errorSource: 'sentinel',
               upstreamError: false,
-              provider,
+              provider: routedProvider,
               retryCount: upstream.diagnostics.retryCount || 0,
-              circuitState: this.circuitBreakers.getProviderState(provider).state,
+              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
               correlationId,
             };
             responseHeaderDiagnostics(res, diagnostics);
@@ -1100,13 +1283,19 @@ class SentinelServer {
               request_bytes: bodyBuffer.length,
               response_status: 403,
               response_bytes: 0,
-              provider,
+              provider: routedProvider,
+              upstream_target: routedTarget,
+              failover_used: upstream.route?.failoverUsed === true,
+              route_source: routePlan.routeSource,
+              route_group: routePlan.selectedGroup || undefined,
+              route_contract: routePlan.desiredContract,
+              requested_target: routePlan.requestedTarget,
             });
             this.writeStatus();
             finalizeRequestTelemetry({
               decision: 'blocked_egress',
               status: 403,
-              providerName: provider,
+              providerName: routedProvider,
             });
             return res.status(403).json({
               error: 'EGRESS_PII_DETECTED',
@@ -1143,7 +1332,7 @@ class SentinelServer {
         if (cacheSafeForStore) {
           try {
             const stored = await this.semanticCache.store({
-              provider,
+              provider: cacheProviderKey,
               method,
               pathWithQuery,
               wantsStream,
@@ -1164,6 +1353,30 @@ class SentinelServer {
         }
       }
 
+      let budgetCharge = null;
+      try {
+        budgetCharge = await this.budgetStore.recordBuffered({
+          provider: routedProvider,
+          requestBodyBuffer: bodyBuffer,
+          responseBodyBuffer: outboundBody,
+          replayedFromVcr,
+          replayedFromSemanticCache,
+          correlationId,
+        });
+        if (budgetCharge.charged) {
+          this.stats.budget_charged_usd = Number(
+            (this.stats.budget_charged_usd + Number(budgetCharge.chargedUsd || 0)).toFixed(6)
+          );
+          res.setHeader('x-sentinel-budget-charged-usd', formatBudgetUsd(budgetCharge.chargedUsd));
+        }
+        if (budgetCharge.enabled === true) {
+          setBudgetHeaders(res, budgetCharge);
+        }
+      } catch {
+        warnings.push('budget_record_error');
+        this.stats.warnings_total += 1;
+      }
+
       this.auditLogger.write({
         timestamp: new Date().toISOString(),
         correlation_id: correlationId,
@@ -1177,14 +1390,23 @@ class SentinelServer {
         request_bytes: bodyBuffer.length,
         response_status: upstream.status,
         response_bytes: outboundBody.length,
-        provider,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        budget_charged_usd: budgetCharge?.chargedUsd,
+        budget_spent_usd: budgetCharge?.spentUsd,
+        budget_remaining_usd: budgetCharge?.remainingUsd,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
       });
 
       this.writeStatus();
       finalizeRequestTelemetry({
         decision: 'forwarded',
         status: upstream.status,
-        providerName: provider,
+        providerName: routedProvider,
       });
       res.status(upstream.status).send(outboundBody);
     });
@@ -1270,6 +1492,7 @@ class SentinelServer {
       this.dashboardServer = null;
     }
     await this.vcrStore.flush();
+    await this.budgetStore.flush();
     await this.auditLogger.close({ timeoutMs: 5000 });
 
     if (fs.existsSync(PID_FILE_PATH)) {

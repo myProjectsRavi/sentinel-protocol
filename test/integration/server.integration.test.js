@@ -672,6 +672,48 @@ describe('sentinel integration', () => {
     expect(allowed.status).toBe(200);
   });
 
+  test('blocks request when daily budget is exceeded in enforce mode', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.status(200).json({
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 10,
+          total_tokens: 20,
+        },
+        ok: true,
+      });
+    });
+
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        runtime: {
+          budget: {
+            enabled: true,
+            action: 'block',
+            daily_limit_usd: 0.000001,
+            chars_per_token: 1,
+            input_cost_per_1k_tokens: 1,
+            output_cost_per_1k_tokens: 1,
+            store_file: path.join(os.tmpdir(), `sentinel-budget-${Date.now()}.json`),
+          },
+        },
+      })
+    );
+
+    const server = sentinel.start();
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'hello budget guardrail' });
+
+    expect(response.status).toBe(402);
+    expect(response.body.error).toBe('BUDGET_EXCEEDED');
+    expect(response.headers['x-sentinel-budget-action']).toBe('block');
+    expect(response.headers['x-sentinel-error-source']).toBe('sentinel');
+  });
+
   test('records and replays responses in VCR mode', async () => {
     const tapePath = path.join(os.tmpdir(), `sentinel-vcr-${Date.now()}.jsonl`);
     upstream = await startUpstream((req, res) => {
