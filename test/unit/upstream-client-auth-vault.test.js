@@ -1,4 +1,5 @@
 const { UpstreamClient } = require('../../src/upstream/client');
+const { SwarmProtocol } = require('../../src/security/swarm-protocol');
 
 class FakeCircuitBreakers {
   constructor() {
@@ -266,5 +267,61 @@ describe('UpstreamClient auth vault handling', () => {
     expect(fetchOptions.headers.authorization).toBeUndefined();
     expect(fetchOptions.headers['x-api-key']).toBeUndefined();
     expect(fetchOptions.headers['x-goog-api-key']).toBeUndefined();
+  });
+
+  test('adds swarm envelope headers for eligible custom provider routes', async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+
+    const swarmProtocol = new SwarmProtocol(
+      {
+        enabled: true,
+        mode: 'monitor',
+        node_id: 'node-a',
+        key_id: 'node-a',
+        sign_outbound: true,
+        sign_on_providers: ['custom'],
+      },
+      {
+        now: () => 1700000000000,
+        randomUuid: () => 'nonce-xyz',
+      }
+    );
+
+    const client = new UpstreamClient({
+      timeoutMs: 2000,
+      retryConfig: {
+        enabled: false,
+        max_attempts: 0,
+        allow_post_with_idempotency_key: false,
+      },
+      circuitBreakers: new FakeCircuitBreakers(),
+      telemetry: null,
+      authVaultConfig: { enabled: false },
+      ghostModeConfig: { enabled: false },
+      swarmProtocol,
+    });
+
+    const result = await client.forwardRequest({
+      req: {
+        headers: {},
+      },
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyBuffer: Buffer.from(JSON.stringify({ message: 'hello' })),
+      bodyJson: { message: 'hello' },
+      correlationId: 'corr-swarm-1',
+      wantsStream: false,
+      routePlan: buildRoutePlan('custom'),
+    });
+
+    expect(result.ok).toBe(true);
+    const fetchOptions = global.fetch.mock.calls[0][1];
+    expect(fetchOptions.headers['x-sentinel-swarm-node-id']).toBe('node-a');
+    expect(fetchOptions.headers['x-sentinel-swarm-signature']).toBeTruthy();
   });
 });

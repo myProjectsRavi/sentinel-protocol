@@ -28,6 +28,9 @@ const { LoopBreaker } = require('./engines/loop-breaker');
 const { DeceptionEngine } = require('./engines/deception-engine');
 const { ProvenanceSigner } = require('./security/provenance-signer');
 const { HoneytokenInjector } = require('./security/honeytoken-injector');
+const { SwarmProtocol } = require('./security/swarm-protocol');
+const { PolymorphicPromptEngine } = require('./security/polymorphic-prompt');
+const { SyntheticPoisoner } = require('./security/synthetic-poisoner');
 const { LatencyNormalizer } = require('./runtime/latency-normalizer');
 const { IntentThrottle } = require('./runtime/intent-throttle');
 const { CanaryToolTrap } = require('./engines/canary-tool-trap');
@@ -206,6 +209,12 @@ class SentinelServer {
       intent_throttle_matches: 0,
       intent_throttle_blocked: 0,
       intent_throttle_errors: 0,
+      swarm_inbound_verified: 0,
+      swarm_inbound_rejected: 0,
+      swarm_replay_rejected: 0,
+      swarm_outbound_signed: 0,
+      polymorph_applied: 0,
+      synthetic_poisoning_injected: 0,
       deception_engaged: 0,
       deception_streamed: 0,
       honeytoken_injected: 0,
@@ -235,6 +244,7 @@ class SentinelServer {
     });
     this.neuralInjectionClassifier = new NeuralInjectionClassifier(config.injection?.neural || {});
     this.circuitBreakers = new CircuitBreakerManager(config.runtime.upstream.circuit_breaker);
+    this.swarmProtocol = new SwarmProtocol(config.runtime?.swarm || {});
     this.upstreamClient = new UpstreamClient({
       timeoutMs: config.proxy.timeout_ms,
       retryConfig: config.runtime.upstream.retry,
@@ -242,6 +252,7 @@ class SentinelServer {
       telemetry: this.telemetry,
       authVaultConfig: config.runtime?.upstream?.auth_vault || {},
       ghostModeConfig: config.runtime?.upstream?.ghost_mode || {},
+      swarmProtocol: this.swarmProtocol,
     });
     this.scanWorkerPool = null;
     try {
@@ -264,6 +275,8 @@ class SentinelServer {
     this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
     this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
     this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
+    this.polymorphicPrompt = new PolymorphicPromptEngine(this.config.runtime?.polymorphic_prompt || {});
+    this.syntheticPoisoner = new SyntheticPoisoner(this.config.runtime?.synthetic_poisoning || {});
     this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
     this.intentThrottle = new IntentThrottle(this.config.runtime?.intent_throttle || {}, {
       embedText: async (text, options = {}) => {
@@ -294,6 +307,12 @@ class SentinelServer {
       logger.warn('Intent throttle is enabled but worker pool is unavailable; throttle will remain in monitor-only fallback', {
         intent_throttle_enabled: true,
         worker_pool_enabled: false,
+      });
+    }
+    if (this.config.runtime?.swarm?.enabled === true && this.swarmProtocol.trustedNodes?.size <= 1) {
+      logger.warn('Swarm protocol enabled with minimal trusted node set; inbound verification may only trust local node', {
+        swarm_enabled: true,
+        trusted_nodes: Math.max(0, this.swarmProtocol.trustedNodes?.size - 1),
       });
     }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
@@ -329,7 +348,12 @@ class SentinelServer {
       loop_breaker_enabled: this.loopBreaker.enabled,
       deception_enabled: this.deceptionEngine.isEnabled(),
       provenance_enabled: this.provenanceSigner.isEnabled(),
+      swarm_enabled: this.swarmProtocol.isEnabled(),
+      swarm_mode: this.swarmProtocol.mode,
       honeytoken_enabled: this.honeytokenInjector.isEnabled(),
+      polymorphic_prompt_enabled: this.polymorphicPrompt.isEnabled(),
+      synthetic_poisoning_enabled: this.syntheticPoisoner.isEnabled(),
+      synthetic_poisoning_mode: this.syntheticPoisoner.mode,
       latency_normalization_enabled: this.latencyNormalizer.isEnabled(),
       intent_throttle_enabled: this.intentThrottle.isEnabled(),
       intent_throttle_mode: this.intentThrottle.mode,
@@ -636,6 +660,16 @@ class SentinelServer {
       res.status(200).json(this.provenanceSigner.getPublicMetadata());
     });
 
+    this.app.get('/_sentinel/swarm/public-key', (req, res) => {
+      if (!this.swarmProtocol.isEnabled()) {
+        res.status(404).json({
+          error: 'SWARM_DISABLED',
+        });
+        return;
+      }
+      res.status(200).json(this.swarmProtocol.getPublicMetadata());
+    });
+
     this.app.all('*', async (req, res) => {
       const correlationId = uuidv4();
       const method = req.method.toUpperCase();
@@ -800,8 +834,82 @@ class SentinelServer {
         (bodyJson && bodyJson.stream === true);
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
+      const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
       let precomputedLocalScan = null;
       let precomputedInjection = null;
+
+      const swarmInboundDecision = this.swarmProtocol.verifyInboundEnvelope({
+        headers: req.headers || {},
+        method,
+        pathWithQuery,
+        bodyBuffer: rawBody,
+      });
+      if (swarmInboundDecision.present) {
+        res.setHeader('x-sentinel-swarm-verified', String(swarmInboundDecision.verified));
+        res.setHeader('x-sentinel-swarm-reason', String(swarmInboundDecision.reason || 'unknown'));
+        if (swarmInboundDecision.nodeId) {
+          res.setHeader('x-sentinel-swarm-node-id', swarmInboundDecision.nodeId);
+        }
+      }
+      if (swarmInboundDecision.verified) {
+        this.stats.swarm_inbound_verified += 1;
+      } else if (swarmInboundDecision.present || swarmInboundDecision.required) {
+        this.stats.swarm_inbound_rejected += 1;
+        if (swarmInboundDecision.reason === 'replay_nonce') {
+          this.stats.swarm_replay_rejected += 1;
+        }
+        if (effectiveMode === 'enforce' && swarmInboundDecision.shouldBlock) {
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          const statusCode = swarmInboundDecision.reason === 'replay_nonce' ? 409 : 401;
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode,
+            requestStart,
+          });
+          this.stats.blocked_total += 1;
+          this.stats.policy_blocked += 1;
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'blocked_swarm',
+            reasons: [String(swarmInboundDecision.reason || 'swarm_verification_failed')],
+            pii_types: [],
+            redactions: 0,
+            duration_ms: Date.now() - requestStart,
+            request_bytes: rawBody.length,
+            response_status: statusCode,
+            response_bytes: 0,
+            provider,
+            swarm_node_id: swarmInboundDecision.nodeId,
+            swarm_key_id: swarmInboundDecision.keyId,
+            swarm_nonce: swarmInboundDecision.nonce,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_policy',
+            status: statusCode,
+            providerName: provider,
+          });
+          return res.status(statusCode).json({
+            error: 'SWARM_VERIFICATION_FAILED',
+            reason: swarmInboundDecision.reason,
+            swarm_node_id: swarmInboundDecision.nodeId,
+            correlation_id: correlationId,
+          });
+        }
+        warnings.push(`swarm:${swarmInboundDecision.reason}`);
+        this.stats.warnings_total += 1;
+      }
 
       const canUseScanWorkers =
         this.scanWorkerPool?.enabled === true &&
@@ -1057,6 +1165,7 @@ class SentinelServer {
       }
 
       let intentThrottleDecision = null;
+      let syntheticPoisonDecision = null;
       if (this.intentThrottle.isEnabled()) {
         try {
           intentThrottleDecision = await this.intentThrottle.evaluate({
@@ -1085,65 +1194,91 @@ class SentinelServer {
           }
 
           if (effectiveMode === 'enforce' && intentThrottleDecision.shouldBlock) {
-            this.stats.blocked_total += 1;
-            this.stats.intent_throttle_blocked += 1;
+            syntheticPoisonDecision = this.syntheticPoisoner.inject({
+              bodyJson,
+              trigger: intentThrottleDecision.reason,
+            });
+            if (syntheticPoisonDecision.applied) {
+              bodyJson = syntheticPoisonDecision.bodyJson;
+              bodyText = syntheticPoisonDecision.bodyText;
+              this.stats.synthetic_poisoning_injected += 1;
+              warnings.push('synthetic_poisoning:injected');
+              this.stats.warnings_total += 1;
+              if (this.syntheticPoisoner.observability) {
+                res.setHeader('x-sentinel-synthetic-poisoning', 'injected');
+                res.setHeader(
+                  'x-sentinel-synthetic-trigger',
+                  String(syntheticPoisonDecision.meta?.trigger || intentThrottleDecision.reason || '')
+                );
+              }
+            } else {
+              if (this.syntheticPoisoner.isEnabled() && this.syntheticPoisoner.observability) {
+                res.setHeader(
+                  'x-sentinel-synthetic-poisoning',
+                  String(syntheticPoisonDecision.reason || 'not_applied')
+                );
+              }
+              this.stats.blocked_total += 1;
+              this.stats.intent_throttle_blocked += 1;
 
-            const diagnostics = {
-              errorSource: 'sentinel',
-              upstreamError: false,
-              provider,
-              retryCount: 0,
-              circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
-              correlationId,
-            };
-            responseHeaderDiagnostics(res, diagnostics);
-            await this.maybeNormalizeBlockedLatency({
-              res,
-              statusCode: 429,
-              requestStart,
-            });
-            this.auditLogger.write({
-              timestamp: new Date().toISOString(),
-              correlation_id: correlationId,
-              config_version: this.config.version,
-              mode: effectiveMode,
-              decision: 'blocked_intent_throttle',
-              reasons: [String(intentThrottleDecision.reason || 'intent_velocity_exceeded')],
-              pii_types: [],
-              redactions: 0,
-              duration_ms: Date.now() - requestStart,
-              request_bytes: rawBody.length,
-              response_status: 429,
-              response_bytes: 0,
-              provider,
-              intent_cluster: intentThrottleDecision.cluster,
-              intent_similarity: intentThrottleDecision.similarity,
-              intent_threshold: intentThrottleDecision.threshold,
-              intent_count: intentThrottleDecision.count,
-              intent_max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
-              intent_window_ms: intentThrottleDecision.windowMs,
-              intent_cooldown_ms: intentThrottleDecision.cooldownMs,
-              intent_blocked_until: intentThrottleDecision.blockedUntil,
-            });
-            this.writeStatus();
-            finalizeRequestTelemetry({
-              decision: 'blocked_policy',
-              status: 429,
-              providerName: provider,
-            });
-            return res.status(429).json({
-              error: 'INTENT_THROTTLED',
-              reason: intentThrottleDecision.reason,
-              cluster: intentThrottleDecision.cluster,
-              similarity: intentThrottleDecision.similarity,
-              count: intentThrottleDecision.count,
-              threshold: intentThrottleDecision.threshold,
-              max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
-              window_ms: intentThrottleDecision.windowMs,
-              cooldown_ms: intentThrottleDecision.cooldownMs,
-              blocked_until: intentThrottleDecision.blockedUntil || 0,
-              correlation_id: correlationId,
-            });
+              const diagnostics = {
+                errorSource: 'sentinel',
+                upstreamError: false,
+                provider,
+                retryCount: 0,
+                circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+                correlationId,
+              };
+              responseHeaderDiagnostics(res, diagnostics);
+              await this.maybeNormalizeBlockedLatency({
+                res,
+                statusCode: 429,
+                requestStart,
+              });
+              this.auditLogger.write({
+                timestamp: new Date().toISOString(),
+                correlation_id: correlationId,
+                config_version: this.config.version,
+                mode: effectiveMode,
+                decision: 'blocked_intent_throttle',
+                reasons: [String(intentThrottleDecision.reason || 'intent_velocity_exceeded')],
+                pii_types: [],
+                redactions: 0,
+                duration_ms: Date.now() - requestStart,
+                request_bytes: rawBody.length,
+                response_status: 429,
+                response_bytes: 0,
+                provider,
+                intent_cluster: intentThrottleDecision.cluster,
+                intent_similarity: intentThrottleDecision.similarity,
+                intent_threshold: intentThrottleDecision.threshold,
+                intent_count: intentThrottleDecision.count,
+                intent_max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
+                intent_window_ms: intentThrottleDecision.windowMs,
+                intent_cooldown_ms: intentThrottleDecision.cooldownMs,
+                intent_blocked_until: intentThrottleDecision.blockedUntil,
+                synthetic_poison_reason: syntheticPoisonDecision?.reason,
+              });
+              this.writeStatus();
+              finalizeRequestTelemetry({
+                decision: 'blocked_policy',
+                status: 429,
+                providerName: provider,
+              });
+              return res.status(429).json({
+                error: 'INTENT_THROTTLED',
+                reason: intentThrottleDecision.reason,
+                cluster: intentThrottleDecision.cluster,
+                similarity: intentThrottleDecision.similarity,
+                count: intentThrottleDecision.count,
+                threshold: intentThrottleDecision.threshold,
+                max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
+                window_ms: intentThrottleDecision.windowMs,
+                cooldown_ms: intentThrottleDecision.cooldownMs,
+                blocked_until: intentThrottleDecision.blockedUntil || 0,
+                correlation_id: correlationId,
+              });
+            }
           }
 
           warnings.push(`intent_throttle:${intentThrottleDecision.cluster || intentThrottleDecision.reason}`);
@@ -1301,6 +1436,26 @@ class SentinelServer {
         }
       }
 
+      let polymorphDecision = null;
+      if (this.polymorphicPrompt.isEnabled()) {
+        polymorphDecision = this.polymorphicPrompt.mutate({
+          bodyJson,
+          headers: req.headers || {},
+        });
+        if (polymorphDecision.applied) {
+          bodyJson = polymorphDecision.bodyJson;
+          bodyText = polymorphDecision.bodyText;
+          this.stats.polymorph_applied += 1;
+          if (this.polymorphicPrompt.observability) {
+            res.setHeader('x-sentinel-polymorph', 'applied');
+            res.setHeader('x-sentinel-polymorph-epoch', String(polymorphDecision.meta?.epoch || 0));
+            res.setHeader('x-sentinel-polymorph-replacements', String(polymorphDecision.meta?.replacements || 0));
+          }
+        } else if (this.polymorphicPrompt.observability) {
+          res.setHeader('x-sentinel-polymorph', String(polymorphDecision.reason || 'bypass'));
+        }
+      }
+
       const parallaxInputBodyJson =
         bodyJson && typeof bodyJson === 'object'
           ? JSON.parse(JSON.stringify(bodyJson))
@@ -1418,7 +1573,6 @@ class SentinelServer {
       }
 
       const start = Date.now();
-      const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
       const vcrRequestMeta = {
         provider: cacheProviderKey,
         method,
@@ -1569,6 +1723,14 @@ class SentinelServer {
       } else {
         res.setHeader('x-sentinel-failover-used', 'false');
         res.setHeader('x-sentinel-failover-count', '0');
+      }
+
+      if (upstream.swarm?.signed) {
+        this.stats.swarm_outbound_signed += 1;
+        res.setHeader('x-sentinel-swarm-outbound', 'signed');
+        res.setHeader('x-sentinel-swarm-outbound-node-id', String(upstream.swarm.nodeId || ''));
+      } else if (this.swarmProtocol.isEnabled() && upstream.swarm?.reason) {
+        res.setHeader('x-sentinel-swarm-outbound', String(upstream.swarm.reason));
       }
 
       if (warnings.length > 0) {

@@ -136,6 +136,40 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'intent-throttle-worker-pool' && check.status === 'fail')).toBe(true);
   });
 
+  test('warns when strict swarm verification has empty trust store', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        swarm: {
+          enabled: true,
+          mode: 'block',
+          node_id: 'node-a',
+          verify_inbound: true,
+          sign_outbound: true,
+          require_envelope: true,
+          trusted_nodes: {},
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'swarm-trust-store' && check.status === 'warn')).toBe(true);
+  });
+
+  test('fails when synthetic poisoning inject mode lacks legal acknowledgement', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        synthetic_poisoning: {
+          enabled: true,
+          mode: 'inject',
+          required_acknowledgement: 'I_UNDERSTAND_SYNTHETIC_DATA_RISK',
+          acknowledgement: '',
+          allowed_triggers: ['intent_velocity_exceeded'],
+          target_roles: ['system'],
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'synthetic-poisoning-ack' && check.status === 'fail')).toBe(true);
+  });
+
   test('warns when budget enabled with zero pricing model', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {

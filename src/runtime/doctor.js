@@ -71,6 +71,9 @@ function runDoctorChecks(config, env = process.env) {
   const semantic = config?.pii?.semantic || {};
   const semanticCache = config?.runtime?.semantic_cache || {};
   const intentThrottle = config?.runtime?.intent_throttle || {};
+  const swarm = config?.runtime?.swarm || {};
+  const polymorphicPrompt = config?.runtime?.polymorphic_prompt || {};
+  const syntheticPoisoning = config?.runtime?.synthetic_poisoning || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
   const upstream = config?.runtime?.upstream || {};
@@ -237,6 +240,72 @@ function runDoctorChecks(config, env = process.env) {
         embedTimeoutMs >= 5000
           ? `Intent throttle embed timeout is ${embedTimeoutMs}ms (cold-start resilient).`
           : `Intent throttle embed timeout is ${embedTimeoutMs}ms. Increase runtime.worker_pool.embed_task_timeout_ms to >=5000ms (recommended 10000ms).`,
+    });
+  }
+
+  if (swarm.enabled === true) {
+    checks.push({
+      id: 'swarm-node-id',
+      status: String(swarm.node_id || '').length > 0 ? 'pass' : 'fail',
+      message:
+        String(swarm.node_id || '').length > 0
+          ? `Swarm node_id configured (${swarm.node_id}).`
+          : 'Swarm enabled but runtime.swarm.node_id is empty.',
+    });
+    checks.push({
+      id: 'swarm-trust-store',
+      status:
+        swarm.verify_inbound === true &&
+        swarm.require_envelope === true &&
+        Object.keys(swarm.trusted_nodes || {}).length === 0
+          ? 'warn'
+          : 'pass',
+      message:
+        swarm.verify_inbound === true &&
+        swarm.require_envelope === true &&
+        Object.keys(swarm.trusted_nodes || {}).length === 0
+          ? 'Swarm verification is strict but trusted_nodes is empty. All inbound swarm envelopes will fail verification.'
+          : `Swarm trust store loaded (${Object.keys(swarm.trusted_nodes || {}).length} trusted node(s)).`,
+    });
+  }
+
+  if (polymorphicPrompt.enabled === true) {
+    checks.push({
+      id: 'polymorphic-rotation',
+      status: Number(polymorphicPrompt.rotation_seconds) >= 300 ? 'pass' : 'warn',
+      message:
+        Number(polymorphicPrompt.rotation_seconds) >= 300
+          ? `Polymorphic prompt rotation is ${Number(polymorphicPrompt.rotation_seconds)}s.`
+          : `Polymorphic prompt rotation is ${Number(polymorphicPrompt.rotation_seconds)}s; values <300s can cause instability in deterministic tool workflows.`,
+    });
+    checks.push({
+      id: 'polymorphic-target-roles',
+      status: Array.isArray(polymorphicPrompt.target_roles) && polymorphicPrompt.target_roles.length > 0 ? 'pass' : 'fail',
+      message:
+        Array.isArray(polymorphicPrompt.target_roles) && polymorphicPrompt.target_roles.length > 0
+          ? `Polymorphic prompt targets roles: ${polymorphicPrompt.target_roles.join(', ')}`
+          : 'Polymorphic prompt enabled but target_roles is empty.',
+    });
+  }
+
+  if (syntheticPoisoning.enabled === true) {
+    const requiredAck = String(syntheticPoisoning.required_acknowledgement || 'I_UNDERSTAND_SYNTHETIC_DATA_RISK');
+    const ack = String(syntheticPoisoning.acknowledgement || '');
+    checks.push({
+      id: 'synthetic-poisoning-ack',
+      status: syntheticPoisoning.mode === 'inject' && ack !== requiredAck ? 'fail' : 'pass',
+      message:
+        syntheticPoisoning.mode === 'inject' && ack !== requiredAck
+          ? 'Synthetic poisoning inject mode requires an explicit legal acknowledgement string before activation.'
+          : `Synthetic poisoning mode '${String(syntheticPoisoning.mode || 'monitor')}' acknowledged.`,
+    });
+    checks.push({
+      id: 'synthetic-poisoning-trigger-scope',
+      status: Array.isArray(syntheticPoisoning.allowed_triggers) && syntheticPoisoning.allowed_triggers.length > 0 ? 'pass' : 'fail',
+      message:
+        Array.isArray(syntheticPoisoning.allowed_triggers) && syntheticPoisoning.allowed_triggers.length > 0
+          ? `Synthetic poisoning triggers: ${syntheticPoisoning.allowed_triggers.join(', ')}`
+          : 'Synthetic poisoning enabled but allowed_triggers is empty.',
     });
   }
 

@@ -440,6 +440,7 @@ class UpstreamClient {
     this.dispatchers = new Map();
     this.authVaultConfig = normalizeAuthVaultConfig(options.authVaultConfig || {});
     this.ghostModeConfig = normalizeGhostModeConfig(options.ghostModeConfig || {});
+    this.swarmProtocol = options.swarmProtocol || null;
   }
 
   getPinnedDispatcher({ upstreamHostname, resolvedIp, resolvedFamily }) {
@@ -795,11 +796,26 @@ class UpstreamClient {
     }
 
     const ghostHeaders = applyGhostMode(authResolution.headers, this.ghostModeConfig);
-    const forwardHeaders = buildForwardHeaders(
+    let forwardHeaders = buildForwardHeaders(
       ghostHeaders,
       forwardBody.length,
       candidate.upstreamHostHeader
     );
+    let swarmMeta = {
+      signed: false,
+      reason: 'disabled',
+    };
+    if (this.swarmProtocol && this.swarmProtocol.isEnabled()) {
+      const signed = this.swarmProtocol.signOutboundHeaders({
+        headers: forwardHeaders,
+        provider,
+        method: forwardMethod,
+        pathWithQuery: forwardPathWithQuery,
+        bodyBuffer: forwardBody,
+      });
+      forwardHeaders = signed.headers;
+      swarmMeta = signed.meta || swarmMeta;
+    }
 
     const dispatcher = this.getPinnedDispatcher({
       upstreamHostname: candidate.upstreamHostname,
@@ -907,6 +923,7 @@ class UpstreamClient {
             targetName,
             provider,
             breakerKey,
+            swarm: swarmMeta,
             diagnostics: {
               errorSource: 'upstream',
               upstreamError: false,
@@ -989,6 +1006,7 @@ class UpstreamClient {
           targetName,
           provider,
           breakerKey,
+          swarm: swarmMeta,
           diagnostics: {
             errorSource: 'upstream',
             upstreamError: status >= 400,

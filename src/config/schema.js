@@ -15,6 +15,9 @@ const RUNTIME_KEYS = new Set([
   'vcr',
   'semantic_cache',
   'intent_throttle',
+  'swarm',
+  'polymorphic_prompt',
+  'synthetic_poisoning',
   'dashboard',
   'budget',
   'loop_breaker',
@@ -66,6 +69,46 @@ const INTENT_THROTTLE_KEYS = new Set([
 ]);
 const INTENT_THROTTLE_MODES = new Set(['monitor', 'block']);
 const INTENT_THROTTLE_CLUSTER_KEYS = new Set(['name', 'phrases', 'min_similarity']);
+const SWARM_KEYS = new Set([
+  'enabled',
+  'mode',
+  'node_id',
+  'key_id',
+  'private_key_pem',
+  'public_key_pem',
+  'verify_inbound',
+  'sign_outbound',
+  'require_envelope',
+  'allowed_clock_skew_ms',
+  'nonce_ttl_ms',
+  'max_nonce_entries',
+  'sign_on_providers',
+  'trusted_nodes',
+]);
+const SWARM_MODES = new Set(['monitor', 'block']);
+const SWARM_TRUSTED_NODE_KEYS = new Set(['public_key_pem']);
+const POLYMORPHIC_PROMPT_KEYS = new Set([
+  'enabled',
+  'rotation_seconds',
+  'max_mutations_per_message',
+  'target_roles',
+  'bypass_header',
+  'seed',
+  'observability',
+  'lexicon',
+]);
+const SYNTHETIC_POISONING_KEYS = new Set([
+  'enabled',
+  'mode',
+  'required_acknowledgement',
+  'acknowledgement',
+  'allowed_triggers',
+  'target_roles',
+  'decoy_label',
+  'max_insertions_per_request',
+  'observability',
+]);
+const SYNTHETIC_POISONING_MODES = new Set(['monitor', 'inject']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const BUDGET_KEYS = new Set([
   'enabled',
@@ -508,6 +551,78 @@ function applyDefaults(config) {
       })
     : [];
 
+  normalized.runtime.swarm = normalized.runtime.swarm || {};
+  const swarm = normalized.runtime.swarm;
+  swarm.enabled = swarm.enabled === true;
+  swarm.mode = SWARM_MODES.has(String(swarm.mode || '').toLowerCase())
+    ? String(swarm.mode).toLowerCase()
+    : 'monitor';
+  swarm.node_id = String(swarm.node_id || `sentinel-node-${process.pid}`);
+  swarm.key_id = String(swarm.key_id || swarm.node_id || `sentinel-node-${process.pid}`);
+  swarm.private_key_pem = String(swarm.private_key_pem || '');
+  swarm.public_key_pem = String(swarm.public_key_pem || '');
+  swarm.verify_inbound = swarm.verify_inbound !== false;
+  swarm.sign_outbound = swarm.sign_outbound !== false;
+  swarm.require_envelope = swarm.require_envelope === true;
+  swarm.allowed_clock_skew_ms = Number(swarm.allowed_clock_skew_ms ?? 30000);
+  swarm.nonce_ttl_ms = Number(swarm.nonce_ttl_ms ?? 300000);
+  swarm.max_nonce_entries = Number(swarm.max_nonce_entries ?? 50000);
+  swarm.sign_on_providers = Array.isArray(swarm.sign_on_providers)
+    ? swarm.sign_on_providers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['custom'];
+  swarm.trusted_nodes =
+    swarm.trusted_nodes && typeof swarm.trusted_nodes === 'object' && !Array.isArray(swarm.trusted_nodes)
+      ? swarm.trusted_nodes
+      : {};
+  for (const [nodeId, nodeConfig] of Object.entries(swarm.trusted_nodes)) {
+    if (typeof nodeConfig === 'string') {
+      swarm.trusted_nodes[nodeId] = {
+        public_key_pem: String(nodeConfig),
+      };
+      continue;
+    }
+    const normalizedNode =
+      nodeConfig && typeof nodeConfig === 'object' && !Array.isArray(nodeConfig) ? nodeConfig : {};
+    normalizedNode.public_key_pem = String(normalizedNode.public_key_pem || '');
+    swarm.trusted_nodes[nodeId] = normalizedNode;
+  }
+
+  normalized.runtime.polymorphic_prompt = normalized.runtime.polymorphic_prompt || {};
+  const polymorphicPrompt = normalized.runtime.polymorphic_prompt;
+  polymorphicPrompt.enabled = polymorphicPrompt.enabled === true;
+  polymorphicPrompt.rotation_seconds = Number(polymorphicPrompt.rotation_seconds ?? 1800);
+  polymorphicPrompt.max_mutations_per_message = Number(polymorphicPrompt.max_mutations_per_message ?? 3);
+  polymorphicPrompt.target_roles = Array.isArray(polymorphicPrompt.target_roles)
+    ? polymorphicPrompt.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['system'];
+  polymorphicPrompt.bypass_header = String(polymorphicPrompt.bypass_header || 'x-sentinel-polymorph-disable').toLowerCase();
+  polymorphicPrompt.seed = String(polymorphicPrompt.seed || 'sentinel-mtd-seed');
+  polymorphicPrompt.observability = polymorphicPrompt.observability !== false;
+  polymorphicPrompt.lexicon =
+    polymorphicPrompt.lexicon && typeof polymorphicPrompt.lexicon === 'object' && !Array.isArray(polymorphicPrompt.lexicon)
+      ? polymorphicPrompt.lexicon
+      : {};
+
+  normalized.runtime.synthetic_poisoning = normalized.runtime.synthetic_poisoning || {};
+  const syntheticPoisoning = normalized.runtime.synthetic_poisoning;
+  syntheticPoisoning.enabled = syntheticPoisoning.enabled === true;
+  syntheticPoisoning.mode = SYNTHETIC_POISONING_MODES.has(String(syntheticPoisoning.mode || '').toLowerCase())
+    ? String(syntheticPoisoning.mode).toLowerCase()
+    : 'monitor';
+  syntheticPoisoning.required_acknowledgement = String(
+    syntheticPoisoning.required_acknowledgement || 'I_UNDERSTAND_SYNTHETIC_DATA_RISK'
+  );
+  syntheticPoisoning.acknowledgement = String(syntheticPoisoning.acknowledgement || '');
+  syntheticPoisoning.allowed_triggers = Array.isArray(syntheticPoisoning.allowed_triggers)
+    ? syntheticPoisoning.allowed_triggers.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['intent_velocity_exceeded'];
+  syntheticPoisoning.target_roles = Array.isArray(syntheticPoisoning.target_roles)
+    ? syntheticPoisoning.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['system'];
+  syntheticPoisoning.decoy_label = String(syntheticPoisoning.decoy_label || 'SENTINEL_SYNTHETIC_CONTEXT');
+  syntheticPoisoning.max_insertions_per_request = Number(syntheticPoisoning.max_insertions_per_request ?? 1);
+  syntheticPoisoning.observability = syntheticPoisoning.observability !== false;
+
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
   dashboard.enabled = dashboard.enabled === true;
@@ -935,6 +1050,163 @@ function validateConfigShape(config) {
       });
     }
   }
+
+  const swarm = runtime.swarm || {};
+  if (runtime.swarm !== undefined) {
+    assertNoUnknownKeys(swarm, SWARM_KEYS, 'runtime.swarm', details);
+    assertType(typeof swarm.enabled === 'boolean', '`runtime.swarm.enabled` must be boolean', details);
+    assertType(SWARM_MODES.has(String(swarm.mode)), '`runtime.swarm.mode` must be monitor|block', details);
+    assertType(typeof swarm.node_id === 'string' && swarm.node_id.length > 0, '`runtime.swarm.node_id` must be non-empty string', details);
+    assertType(typeof swarm.key_id === 'string' && swarm.key_id.length > 0, '`runtime.swarm.key_id` must be non-empty string', details);
+    assertType(typeof swarm.private_key_pem === 'string', '`runtime.swarm.private_key_pem` must be string', details);
+    assertType(typeof swarm.public_key_pem === 'string', '`runtime.swarm.public_key_pem` must be string', details);
+    assertType(typeof swarm.verify_inbound === 'boolean', '`runtime.swarm.verify_inbound` must be boolean', details);
+    assertType(typeof swarm.sign_outbound === 'boolean', '`runtime.swarm.sign_outbound` must be boolean', details);
+    assertType(typeof swarm.require_envelope === 'boolean', '`runtime.swarm.require_envelope` must be boolean', details);
+    assertType(
+      Number.isInteger(swarm.allowed_clock_skew_ms) && swarm.allowed_clock_skew_ms > 0,
+      '`runtime.swarm.allowed_clock_skew_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(swarm.nonce_ttl_ms) && swarm.nonce_ttl_ms > 0,
+      '`runtime.swarm.nonce_ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(swarm.max_nonce_entries) && swarm.max_nonce_entries > 0,
+      '`runtime.swarm.max_nonce_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(swarm.sign_on_providers) && swarm.sign_on_providers.length > 0,
+      '`runtime.swarm.sign_on_providers` must be non-empty array',
+      details
+    );
+    if (Array.isArray(swarm.sign_on_providers)) {
+      swarm.sign_on_providers.forEach((provider, idx) => {
+        assertType(
+          ['openai', 'anthropic', 'google', 'ollama', 'custom'].includes(String(provider || '').toLowerCase()),
+          `runtime.swarm.sign_on_providers[${idx}] must be openai|anthropic|google|ollama|custom`,
+          details
+        );
+      });
+    }
+    assertType(
+      swarm.trusted_nodes && typeof swarm.trusted_nodes === 'object' && !Array.isArray(swarm.trusted_nodes),
+      '`runtime.swarm.trusted_nodes` must be an object',
+      details
+    );
+    if (swarm.trusted_nodes && typeof swarm.trusted_nodes === 'object' && !Array.isArray(swarm.trusted_nodes)) {
+      Object.entries(swarm.trusted_nodes).forEach(([nodeId, nodeConfig]) => {
+        assertType(nodeId.length > 0, '`runtime.swarm.trusted_nodes` keys must be non-empty', details);
+        assertType(
+          nodeConfig && typeof nodeConfig === 'object' && !Array.isArray(nodeConfig),
+          `runtime.swarm.trusted_nodes.${nodeId} must be object`,
+          details
+        );
+        if (!nodeConfig || typeof nodeConfig !== 'object' || Array.isArray(nodeConfig)) {
+          return;
+        }
+        assertNoUnknownKeys(nodeConfig, SWARM_TRUSTED_NODE_KEYS, `runtime.swarm.trusted_nodes.${nodeId}`, details);
+        assertType(
+          typeof nodeConfig.public_key_pem === 'string' && nodeConfig.public_key_pem.length > 0,
+          `runtime.swarm.trusted_nodes.${nodeId}.public_key_pem must be non-empty string`,
+          details
+        );
+      });
+    }
+  }
+
+  const polymorphicPrompt = runtime.polymorphic_prompt || {};
+  if (runtime.polymorphic_prompt !== undefined) {
+    assertNoUnknownKeys(polymorphicPrompt, POLYMORPHIC_PROMPT_KEYS, 'runtime.polymorphic_prompt', details);
+    assertType(typeof polymorphicPrompt.enabled === 'boolean', '`runtime.polymorphic_prompt.enabled` must be boolean', details);
+    assertType(
+      Number.isInteger(polymorphicPrompt.rotation_seconds) && polymorphicPrompt.rotation_seconds > 0,
+      '`runtime.polymorphic_prompt.rotation_seconds` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(polymorphicPrompt.max_mutations_per_message) && polymorphicPrompt.max_mutations_per_message > 0,
+      '`runtime.polymorphic_prompt.max_mutations_per_message` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(polymorphicPrompt.target_roles) && polymorphicPrompt.target_roles.length > 0,
+      '`runtime.polymorphic_prompt.target_roles` must be non-empty array',
+      details
+    );
+    assertType(
+      typeof polymorphicPrompt.bypass_header === 'string' && polymorphicPrompt.bypass_header.length > 0,
+      '`runtime.polymorphic_prompt.bypass_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof polymorphicPrompt.seed === 'string' && polymorphicPrompt.seed.length > 0,
+      '`runtime.polymorphic_prompt.seed` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof polymorphicPrompt.observability === 'boolean',
+      '`runtime.polymorphic_prompt.observability` must be boolean',
+      details
+    );
+    assertType(
+      polymorphicPrompt.lexicon && typeof polymorphicPrompt.lexicon === 'object' && !Array.isArray(polymorphicPrompt.lexicon),
+      '`runtime.polymorphic_prompt.lexicon` must be object',
+      details
+    );
+  }
+
+  const syntheticPoisoning = runtime.synthetic_poisoning || {};
+  if (runtime.synthetic_poisoning !== undefined) {
+    assertNoUnknownKeys(syntheticPoisoning, SYNTHETIC_POISONING_KEYS, 'runtime.synthetic_poisoning', details);
+    assertType(typeof syntheticPoisoning.enabled === 'boolean', '`runtime.synthetic_poisoning.enabled` must be boolean', details);
+    assertType(
+      SYNTHETIC_POISONING_MODES.has(String(syntheticPoisoning.mode)),
+      '`runtime.synthetic_poisoning.mode` must be monitor|inject',
+      details
+    );
+    assertType(
+      typeof syntheticPoisoning.required_acknowledgement === 'string' &&
+        syntheticPoisoning.required_acknowledgement.length > 0,
+      '`runtime.synthetic_poisoning.required_acknowledgement` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof syntheticPoisoning.acknowledgement === 'string',
+      '`runtime.synthetic_poisoning.acknowledgement` must be string',
+      details
+    );
+    assertType(
+      Array.isArray(syntheticPoisoning.allowed_triggers) && syntheticPoisoning.allowed_triggers.length > 0,
+      '`runtime.synthetic_poisoning.allowed_triggers` must be non-empty array',
+      details
+    );
+    assertType(
+      Array.isArray(syntheticPoisoning.target_roles) && syntheticPoisoning.target_roles.length > 0,
+      '`runtime.synthetic_poisoning.target_roles` must be non-empty array',
+      details
+    );
+    assertType(
+      typeof syntheticPoisoning.decoy_label === 'string' && syntheticPoisoning.decoy_label.length > 0,
+      '`runtime.synthetic_poisoning.decoy_label` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(syntheticPoisoning.max_insertions_per_request) &&
+        syntheticPoisoning.max_insertions_per_request > 0,
+      '`runtime.synthetic_poisoning.max_insertions_per_request` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof syntheticPoisoning.observability === 'boolean',
+      '`runtime.synthetic_poisoning.observability` must be boolean',
+      details
+    );
+  }
+
   const dashboard = runtime.dashboard || {};
   if (runtime.dashboard !== undefined) {
     assertNoUnknownKeys(dashboard, DASHBOARD_KEYS, 'runtime.dashboard', details);

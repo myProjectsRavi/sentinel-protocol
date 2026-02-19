@@ -140,4 +140,53 @@ describe('config loader and migration', () => {
     expect(loaded.config.runtime.intent_throttle.mode).toBe('block');
     expect(loaded.config.runtime.intent_throttle.clusters[0].name).toBe('credential_exfiltration');
   });
+
+  test('accepts swarm + polymorphic + synthetic poisoning config in strict mode', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.swarm = {
+      enabled: true,
+      mode: 'monitor',
+      node_id: 'node-a',
+      key_id: 'node-a',
+      private_key_pem: '',
+      public_key_pem: '',
+      verify_inbound: true,
+      sign_outbound: true,
+      require_envelope: false,
+      allowed_clock_skew_ms: 30000,
+      nonce_ttl_ms: 300000,
+      max_nonce_entries: 10000,
+      sign_on_providers: ['custom'],
+      trusted_nodes: {},
+    };
+    base.runtime.polymorphic_prompt = {
+      enabled: true,
+      rotation_seconds: 1800,
+      max_mutations_per_message: 3,
+      target_roles: ['system'],
+      bypass_header: 'x-sentinel-polymorph-disable',
+      seed: 'seed',
+      observability: true,
+      lexicon: {},
+    };
+    base.runtime.synthetic_poisoning = {
+      enabled: true,
+      mode: 'inject',
+      required_acknowledgement: 'I_UNDERSTAND_SYNTHETIC_DATA_RISK',
+      acknowledgement: 'I_UNDERSTAND_SYNTHETIC_DATA_RISK',
+      allowed_triggers: ['intent_velocity_exceeded'],
+      target_roles: ['system'],
+      decoy_label: 'SYNTH',
+      max_insertions_per_request: 1,
+      observability: true,
+    };
+    writeYamlConfig(configPath, base);
+
+    const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    expect(loaded.config.runtime.swarm.enabled).toBe(true);
+    expect(loaded.config.runtime.polymorphic_prompt.enabled).toBe(true);
+    expect(loaded.config.runtime.synthetic_poisoning.enabled).toBe(true);
+  });
 });

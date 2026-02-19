@@ -31,6 +31,9 @@ It provides:
 - Opt-in blocked-response latency normalization (`runtime.latency_normalization`) against timing probes
 - Monitor-first canary tool traps (`runtime.canary_tools`) for prompt-injection tool abuse detection
 - Optional Parallax two-model validation (`runtime.parallax`) for high-risk tool execution veto signals
+- Swarm Protocol Phase A (`runtime.swarm`) with signed envelopes, nonce replay protection, and mutual verification
+- Polymorphic Prompt MTD (`runtime.polymorphic_prompt`) with deterministic rotation and rollback header
+- Synthetic Poisoning (`runtime.synthetic_poisoning`) strict opt-in with legal acknowledgement gate
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -151,6 +154,37 @@ runtime:
     secondary_model: ""
     timeout_ms: 3000
     risk_threshold: 0.7
+  swarm:
+    enabled: false
+    mode: monitor # monitor | block
+    node_id: "sentinel-node-local"
+    key_id: "sentinel-node-local"
+    verify_inbound: true
+    sign_outbound: true
+    require_envelope: false
+    allowed_clock_skew_ms: 30000
+    nonce_ttl_ms: 300000
+    max_nonce_entries: 50000
+    sign_on_providers: [custom]
+    trusted_nodes: {}
+  polymorphic_prompt:
+    enabled: false
+    rotation_seconds: 1800
+    max_mutations_per_message: 3
+    target_roles: [system]
+    bypass_header: x-sentinel-polymorph-disable
+    seed: "sentinel-mtd-seed"
+    observability: true
+  synthetic_poisoning:
+    enabled: false
+    mode: monitor # monitor | inject
+    required_acknowledgement: "I_UNDERSTAND_SYNTHETIC_DATA_RISK"
+    acknowledgement: ""
+    allowed_triggers: [intent_velocity_exceeded]
+    target_roles: [system]
+    decoy_label: "SENTINEL_SYNTHETIC_CONTEXT"
+    max_insertions_per_request: 1
+    observability: true
   worker_pool:
     enabled: true
     task_timeout_ms: 10000
@@ -241,6 +275,17 @@ BYOK policy:
 - Prefer `SENTINEL_RAPIDAPI_KEY` over storing keys in `sentinel.yaml`.
 
 `x-sentinel-*` headers are stripped before forwarding upstream, so Sentinel-only routing and keys are not leaked to OpenAI/Anthropic/Google/custom providers.
+
+## Synthetic Poisoning Safety
+
+`runtime.synthetic_poisoning` is disabled by default and treated as a deception research mode.
+
+- `mode: inject` requires explicit acknowledgement match:
+  - `acknowledgement == required_acknowledgement`
+- Recommended usage:
+  - local red-team simulations only
+  - never for factual/compliance-critical production workflows
+- Keep legal/compliance review in the loop before enabling outside test environments.
 
 ## Local API Key Vault (Supply-Chain Protection)
 
