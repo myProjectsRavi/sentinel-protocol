@@ -153,6 +153,24 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'swarm-trust-store' && check.status === 'warn')).toBe(true);
   });
 
+  test('warns when swarm skew window is too strict', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        swarm: {
+          enabled: true,
+          mode: 'block',
+          node_id: 'node-a',
+          allowed_clock_skew_ms: 2000,
+          verify_inbound: true,
+          sign_outbound: true,
+          require_envelope: false,
+          trusted_nodes: {},
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'swarm-clock-skew-window' && check.status === 'warn')).toBe(true);
+  });
+
   test('fails when synthetic poisoning inject mode lacks legal acknowledgement', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {
@@ -168,6 +186,39 @@ describe('doctor checks', () => {
     }), { NODE_ENV: 'production' });
     expect(report.ok).toBe(false);
     expect(report.checks.some((check) => check.id === 'synthetic-poisoning-ack' && check.status === 'fail')).toBe(true);
+  });
+
+  test('fails when cognitive rollback is enabled with empty triggers', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        cognitive_rollback: {
+          enabled: true,
+          mode: 'monitor',
+          triggers: [],
+          target_roles: ['user', 'assistant'],
+          drop_messages: 2,
+          min_messages_remaining: 2,
+          system_message: 'resume from safe checkpoint',
+          observability: true,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'cognitive-rollback-triggers' && check.status === 'fail')).toBe(true);
+  });
+
+  test('passes omni-shield checks when enabled with valid image budget', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        omni_shield: {
+          enabled: true,
+          mode: 'monitor',
+          max_image_bytes: 5 * 1024 * 1024,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'omni-shield-mode' && check.status === 'pass')).toBe(true);
+    expect(report.checks.some((check) => check.id === 'omni-shield-image-budget' && check.status === 'pass')).toBe(true);
   });
 
   test('warns when budget enabled with zero pricing model', () => {

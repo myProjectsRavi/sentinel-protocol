@@ -71,6 +71,7 @@ runtime:
     sign_outbound: true
     require_envelope: false
     allowed_clock_skew_ms: 30000
+    tolerance_window_ms: 30000
     nonce_ttl_ms: 300000
     max_nonce_entries: 50000
     sign_on_providers: [custom]
@@ -93,6 +94,25 @@ runtime:
     target_roles: [system]
     decoy_label: "SENTINEL_SYNTHETIC_CONTEXT"
     max_insertions_per_request: 1
+    observability: true
+  cognitive_rollback:
+    enabled: false
+    mode: monitor # monitor | auto
+    triggers: [canary_tool_triggered, parallax_veto]
+    target_roles: [user, assistant, tool]
+    drop_messages: 2
+    min_messages_remaining: 2
+    system_message: "[SYSTEM OVERRIDE] Your previous thought process was corrupted. Resume execution from the last safe checkpoint and try a different approach."
+    observability: true
+  omni_shield:
+    enabled: false
+    mode: monitor # monitor | block
+    max_image_bytes: 5242880
+    allow_remote_image_urls: false
+    allow_base64_images: true
+    block_on_any_image: false
+    max_findings: 20
+    target_roles: [user]
     observability: true
   dashboard:
     enabled: false
@@ -266,6 +286,18 @@ pii:
     stream_enabled: true
     sse_line_max_bytes: 16384
     stream_block_mode: redact
+    entropy:
+      enabled: false
+      mode: monitor # monitor | block
+      threshold: 4.5
+      min_token_length: 24
+      max_scan_bytes: 65536
+      max_findings: 8
+      min_unique_ratio: 0.3
+      detect_base64: true
+      detect_hex: true
+      detect_generic: true
+      redact_replacement: "[REDACTED_HIGH_ENTROPY]"
   semantic:
     enabled: false
     model_id: Xenova/bert-base-NER

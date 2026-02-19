@@ -31,10 +31,12 @@ const { HoneytokenInjector } = require('./security/honeytoken-injector');
 const { SwarmProtocol } = require('./security/swarm-protocol');
 const { PolymorphicPromptEngine } = require('./security/polymorphic-prompt');
 const { SyntheticPoisoner } = require('./security/synthetic-poisoner');
+const { CognitiveRollback } = require('./runtime/cognitive-rollback');
 const { LatencyNormalizer } = require('./runtime/latency-normalizer');
 const { IntentThrottle } = require('./runtime/intent-throttle');
 const { CanaryToolTrap } = require('./engines/canary-tool-trap');
 const { ParallaxValidator } = require('./engines/parallax-validator');
+const { OmniShield } = require('./engines/omni-shield');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -191,6 +193,11 @@ class SentinelServer {
       egress_redacted: 0,
       egress_blocked: 0,
       egress_stream_redacted: 0,
+      egress_entropy_detected: 0,
+      egress_entropy_redacted: 0,
+      egress_entropy_blocked: 0,
+      omni_shield_detected: 0,
+      omni_shield_blocked: 0,
       scan_worker_fallbacks: 0,
       warnings_total: 0,
       vcr_replay_hits: 0,
@@ -213,8 +220,12 @@ class SentinelServer {
       swarm_inbound_rejected: 0,
       swarm_replay_rejected: 0,
       swarm_outbound_signed: 0,
+      swarm_timestamp_skew_rejected: 0,
+      swarm_unknown_node_rejected: 0,
       polymorph_applied: 0,
       synthetic_poisoning_injected: 0,
+      cognitive_rollback_suggested: 0,
+      cognitive_rollback_auto: 0,
       deception_engaged: 0,
       deception_streamed: 0,
       honeytoken_injected: 0,
@@ -245,6 +256,7 @@ class SentinelServer {
     this.neuralInjectionClassifier = new NeuralInjectionClassifier(config.injection?.neural || {});
     this.circuitBreakers = new CircuitBreakerManager(config.runtime.upstream.circuit_breaker);
     this.swarmProtocol = new SwarmProtocol(config.runtime?.swarm || {});
+    this.swarmNodeMetrics = new Map();
     this.upstreamClient = new UpstreamClient({
       timeoutMs: config.proxy.timeout_ms,
       retryConfig: config.runtime.upstream.retry,
@@ -277,6 +289,7 @@ class SentinelServer {
     this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
     this.polymorphicPrompt = new PolymorphicPromptEngine(this.config.runtime?.polymorphic_prompt || {});
     this.syntheticPoisoner = new SyntheticPoisoner(this.config.runtime?.synthetic_poisoning || {});
+    this.cognitiveRollback = new CognitiveRollback(this.config.runtime?.cognitive_rollback || {});
     this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
     this.intentThrottle = new IntentThrottle(this.config.runtime?.intent_throttle || {}, {
       embedText: async (text, options = {}) => {
@@ -297,6 +310,7 @@ class SentinelServer {
       upstreamClient: this.upstreamClient,
       config: this.config,
     });
+    this.omniShield = new OmniShield(this.config.runtime?.omni_shield || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -350,10 +364,16 @@ class SentinelServer {
       provenance_enabled: this.provenanceSigner.isEnabled(),
       swarm_enabled: this.swarmProtocol.isEnabled(),
       swarm_mode: this.swarmProtocol.mode,
+      swarm_allowed_clock_skew_ms: this.swarmProtocol.allowedClockSkewMs,
+      swarm_node_metrics: this.getSwarmNodeMetricsSnapshot(),
       honeytoken_enabled: this.honeytokenInjector.isEnabled(),
       polymorphic_prompt_enabled: this.polymorphicPrompt.isEnabled(),
       synthetic_poisoning_enabled: this.syntheticPoisoner.isEnabled(),
       synthetic_poisoning_mode: this.syntheticPoisoner.mode,
+      cognitive_rollback_enabled: this.cognitiveRollback.isEnabled(),
+      cognitive_rollback_mode: this.cognitiveRollback.mode,
+      omni_shield_enabled: this.omniShield.isEnabled(),
+      omni_shield_mode: this.omniShield.mode,
       latency_normalization_enabled: this.latencyNormalizer.isEnabled(),
       intent_throttle_enabled: this.intentThrottle.isEnabled(),
       intent_throttle_mode: this.intentThrottle.mode,
@@ -382,14 +402,95 @@ class SentinelServer {
     this.statusStore.write(this.currentStatusPayload());
   }
 
+  recordSwarmObservation(decision = {}) {
+    if (!decision || decision.present !== true) {
+      return;
+    }
+    const nodeId = String(decision.nodeId || 'unknown');
+    const existing = this.swarmNodeMetrics.get(nodeId) || {
+      verified: 0,
+      rejected: 0,
+      replay_rejected: 0,
+      timestamp_skew_rejected: 0,
+      unknown_node_rejected: 0,
+      reasons: {},
+      last_skew_ms: null,
+      max_abs_skew_ms: 0,
+      last_seen_at: null,
+    };
+    if (decision.verified === true) {
+      existing.verified += 1;
+    } else {
+      existing.rejected += 1;
+      const reason = String(decision.reason || 'unknown');
+      existing.reasons[reason] = (existing.reasons[reason] || 0) + 1;
+      if (reason === 'replay_nonce') {
+        existing.replay_rejected += 1;
+      } else if (reason === 'timestamp_skew') {
+        existing.timestamp_skew_rejected += 1;
+      } else if (reason === 'unknown_node') {
+        existing.unknown_node_rejected += 1;
+      }
+    }
+    if (Number.isFinite(Number(decision.ageMs))) {
+      const skew = Number(decision.ageMs);
+      existing.last_skew_ms = skew;
+      const absSkew = Math.abs(skew);
+      if (absSkew > Number(existing.max_abs_skew_ms || 0)) {
+        existing.max_abs_skew_ms = absSkew;
+      }
+    }
+    existing.last_seen_at = new Date().toISOString();
+    this.swarmNodeMetrics.set(nodeId, existing);
+    while (this.swarmNodeMetrics.size > 128) {
+      const oldest = this.swarmNodeMetrics.keys().next().value;
+      if (!oldest) {
+        break;
+      }
+      this.swarmNodeMetrics.delete(oldest);
+    }
+  }
+
+  getSwarmNodeMetricsSnapshot() {
+    const snapshot = {};
+    for (const [nodeId, metric] of this.swarmNodeMetrics.entries()) {
+      snapshot[nodeId] = {
+        verified: Number(metric.verified || 0),
+        rejected: Number(metric.rejected || 0),
+        replay_rejected: Number(metric.replay_rejected || 0),
+        timestamp_skew_rejected: Number(metric.timestamp_skew_rejected || 0),
+        unknown_node_rejected: Number(metric.unknown_node_rejected || 0),
+        reasons: metric.reasons || {},
+        last_skew_ms: Number.isFinite(Number(metric.last_skew_ms)) ? Number(metric.last_skew_ms) : null,
+        max_abs_skew_ms: Number(metric.max_abs_skew_ms || 0),
+        last_seen_at: metric.last_seen_at || null,
+      };
+    }
+    return snapshot;
+  }
+
   getEgressConfig() {
     const egress = this.config?.pii?.egress || {};
+    const entropy = egress.entropy || {};
     return {
       enabled: egress.enabled !== false,
       maxScanBytes: positiveIntOr(egress.max_scan_bytes, 65536),
       streamEnabled: egress.stream_enabled !== false,
       sseLineMaxBytes: positiveIntOr(egress.sse_line_max_bytes, 16384),
       streamBlockMode: egress.stream_block_mode === 'terminate' ? 'terminate' : 'redact',
+      entropy: {
+        enabled: entropy.enabled === true,
+        mode: String(entropy.mode || 'monitor').toLowerCase() === 'block' ? 'block' : 'monitor',
+        threshold: Number.isFinite(Number(entropy.threshold)) ? Number(entropy.threshold) : 4.5,
+        min_token_length: positiveIntOr(entropy.min_token_length, 24),
+        max_scan_bytes: positiveIntOr(entropy.max_scan_bytes, 65536),
+        max_findings: positiveIntOr(entropy.max_findings, 8),
+        min_unique_ratio: Number.isFinite(Number(entropy.min_unique_ratio)) ? Number(entropy.min_unique_ratio) : 0.3,
+        detect_base64: entropy.detect_base64 !== false,
+        detect_hex: entropy.detect_hex !== false,
+        detect_generic: entropy.detect_generic !== false,
+        redact_replacement: String(entropy.redact_replacement || '[REDACTED_HIGH_ENTROPY]'),
+      },
     };
   }
 
@@ -837,6 +938,7 @@ class SentinelServer {
       const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
       let precomputedLocalScan = null;
       let precomputedInjection = null;
+      let omniShieldDecision = null;
 
       const swarmInboundDecision = this.swarmProtocol.verifyInboundEnvelope({
         headers: req.headers || {},
@@ -847,16 +949,28 @@ class SentinelServer {
       if (swarmInboundDecision.present) {
         res.setHeader('x-sentinel-swarm-verified', String(swarmInboundDecision.verified));
         res.setHeader('x-sentinel-swarm-reason', String(swarmInboundDecision.reason || 'unknown'));
+        res.setHeader(
+          'x-sentinel-swarm-allowed-skew-ms',
+          String(swarmInboundDecision.allowedClockSkewMs || this.swarmProtocol.allowedClockSkewMs || 0)
+        );
+        if (Number.isFinite(Number(swarmInboundDecision.ageMs))) {
+          res.setHeader('x-sentinel-swarm-clock-skew-ms', String(Number(swarmInboundDecision.ageMs)));
+        }
         if (swarmInboundDecision.nodeId) {
           res.setHeader('x-sentinel-swarm-node-id', swarmInboundDecision.nodeId);
         }
       }
+      this.recordSwarmObservation(swarmInboundDecision);
       if (swarmInboundDecision.verified) {
         this.stats.swarm_inbound_verified += 1;
       } else if (swarmInboundDecision.present || swarmInboundDecision.required) {
         this.stats.swarm_inbound_rejected += 1;
         if (swarmInboundDecision.reason === 'replay_nonce') {
           this.stats.swarm_replay_rejected += 1;
+        } else if (swarmInboundDecision.reason === 'timestamp_skew') {
+          this.stats.swarm_timestamp_skew_rejected += 1;
+        } else if (swarmInboundDecision.reason === 'unknown_node') {
+          this.stats.swarm_unknown_node_rejected += 1;
         }
         if (effectiveMode === 'enforce' && swarmInboundDecision.shouldBlock) {
           const diagnostics = {
@@ -893,6 +1007,12 @@ class SentinelServer {
             swarm_node_id: swarmInboundDecision.nodeId,
             swarm_key_id: swarmInboundDecision.keyId,
             swarm_nonce: swarmInboundDecision.nonce,
+            swarm_clock_skew_ms: Number.isFinite(Number(swarmInboundDecision.ageMs))
+              ? Number(swarmInboundDecision.ageMs)
+              : undefined,
+            swarm_allowed_clock_skew_ms: Number(
+              swarmInboundDecision.allowedClockSkewMs || this.swarmProtocol.allowedClockSkewMs || 0
+            ),
           });
           this.writeStatus();
           finalizeRequestTelemetry({
@@ -909,6 +1029,77 @@ class SentinelServer {
         }
         warnings.push(`swarm:${swarmInboundDecision.reason}`);
         this.stats.warnings_total += 1;
+      }
+
+      omniShieldDecision = this.omniShield.inspect({
+        bodyJson,
+        effectiveMode,
+      });
+      if (omniShieldDecision.detected) {
+        this.stats.omni_shield_detected += 1;
+        warnings.push('omni_shield:image_payload_detected');
+        this.stats.warnings_total += 1;
+        if (this.omniShield.observability) {
+          res.setHeader('x-sentinel-omni-shield', omniShieldDecision.shouldBlock ? 'block' : 'monitor');
+          res.setHeader(
+            'x-sentinel-omni-shield-findings',
+            String(Array.isArray(omniShieldDecision.findings) ? omniShieldDecision.findings.length : 0)
+          );
+        }
+      }
+      if (omniShieldDecision.shouldBlock) {
+        this.stats.blocked_total += 1;
+        this.stats.omni_shield_blocked += 1;
+        const diagnostics = {
+          errorSource: 'sentinel',
+          upstreamError: false,
+          provider,
+          retryCount: 0,
+          circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+          correlationId,
+        };
+        responseHeaderDiagnostics(res, diagnostics);
+        await this.maybeNormalizeBlockedLatency({
+          res,
+          statusCode: 403,
+          requestStart,
+        });
+        this.auditLogger.write({
+          timestamp: new Date().toISOString(),
+          correlation_id: correlationId,
+          config_version: this.config.version,
+          mode: effectiveMode,
+          decision: 'blocked_omni_shield',
+          reasons: ['omni_shield_image_policy'],
+          pii_types: [],
+          redactions: 0,
+          duration_ms: Date.now() - requestStart,
+          request_bytes: rawBody.length,
+          response_status: 403,
+          response_bytes: 0,
+          provider,
+          omni_shield_findings: omniShieldDecision.violating_findings || omniShieldDecision.findings || [],
+        });
+        this.writeStatus();
+        finalizeRequestTelemetry({
+          decision: 'blocked_policy',
+          status: 403,
+          providerName: provider,
+        });
+        return res.status(403).json({
+          error: 'OMNI_SHIELD_BLOCKED',
+          reason: 'omni_shield_image_policy',
+          findings: (omniShieldDecision.violating_findings || omniShieldDecision.findings || []).map((item) => ({
+            kind: item.kind,
+            reason: item.reason,
+            role: item.role,
+            message_index: item.message_index,
+            part_index: item.part_index,
+            media_type: item.media_type || null,
+            bytes: item.bytes,
+          })),
+          correlation_id: correlationId,
+        });
       }
 
       const canUseScanWorkers =
@@ -1494,6 +1685,7 @@ class SentinelServer {
       }
       let canaryTriggered = null;
       let parallaxDecision = null;
+      let cognitiveRollbackDecision = null;
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
       const forwardHeaders = scrubForwardHeaders(req.headers);
@@ -1779,6 +1971,12 @@ class SentinelServer {
           parallax_risk: parallaxDecision?.risk,
           parallax_secondary_provider: parallaxDecision?.secondaryProvider,
           parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+          cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+          cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+          cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+          cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+          omni_shield_detected: Boolean(omniShieldDecision?.detected),
+          omni_shield_findings: omniShieldDecision?.findings,
         });
 
         this.writeStatus();
@@ -1803,9 +2001,13 @@ class SentinelServer {
         let streamedBytes = 0;
         let streamOut = upstream.bodyStream;
         let streamTerminatedForPII = false;
+        let streamTerminatedForEntropy = false;
         const streamEgressTypes = new Set();
         let streamProjectedRedaction = null;
         let streamBlockedSeverity = null;
+        const streamEntropyFindings = [];
+        let streamEntropyProjectedRedaction = null;
+        let streamEntropyMode = null;
         const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
         const streamProof = this.provenanceSigner.createStreamContext({
           statusCode: upstream.status,
@@ -1834,6 +2036,7 @@ class SentinelServer {
             severityActions: this.config.pii?.severity_actions || {},
             effectiveMode,
             streamBlockMode: egressConfig.streamBlockMode,
+            entropyConfig: egressConfig.entropy,
             onDetection: ({ action, severity, findings, projectedRedaction }) => {
               this.stats.egress_detected += 1;
               streamBlockedSeverity = severity || streamBlockedSeverity;
@@ -1856,6 +2059,56 @@ class SentinelServer {
                   res.setHeader('x-sentinel-egress-action', 'stream_terminate');
                 }
                 warnings.push('egress_stream_blocked');
+                this.stats.warnings_total += 1;
+                setImmediate(() => {
+                  if (typeof upstream.bodyStream.destroy === 'function') {
+                    upstream.bodyStream.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                  if (typeof streamOut.destroy === 'function') {
+                    streamOut.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                  if (!res.destroyed) {
+                    res.destroy(new Error('EGRESS_STREAM_BLOCKED'));
+                  }
+                });
+              }
+            },
+            onEntropy: ({ action, findings, threshold, projectedRedaction, truncated }) => {
+              this.stats.egress_entropy_detected += 1;
+              streamEntropyMode = action;
+              if (!res.headersSent) {
+                res.setHeader('x-sentinel-egress-entropy', String(action || 'monitor'));
+              }
+              if (truncated === true) {
+                warnings.push('egress_entropy_scan_truncated');
+                this.stats.warnings_total += 1;
+              }
+              for (const finding of findings || []) {
+                streamEntropyFindings.push({
+                  kind: finding.kind,
+                  entropy: finding.entropy,
+                  token_hash: finding.token_hash,
+                  threshold,
+                });
+              }
+              if (
+                typeof projectedRedaction === 'string' &&
+                projectedRedaction.length > 0 &&
+                !streamEntropyProjectedRedaction
+              ) {
+                streamEntropyProjectedRedaction = projectedRedaction.slice(0, 512);
+              }
+              if (action === 'redact') {
+                this.stats.egress_entropy_redacted += 1;
+              }
+              if (action === 'block' && egressConfig.streamBlockMode === 'terminate' && !streamTerminatedForEntropy) {
+                streamTerminatedForEntropy = true;
+                this.stats.blocked_total += 1;
+                this.stats.egress_entropy_blocked += 1;
+                if (!res.headersSent) {
+                  res.setHeader('x-sentinel-egress-entropy', 'stream_terminate');
+                }
+                warnings.push('egress_entropy_stream_blocked');
                 this.stats.warnings_total += 1;
                 setImmediate(() => {
                   if (typeof upstream.bodyStream.destroy === 'function') {
@@ -1935,6 +2188,9 @@ class SentinelServer {
               egress_pii_types: Array.from(streamEgressTypes).sort(),
               egress_projected_redaction: streamProjectedRedaction || undefined,
               egress_block_severity: streamBlockedSeverity || undefined,
+              egress_entropy_findings: streamEntropyFindings,
+              egress_entropy_mode: streamEntropyMode || undefined,
+              egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
               redactions: redactedCount,
               duration_ms: Date.now() - start,
               request_bytes: bodyBuffer.length,
@@ -1961,6 +2217,12 @@ class SentinelServer {
             parallax_risk: parallaxDecision?.risk,
             parallax_secondary_provider: parallaxDecision?.secondaryProvider,
             parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+            cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+            cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+            cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+            cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+            omni_shield_detected: Boolean(omniShieldDecision?.detected),
+            omni_shield_findings: omniShieldDecision?.findings,
           });
           this.writeStatus();
           finalizeRequestTelemetry({
@@ -1973,18 +2235,21 @@ class SentinelServer {
         streamOut.on('error', (error) => {
           void (async () => {
             const budgetCharge = await finalizeStreamBudget();
-            if (streamTerminatedForPII && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
+            if ((streamTerminatedForPII || streamTerminatedForEntropy) && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
               this.auditLogger.write({
                 timestamp: new Date().toISOString(),
                 correlation_id: correlationId,
                 config_version: this.config.version,
                 mode: effectiveMode,
                 decision: 'blocked_egress_stream',
-                reasons: ['egress_stream_blocked'],
+                reasons: [streamTerminatedForEntropy ? 'egress_entropy_stream_blocked' : 'egress_stream_blocked'],
                 pii_types: piiTypes,
                 egress_pii_types: Array.from(streamEgressTypes).sort(),
                 egress_projected_redaction: streamProjectedRedaction || undefined,
                 egress_block_severity: streamBlockedSeverity || undefined,
+                egress_entropy_findings: streamEntropyFindings,
+                egress_entropy_mode: streamEntropyMode || undefined,
+                egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
                 redactions: redactedCount,
                 duration_ms: Date.now() - start,
                 request_bytes: bodyBuffer.length,
@@ -2008,6 +2273,12 @@ class SentinelServer {
                 parallax_risk: parallaxDecision?.risk,
                 parallax_secondary_provider: parallaxDecision?.secondaryProvider,
                 parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+                cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+                cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+                cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+                cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+                omni_shield_detected: Boolean(omniShieldDecision?.detected),
+                omni_shield_findings: omniShieldDecision?.findings,
                 budget_charged_usd: budgetCharge?.chargedUsd,
                 budget_spent_usd: budgetCharge?.spentUsd,
                 budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -2052,6 +2323,12 @@ class SentinelServer {
               parallax_risk: parallaxDecision?.risk,
               parallax_secondary_provider: parallaxDecision?.secondaryProvider,
               parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+              cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+              cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+              cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+              cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+              omni_shield_detected: Boolean(omniShieldDecision?.detected),
+              omni_shield_findings: omniShieldDecision?.findings,
               budget_charged_usd: budgetCharge?.chargedUsd,
               budget_spent_usd: budgetCharge?.spentUsd,
               budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -2096,6 +2373,7 @@ class SentinelServer {
           maxScanBytes: egressConfig.maxScanBytes,
           severityActions: this.config.pii?.severity_actions || {},
           effectiveMode,
+          entropyConfig: egressConfig.entropy,
         });
 
         if (egressResult.detected) {
@@ -2164,6 +2442,77 @@ class SentinelServer {
             });
           }
         }
+
+        if (egressResult.entropy?.detected) {
+          this.stats.egress_entropy_detected += 1;
+          warnings.push(`egress_entropy:${egressResult.entropy.action}`);
+          const entropyFindings = Array.isArray(egressResult.entropy.findings)
+            ? egressResult.entropy.findings
+            : [];
+          res.setHeader('x-sentinel-egress-entropy', egressResult.entropy.action || 'monitor');
+          res.setHeader('x-sentinel-egress-entropy-findings', String(entropyFindings.length));
+          if (egressResult.entropy.truncated) {
+            warnings.push('egress_entropy_scan_truncated');
+            this.stats.warnings_total += 1;
+          }
+          if (egressResult.entropy.blocked) {
+            this.stats.blocked_total += 1;
+            this.stats.egress_entropy_blocked += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider: routedProvider,
+              retryCount: upstream.diagnostics.retryCount || 0,
+              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 403,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_egress_entropy',
+              reasons: ['egress_entropy_detected'],
+              pii_types: piiTypes,
+              egress_entropy_findings: entropyFindings,
+              redactions: 0,
+              duration_ms: durationMs,
+              request_bytes: bodyBuffer.length,
+              response_status: 403,
+              response_bytes: 0,
+              provider: routedProvider,
+              upstream_target: routedTarget,
+              failover_used: upstream.route?.failoverUsed === true,
+              route_source: routePlan.routeSource,
+              route_group: routePlan.selectedGroup || undefined,
+              route_contract: routePlan.desiredContract,
+              requested_target: routePlan.requestedTarget,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_egress',
+              status: 403,
+              providerName: routedProvider,
+            });
+            return res.status(403).json({
+              error: 'EGRESS_ENTROPY_DETECTED',
+              reason: 'egress_entropy_detected',
+              findings: entropyFindings.map((item) => ({
+                kind: item.kind,
+                entropy: item.entropy,
+                token_hash: item.token_hash,
+                length: item.length,
+              })),
+              correlation_id: correlationId,
+            });
+          }
+        }
       }
 
       canaryTriggered = null;
@@ -2179,7 +2528,82 @@ class SentinelServer {
           res.setHeader('x-sentinel-canary-tool-triggered', 'true');
           res.setHeader('x-sentinel-canary-tool-name', canaryTriggered.toolName);
 
+          const rollbackCandidate = this.cognitiveRollback.suggest({
+            bodyJson: parallaxInputBodyJson || bodyJson,
+            trigger: 'canary_tool_triggered',
+          });
+          if (rollbackCandidate.applicable) {
+            cognitiveRollbackDecision = rollbackCandidate;
+            this.stats.cognitive_rollback_suggested += 1;
+            warnings.push('cognitive_rollback_suggested');
+            this.stats.warnings_total += 1;
+            if (this.cognitiveRollback.observability) {
+              res.setHeader(
+                'x-sentinel-cognitive-rollback',
+                this.cognitiveRollback.shouldAuto() ? 'auto' : 'suggested'
+              );
+              res.setHeader('x-sentinel-cognitive-rollback-trigger', 'canary_tool_triggered');
+              res.setHeader(
+                'x-sentinel-cognitive-rollback-dropped',
+                String(rollbackCandidate.droppedMessages || 0)
+              );
+            }
+          }
+
           if (effectiveMode === 'enforce' && this.canaryToolTrap.mode === 'block') {
+            if (rollbackCandidate.applicable && this.cognitiveRollback.shouldAuto()) {
+              this.stats.cognitive_rollback_auto += 1;
+              const diagnostics = {
+                errorSource: 'sentinel',
+                upstreamError: false,
+                provider: routedProvider,
+                retryCount: upstream.diagnostics.retryCount || 0,
+                circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
+                correlationId,
+              };
+              responseHeaderDiagnostics(res, diagnostics);
+              this.auditLogger.write({
+                timestamp: new Date().toISOString(),
+                correlation_id: correlationId,
+                config_version: this.config.version,
+                mode: effectiveMode,
+                decision: 'cognitive_rollback_required',
+                reasons: ['canary_tool_triggered'],
+                pii_types: piiTypes,
+                redactions: redactedCount,
+                duration_ms: durationMs,
+                request_bytes: bodyBuffer.length,
+                response_status: 409,
+                response_bytes: 0,
+                provider: routedProvider,
+                upstream_target: routedTarget,
+                canary_tool_name: canaryTriggered.toolName,
+                cognitive_rollback_trigger: 'canary_tool_triggered',
+                cognitive_rollback_dropped_messages: rollbackCandidate.droppedMessages,
+                route_source: routePlan.routeSource,
+                route_group: routePlan.selectedGroup || undefined,
+                route_contract: routePlan.desiredContract,
+                requested_target: routePlan.requestedTarget,
+              });
+              this.writeStatus();
+              finalizeRequestTelemetry({
+                decision: 'blocked_policy',
+                status: 409,
+                providerName: routedProvider,
+              });
+              return res.status(409).json({
+                error: 'COGNITIVE_ROLLBACK_REQUIRED',
+                reason: 'canary_tool_triggered',
+                rollback: {
+                  mode: this.cognitiveRollback.mode,
+                  trigger: 'canary_tool_triggered',
+                  dropped_messages: rollbackCandidate.droppedMessages,
+                  messages: rollbackCandidate.bodyJson.messages,
+                },
+                correlation_id: correlationId,
+              });
+            }
+
             this.stats.blocked_total += 1;
             const diagnostics = {
               errorSource: 'sentinel',
@@ -2255,7 +2679,85 @@ class SentinelServer {
           res.setHeader('x-sentinel-parallax-risk', String(parallaxDecision.risk));
           res.setHeader('x-sentinel-parallax-provider', String(parallaxDecision.secondaryProvider || 'unknown'));
 
+          const rollbackCandidate = this.cognitiveRollback.suggest({
+            bodyJson: parallaxInputBodyJson || bodyJson,
+            trigger: 'parallax_veto',
+          });
+          if (rollbackCandidate.applicable) {
+            cognitiveRollbackDecision = rollbackCandidate;
+            this.stats.cognitive_rollback_suggested += 1;
+            warnings.push('cognitive_rollback_suggested');
+            this.stats.warnings_total += 1;
+            if (this.cognitiveRollback.observability) {
+              res.setHeader(
+                'x-sentinel-cognitive-rollback',
+                this.cognitiveRollback.shouldAuto() ? 'auto' : 'suggested'
+              );
+              res.setHeader('x-sentinel-cognitive-rollback-trigger', 'parallax_veto');
+              res.setHeader(
+                'x-sentinel-cognitive-rollback-dropped',
+                String(rollbackCandidate.droppedMessages || 0)
+              );
+            }
+          }
+
           if (effectiveMode === 'enforce' && this.parallaxValidator.mode === 'block') {
+            if (rollbackCandidate.applicable && this.cognitiveRollback.shouldAuto()) {
+              this.stats.cognitive_rollback_auto += 1;
+              const diagnostics = {
+                errorSource: 'sentinel',
+                upstreamError: false,
+                provider: routedProvider,
+                retryCount: upstream.diagnostics.retryCount || 0,
+                circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
+                correlationId,
+              };
+              responseHeaderDiagnostics(res, diagnostics);
+              this.auditLogger.write({
+                timestamp: new Date().toISOString(),
+                correlation_id: correlationId,
+                config_version: this.config.version,
+                mode: effectiveMode,
+                decision: 'cognitive_rollback_required',
+                reasons: ['parallax_veto'],
+                pii_types: piiTypes,
+                redactions: redactedCount,
+                duration_ms: durationMs,
+                request_bytes: bodyBuffer.length,
+                response_status: 409,
+                response_bytes: 0,
+                provider: routedProvider,
+                upstream_target: routedTarget,
+                parallax_risk: parallaxDecision.risk,
+                parallax_reason: parallaxDecision.reason,
+                parallax_secondary_provider: parallaxDecision.secondaryProvider,
+                parallax_high_risk_tools: parallaxDecision.highRiskTools,
+                cognitive_rollback_trigger: 'parallax_veto',
+                cognitive_rollback_dropped_messages: rollbackCandidate.droppedMessages,
+                route_source: routePlan.routeSource,
+                route_group: routePlan.selectedGroup || undefined,
+                route_contract: routePlan.desiredContract,
+                requested_target: routePlan.requestedTarget,
+              });
+              this.writeStatus();
+              finalizeRequestTelemetry({
+                decision: 'blocked_policy',
+                status: 409,
+                providerName: routedProvider,
+              });
+              return res.status(409).json({
+                error: 'COGNITIVE_ROLLBACK_REQUIRED',
+                reason: 'parallax_veto',
+                rollback: {
+                  mode: this.cognitiveRollback.mode,
+                  trigger: 'parallax_veto',
+                  dropped_messages: rollbackCandidate.droppedMessages,
+                  messages: rollbackCandidate.bodyJson.messages,
+                },
+                correlation_id: correlationId,
+              });
+            }
+
             this.stats.blocked_total += 1;
             const diagnostics = {
               errorSource: 'sentinel',
@@ -2425,6 +2927,12 @@ class SentinelServer {
         parallax_risk: parallaxDecision?.risk,
         parallax_secondary_provider: parallaxDecision?.secondaryProvider,
         parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+        cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+        cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+        cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+        cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+        omni_shield_detected: Boolean(omniShieldDecision?.detected),
+        omni_shield_findings: omniShieldDecision?.findings,
       });
 
       if (upstream.status < 400) {

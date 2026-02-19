@@ -117,7 +117,8 @@ class SwarmProtocol {
     this.verifyInbound = normalized.verify_inbound !== false;
     this.signOutbound = normalized.sign_outbound !== false;
     this.requireEnvelope = normalized.require_envelope === true;
-    this.allowedClockSkewMs = clampPositiveInt(normalized.allowed_clock_skew_ms, 30000, 1000, 300000);
+    const skewSource = normalized.allowed_clock_skew_ms ?? normalized.tolerance_window_ms;
+    this.allowedClockSkewMs = clampPositiveInt(skewSource, 30000, 1000, 300000);
     this.nonceTtlMs = clampPositiveInt(normalized.nonce_ttl_ms, 300000, 1000, 3600000);
     this.maxNonceEntries = clampPositiveInt(normalized.max_nonce_entries, 50000, 100, 500000);
     this.signOnProviders = new Set(
@@ -307,6 +308,7 @@ class SwarmProtocol {
         required: false,
         shouldBlock: false,
         reason: 'disabled',
+        allowedClockSkewMs: this.allowedClockSkewMs,
       };
     }
 
@@ -328,6 +330,7 @@ class SwarmProtocol {
         required,
         shouldBlock: required && this.mode === 'block',
         reason: required ? 'missing_envelope' : 'not_present',
+        allowedClockSkewMs: this.allowedClockSkewMs,
       };
     }
 
@@ -341,6 +344,7 @@ class SwarmProtocol {
       nodeId: nodeId || undefined,
       keyId: keyId || undefined,
       nonce: nonce || undefined,
+      allowedClockSkewMs: this.allowedClockSkewMs,
     });
 
     if (version !== SWARM_VERSION) {
@@ -359,7 +363,11 @@ class SwarmProtocol {
     }
     const ageMs = nowMs - ts;
     if (Math.abs(ageMs) > this.allowedClockSkewMs) {
-      return baseFailure('timestamp_skew');
+      return {
+        ...baseFailure('timestamp_skew'),
+        ageMs,
+        ts,
+      };
     }
 
     const payloadSha256 = bodySha256(bodyBuffer);
@@ -404,6 +412,7 @@ class SwarmProtocol {
       ts,
       ageMs,
       payloadSha256,
+      allowedClockSkewMs: this.allowedClockSkewMs,
     };
   }
 

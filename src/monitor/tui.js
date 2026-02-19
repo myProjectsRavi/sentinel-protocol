@@ -163,6 +163,50 @@ function colorStatusCode(code) {
   return '{green-fg}';
 }
 
+function summarizeSwarmNodes(status, maxNodes = 5) {
+  const metrics = status?.swarm_node_metrics || {};
+  return Object.entries(metrics)
+    .map(([nodeId, data]) => {
+      const verified = Number(data?.verified || 0);
+      const rejected = Number(data?.rejected || 0);
+      const skew = Number(data?.timestamp_skew_rejected || 0);
+      return {
+        nodeId,
+        verified,
+        rejected,
+        skew,
+      };
+    })
+    .sort((a, b) => {
+      if (b.rejected !== a.rejected) return b.rejected - a.rejected;
+      return b.verified - a.verified;
+    })
+    .slice(0, maxNodes);
+}
+
+function extractThreatEvents(entries, maxEvents = 5) {
+  const events = [];
+  for (let i = entries.length - 1; i >= 0 && events.length < maxEvents; i -= 1) {
+    const entry = entries[i];
+    const reasons = Array.isArray(entry.reasons) ? entry.reasons : [];
+    const interesting =
+      String(entry.decision || '').startsWith('blocked') ||
+      reasons.some((reason) => String(reason).includes('egress')) ||
+      reasons.some((reason) => String(reason).includes('entropy')) ||
+      reasons.some((reason) => String(reason).includes('cognitive_rollback'));
+    if (!interesting) {
+      continue;
+    }
+    events.push({
+      decision: String(entry.decision || '--'),
+      reason: reasons[0] || '--',
+      status: Number(entry.response_status || 0),
+      redaction: String(entry.egress_projected_redaction || entry.egress_entropy_projected_redaction || '').slice(0, 80),
+    });
+  }
+  return events;
+}
+
 class SentinelMonitorTUI {
   constructor(options = {}) {
     this.refreshMs = Number(options.refreshMs || 1000);
@@ -193,7 +237,7 @@ class SentinelMonitorTUI {
     this.statsBox = blessed.box({
       top: 3,
       left: 0,
-      width: '50%',
+      width: '34%',
       height: 8,
       tags: true,
       border: 'line',
@@ -203,8 +247,8 @@ class SentinelMonitorTUI {
 
     this.piiBox = blessed.box({
       top: 3,
-      left: '50%',
-      width: '50%',
+      left: '34%',
+      width: '33%',
       height: 8,
       tags: true,
       border: 'line',
@@ -212,11 +256,33 @@ class SentinelMonitorTUI {
       style: { border: { fg: 'magenta' } },
     });
 
-    this.requestsTable = blessed.listtable({
+    this.swarmBox = blessed.box({
+      top: 3,
+      left: '67%',
+      width: '33%',
+      height: 8,
+      tags: true,
+      border: 'line',
+      label: ' Swarm Mesh ',
+      style: { border: { fg: 'cyan' } },
+    });
+
+    this.threatBox = blessed.box({
       top: 11,
       left: 0,
       width: '100%',
-      height: '100%-11',
+      height: 6,
+      tags: true,
+      border: 'line',
+      label: ' Threat Feed ',
+      style: { border: { fg: 'red' } },
+    });
+
+    this.requestsTable = blessed.listtable({
+      top: 17,
+      left: 0,
+      width: '100%',
+      height: '100%-17',
       border: 'line',
       label: ' Last Requests ',
       tags: true,
@@ -230,6 +296,8 @@ class SentinelMonitorTUI {
     this.screen.append(this.headerBox);
     this.screen.append(this.statsBox);
     this.screen.append(this.piiBox);
+    this.screen.append(this.swarmBox);
+    this.screen.append(this.threatBox);
     this.screen.append(this.requestsTable);
 
     this.screen.key(['q', 'C-c'], () => {
@@ -272,6 +340,42 @@ class SentinelMonitorTUI {
     this.piiBox.setContent(topTypes.map(([type, count]) => `${type}: ${count}`).join('\n'));
   }
 
+  renderSwarm(status) {
+    if (!status?.swarm_enabled) {
+      this.swarmBox.setContent('Swarm protocol disabled.');
+      return;
+    }
+    const nodes = summarizeSwarmNodes(status, 4);
+    const lines = [
+      `Mode: ${status.swarm_mode || 'monitor'}  Window: ${status.swarm_allowed_clock_skew_ms || '--'}ms`,
+      `Verified: ${status?.counters?.swarm_inbound_verified || 0}  Rejected: ${status?.counters?.swarm_inbound_rejected || 0}`,
+      `Skew rejects: ${status?.counters?.swarm_timestamp_skew_rejected || 0}`,
+    ];
+    if (nodes.length === 0) {
+      lines.push('mesh(local) == no peer data');
+    } else {
+      lines.push('{cyan-fg}mesh(local){/} ==> {white-fg}peers{/}');
+      for (const node of nodes) {
+        lines.push(` - ${node.nodeId}: ✓${node.verified} ✗${node.rejected} skew=${node.skew}`);
+      }
+    }
+    this.swarmBox.setContent(lines.join('\n'));
+  }
+
+  renderThreats(entries) {
+    const events = extractThreatEvents(entries, 4);
+    if (events.length === 0) {
+      this.threatBox.setContent('{green-fg}No active threats in recent window.{/}');
+      return;
+    }
+    const lines = events.map((event) => {
+      const color = event.status >= 400 ? '{red-fg}' : '{yellow-fg}';
+      const suffix = event.redaction ? ` -> ${event.redaction}` : '';
+      return `${color}${event.decision}{/} [${event.reason}]${suffix}`;
+    });
+    this.threatBox.setContent(lines.join('\n'));
+  }
+
   renderRequests(entries) {
     const rows = [['Time', 'Status', 'Decision', 'Provider', 'Reason']];
     const tail = entries.slice(Math.max(0, entries.length - this.maxRows));
@@ -298,6 +402,8 @@ class SentinelMonitorTUI {
     const entries = this.auditTailer.tick();
     this.renderRuntime(status);
     this.renderPII(entries);
+    this.renderSwarm(status);
+    this.renderThreats(entries);
     this.renderRequests(entries);
     this.screen.render();
   }
@@ -329,4 +435,6 @@ module.exports = {
   parseAuditEntries,
   LogTailer,
   summarizePIITypes,
+  summarizeSwarmNodes,
+  extractThreatEvents,
 };

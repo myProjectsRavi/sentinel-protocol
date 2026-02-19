@@ -168,6 +168,10 @@ function statusServer(asJson = false) {
           polymorphic_prompt_enabled: false,
           synthetic_poisoning_enabled: false,
           synthetic_poisoning_mode: 'monitor',
+          cognitive_rollback_enabled: false,
+          cognitive_rollback_mode: 'monitor',
+          omni_shield_enabled: false,
+          omni_shield_mode: 'monitor',
           budget_enabled: false,
           budget_spent_usd_today: 0,
           budget_remaining_usd_today: 0,
@@ -190,6 +194,8 @@ function statusServer(asJson = false) {
           'Honeytoken injection: disabled',
           'Polymorphic prompt MTD: disabled',
           'Synthetic poisoning: disabled',
+          'Cognitive rollback: disabled',
+          'Omni-Shield: disabled',
           'Latency normalization: disabled',
           'Intent throttle: disabled',
           'Canary tools: disabled',
@@ -224,10 +230,16 @@ function statusServer(asJson = false) {
     `Loop breaker: ${status.loop_breaker_enabled ? `enabled (detected=${status.counters?.loop_detected ?? 0}, blocked=${status.counters?.loop_blocked ?? 0})` : 'disabled'}`,
     `Deception mode: ${status.deception_enabled ? `enabled (engaged=${status.counters?.deception_engaged ?? 0})` : 'disabled'}`,
     `Provenance signing: ${status.provenance_enabled ? 'enabled' : 'disabled'}`,
-    `Swarm protocol: ${status.swarm_enabled ? `enabled (${status.swarm_mode}, inbound_verified=${status.counters?.swarm_inbound_verified ?? 0}, inbound_rejected=${status.counters?.swarm_inbound_rejected ?? 0}, outbound_signed=${status.counters?.swarm_outbound_signed ?? 0})` : 'disabled'}`,
+    `Swarm protocol: ${
+      status.swarm_enabled
+        ? `enabled (${status.swarm_mode}, skew_window_ms=${status.swarm_allowed_clock_skew_ms ?? 'n/a'}, inbound_verified=${status.counters?.swarm_inbound_verified ?? 0}, inbound_rejected=${status.counters?.swarm_inbound_rejected ?? 0}, skew_rejected=${status.counters?.swarm_timestamp_skew_rejected ?? 0}, unknown_node_rejected=${status.counters?.swarm_unknown_node_rejected ?? 0}, outbound_signed=${status.counters?.swarm_outbound_signed ?? 0})`
+        : 'disabled'
+    }`,
     `Honeytoken injection: ${status.honeytoken_enabled ? `enabled (injected=${status.counters?.honeytoken_injected ?? 0})` : 'disabled'}`,
     `Polymorphic prompt MTD: ${status.polymorphic_prompt_enabled ? `enabled (applied=${status.counters?.polymorph_applied ?? 0})` : 'disabled'}`,
     `Synthetic poisoning: ${status.synthetic_poisoning_enabled ? `enabled (${status.synthetic_poisoning_mode}, injected=${status.counters?.synthetic_poisoning_injected ?? 0})` : 'disabled'}`,
+    `Cognitive rollback: ${status.cognitive_rollback_enabled ? `enabled (${status.cognitive_rollback_mode}, suggested=${status.counters?.cognitive_rollback_suggested ?? 0}, auto=${status.counters?.cognitive_rollback_auto ?? 0})` : 'disabled'}`,
+    `Omni-Shield: ${status.omni_shield_enabled ? `enabled (${status.omni_shield_mode}, detected=${status.counters?.omni_shield_detected ?? 0}, blocked=${status.counters?.omni_shield_blocked ?? 0})` : 'disabled'}`,
     `Latency normalization: ${status.latency_normalization_enabled ? `enabled (applied=${status.counters?.latency_normalized ?? 0})` : 'disabled'}`,
     `Intent throttle: ${status.intent_throttle_enabled ? `enabled (${status.intent_throttle_mode}, matched=${status.counters?.intent_throttle_matches ?? 0}, blocked=${status.counters?.intent_throttle_blocked ?? 0}, errors=${status.counters?.intent_throttle_errors ?? 0})` : 'disabled'}`,
     `Canary tools: ${status.canary_tools_enabled ? `enabled (injected=${status.counters?.canary_tool_injected ?? 0}, triggered=${status.counters?.canary_tool_triggered ?? 0})` : 'disabled'}`,

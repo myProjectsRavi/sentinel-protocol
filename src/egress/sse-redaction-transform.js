@@ -1,5 +1,6 @@
 const { Transform } = require('stream');
 const { StringDecoder } = require('string_decoder');
+const { analyzeEntropyText, redactEntropyFindings, normalizeEntropyConfig } = require('./entropy-analyzer');
 
 function highestSeverity(findings) {
   const rank = { low: 1, medium: 2, high: 3, critical: 4 };
@@ -30,6 +31,8 @@ class SSERedactionTransform extends Transform {
     this.effectiveMode = options.effectiveMode || 'monitor';
     this.streamBlockMode = options.streamBlockMode === 'terminate' ? 'terminate' : 'redact';
     this.onDetection = typeof options.onDetection === 'function' ? options.onDetection : null;
+    this.onEntropy = typeof options.onEntropy === 'function' ? options.onEntropy : null;
+    this.entropyConfig = normalizeEntropyConfig(options.entropyConfig || {});
 
     this.decoder = new StringDecoder('utf8');
     this.pending = '';
@@ -55,6 +58,36 @@ class SSERedactionTransform extends Transform {
     const payloadBudgeted = Buffer.byteLength(payloadTrimmed, 'utf8') > this.maxLineBytes
       ? Buffer.from(payloadTrimmed, 'utf8').subarray(0, this.maxLineBytes).toString('utf8')
       : payloadTrimmed;
+
+    const entropy = analyzeEntropyText(payloadBudgeted, this.entropyConfig);
+    if (entropy.detected) {
+      const entropyAction =
+        entropy.mode === 'block' && this.effectiveMode === 'enforce'
+          ? this.streamBlockMode === 'terminate'
+            ? 'block'
+            : 'redact'
+          : 'monitor';
+      const entropyRedactedPayload =
+        entropyAction === 'redact'
+          ? redactEntropyFindings(payloadTrimmed, entropy.findings, entropy.redactReplacement)
+          : payloadTrimmed;
+      if (this.onEntropy) {
+        this.onEntropy({
+          action: entropyAction,
+          findings: entropy.findings,
+          threshold: entropy.threshold,
+          projectedRedaction: entropyAction === 'redact' ? entropyRedactedPayload : null,
+          truncated: entropy.truncated,
+        });
+      }
+      if (entropyAction === 'block') {
+        return '';
+      }
+      if (entropyAction === 'redact') {
+        return `data:${payload.startsWith(' ') ? ' ' : ''}${entropyRedactedPayload}${newline}`;
+      }
+    }
+
     const scan = this.scanner.scan(payloadBudgeted, {
       maxScanBytes: this.maxScanBytes,
     });

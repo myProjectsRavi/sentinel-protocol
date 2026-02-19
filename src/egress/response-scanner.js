@@ -1,3 +1,5 @@
+const { analyzeEntropyText } = require('./entropy-analyzer');
+
 function isTextualContentType(contentType) {
   const value = String(contentType || '').toLowerCase();
   if (!value) {
@@ -44,6 +46,7 @@ function scanBufferedResponse(options = {}) {
     maxScanBytes,
     severityActions,
     effectiveMode,
+    entropyConfig,
   } = options;
 
   if (!Buffer.isBuffer(bodyBuffer) || bodyBuffer.length === 0 || !scanner || !isTextualContentType(contentType)) {
@@ -57,10 +60,24 @@ function scanBufferedResponse(options = {}) {
       piiTypes: [],
       severity: null,
       action: 'log',
+      entropy: {
+        detected: false,
+        blocked: false,
+        action: 'monitor',
+        findings: [],
+        threshold: Number(entropyConfig?.threshold || 4.5),
+        truncated: false,
+      },
     };
   }
 
   const text = bodyBuffer.toString('utf8');
+  const entropyResult = analyzeEntropyText(text, entropyConfig || {});
+  const entropyBlocked =
+    entropyResult.detected === true &&
+    entropyResult.mode === 'block' &&
+    effectiveMode === 'enforce';
+
   const scan = scanner.scan(text, { maxScanBytes });
   if (!scan.findings || scan.findings.length === 0) {
     return {
@@ -73,6 +90,14 @@ function scanBufferedResponse(options = {}) {
       piiTypes: [],
       severity: null,
       action: 'log',
+      entropy: {
+        detected: entropyResult.detected,
+        blocked: entropyBlocked,
+        action: entropyBlocked ? 'block' : entropyResult.mode,
+        findings: entropyResult.findings || [],
+        threshold: entropyResult.threshold,
+        truncated: entropyResult.truncated === true,
+      },
     };
   }
 
@@ -95,6 +120,14 @@ function scanBufferedResponse(options = {}) {
     piiTypes: flattenFindings(scan.findings),
     severity,
     action,
+    entropy: {
+      detected: entropyResult.detected,
+      blocked: entropyBlocked,
+      action: entropyBlocked ? 'block' : entropyResult.mode,
+      findings: entropyResult.findings || [],
+      threshold: entropyResult.threshold,
+      truncated: entropyResult.truncated === true,
+    },
   };
 }
 

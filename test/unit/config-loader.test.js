@@ -182,11 +182,59 @@ describe('config loader and migration', () => {
       max_insertions_per_request: 1,
       observability: true,
     };
+    base.runtime.cognitive_rollback = {
+      enabled: true,
+      mode: 'monitor',
+      triggers: ['canary_tool_triggered', 'parallax_veto'],
+      target_roles: ['user', 'assistant'],
+      drop_messages: 2,
+      min_messages_remaining: 2,
+      system_message: 'resume from last safe checkpoint',
+      observability: true,
+    };
+    base.runtime.omni_shield = {
+      enabled: true,
+      mode: 'monitor',
+      max_image_bytes: 5 * 1024 * 1024,
+      allow_remote_image_urls: false,
+      allow_base64_images: true,
+      block_on_any_image: false,
+      max_findings: 20,
+      target_roles: ['user'],
+      observability: true,
+    };
     writeYamlConfig(configPath, base);
 
     const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
     expect(loaded.config.runtime.swarm.enabled).toBe(true);
     expect(loaded.config.runtime.polymorphic_prompt.enabled).toBe(true);
     expect(loaded.config.runtime.synthetic_poisoning.enabled).toBe(true);
+    expect(loaded.config.runtime.cognitive_rollback.enabled).toBe(true);
+    expect(loaded.config.runtime.omni_shield.enabled).toBe(true);
+  });
+
+  test('accepts egress entropy analyzer config in strict mode', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.pii.egress.entropy = {
+      enabled: true,
+      mode: 'block',
+      threshold: 4.6,
+      min_token_length: 24,
+      max_scan_bytes: 32768,
+      max_findings: 6,
+      min_unique_ratio: 0.35,
+      detect_base64: true,
+      detect_hex: true,
+      detect_generic: true,
+      redact_replacement: '[REDACTED_HIGH_ENTROPY]',
+    };
+    writeYamlConfig(configPath, base);
+
+    const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    expect(loaded.config.pii.egress.entropy.enabled).toBe(true);
+    expect(loaded.config.pii.egress.entropy.mode).toBe('block');
+    expect(loaded.config.pii.egress.entropy.threshold).toBe(4.6);
   });
 });

@@ -18,6 +18,8 @@ const RUNTIME_KEYS = new Set([
   'swarm',
   'polymorphic_prompt',
   'synthetic_poisoning',
+  'cognitive_rollback',
+  'omni_shield',
   'dashboard',
   'budget',
   'loop_breaker',
@@ -80,6 +82,7 @@ const SWARM_KEYS = new Set([
   'sign_outbound',
   'require_envelope',
   'allowed_clock_skew_ms',
+  'tolerance_window_ms',
   'nonce_ttl_ms',
   'max_nonce_entries',
   'sign_on_providers',
@@ -109,6 +112,29 @@ const SYNTHETIC_POISONING_KEYS = new Set([
   'observability',
 ]);
 const SYNTHETIC_POISONING_MODES = new Set(['monitor', 'inject']);
+const COGNITIVE_ROLLBACK_KEYS = new Set([
+  'enabled',
+  'mode',
+  'triggers',
+  'target_roles',
+  'drop_messages',
+  'min_messages_remaining',
+  'system_message',
+  'observability',
+]);
+const COGNITIVE_ROLLBACK_MODES = new Set(['monitor', 'auto']);
+const OMNI_SHIELD_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_image_bytes',
+  'allow_remote_image_urls',
+  'allow_base64_images',
+  'block_on_any_image',
+  'max_findings',
+  'target_roles',
+  'observability',
+]);
+const OMNI_SHIELD_MODES = new Set(['monitor', 'block']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const BUDGET_KEYS = new Set([
   'enabled',
@@ -240,7 +266,21 @@ const PII_REDACTION_KEYS = new Set(['mode', 'salt']);
 const PII_REDACTION_MODES = new Set(['placeholder', 'format_preserving']);
 const PII_SEVERITY_KEYS = new Set(['critical', 'high', 'medium', 'low']);
 const PII_SEMANTIC_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'score_threshold', 'max_scan_bytes']);
-const PII_EGRESS_KEYS = new Set(['enabled', 'max_scan_bytes', 'stream_enabled', 'sse_line_max_bytes', 'stream_block_mode']);
+const PII_EGRESS_KEYS = new Set(['enabled', 'max_scan_bytes', 'stream_enabled', 'sse_line_max_bytes', 'stream_block_mode', 'entropy']);
+const PII_EGRESS_ENTROPY_KEYS = new Set([
+  'enabled',
+  'mode',
+  'threshold',
+  'min_token_length',
+  'max_scan_bytes',
+  'max_findings',
+  'min_unique_ratio',
+  'detect_base64',
+  'detect_hex',
+  'detect_generic',
+  'redact_replacement',
+]);
+const PII_EGRESS_ENTROPY_MODES = new Set(['monitor', 'block']);
 const INJECTION_KEYS = new Set(['enabled', 'threshold', 'max_scan_bytes', 'action', 'neural']);
 const INJECTION_ACTIONS = new Set(['allow', 'block', 'warn']);
 const INJECTION_NEURAL_KEYS = new Set(['enabled', 'model_id', 'cache_dir', 'max_scan_bytes', 'timeout_ms', 'weight', 'mode']);
@@ -564,7 +604,8 @@ function applyDefaults(config) {
   swarm.verify_inbound = swarm.verify_inbound !== false;
   swarm.sign_outbound = swarm.sign_outbound !== false;
   swarm.require_envelope = swarm.require_envelope === true;
-  swarm.allowed_clock_skew_ms = Number(swarm.allowed_clock_skew_ms ?? 30000);
+  swarm.allowed_clock_skew_ms = Number(swarm.allowed_clock_skew_ms ?? swarm.tolerance_window_ms ?? 30000);
+  swarm.tolerance_window_ms = Number(swarm.tolerance_window_ms ?? swarm.allowed_clock_skew_ms);
   swarm.nonce_ttl_ms = Number(swarm.nonce_ttl_ms ?? 300000);
   swarm.max_nonce_entries = Number(swarm.max_nonce_entries ?? 50000);
   swarm.sign_on_providers = Array.isArray(swarm.sign_on_providers)
@@ -622,6 +663,42 @@ function applyDefaults(config) {
   syntheticPoisoning.decoy_label = String(syntheticPoisoning.decoy_label || 'SENTINEL_SYNTHETIC_CONTEXT');
   syntheticPoisoning.max_insertions_per_request = Number(syntheticPoisoning.max_insertions_per_request ?? 1);
   syntheticPoisoning.observability = syntheticPoisoning.observability !== false;
+
+  normalized.runtime.cognitive_rollback = normalized.runtime.cognitive_rollback || {};
+  const cognitiveRollback = normalized.runtime.cognitive_rollback;
+  cognitiveRollback.enabled = cognitiveRollback.enabled === true;
+  cognitiveRollback.mode = COGNITIVE_ROLLBACK_MODES.has(String(cognitiveRollback.mode || '').toLowerCase())
+    ? String(cognitiveRollback.mode).toLowerCase()
+    : 'monitor';
+  cognitiveRollback.triggers = Array.isArray(cognitiveRollback.triggers)
+    ? cognitiveRollback.triggers.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['canary_tool_triggered', 'parallax_veto'];
+  cognitiveRollback.target_roles = Array.isArray(cognitiveRollback.target_roles)
+    ? cognitiveRollback.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['user', 'assistant', 'tool'];
+  cognitiveRollback.drop_messages = Number(cognitiveRollback.drop_messages ?? 2);
+  cognitiveRollback.min_messages_remaining = Number(cognitiveRollback.min_messages_remaining ?? 2);
+  cognitiveRollback.system_message = String(
+    cognitiveRollback.system_message ||
+      '[SYSTEM OVERRIDE] Your previous thought process was corrupted. Resume execution from the last safe checkpoint and try a different approach.'
+  );
+  cognitiveRollback.observability = cognitiveRollback.observability !== false;
+
+  normalized.runtime.omni_shield = normalized.runtime.omni_shield || {};
+  const omniShield = normalized.runtime.omni_shield;
+  omniShield.enabled = omniShield.enabled === true;
+  omniShield.mode = OMNI_SHIELD_MODES.has(String(omniShield.mode || '').toLowerCase())
+    ? String(omniShield.mode).toLowerCase()
+    : 'monitor';
+  omniShield.max_image_bytes = Number(omniShield.max_image_bytes ?? 5 * 1024 * 1024);
+  omniShield.allow_remote_image_urls = omniShield.allow_remote_image_urls === true;
+  omniShield.allow_base64_images = omniShield.allow_base64_images !== false;
+  omniShield.block_on_any_image = omniShield.block_on_any_image === true;
+  omniShield.max_findings = Number(omniShield.max_findings ?? 20);
+  omniShield.target_roles = Array.isArray(omniShield.target_roles)
+    ? omniShield.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['user'];
+  omniShield.observability = omniShield.observability !== false;
 
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
@@ -785,6 +862,22 @@ function applyDefaults(config) {
   normalized.pii.egress.stream_enabled = normalized.pii.egress.stream_enabled !== false;
   normalized.pii.egress.sse_line_max_bytes = Number(normalized.pii.egress.sse_line_max_bytes ?? 16384);
   normalized.pii.egress.stream_block_mode = normalized.pii.egress.stream_block_mode === 'terminate' ? 'terminate' : 'redact';
+  normalized.pii.egress.entropy = normalized.pii.egress.entropy || {};
+  normalized.pii.egress.entropy.enabled = normalized.pii.egress.entropy.enabled === true;
+  normalized.pii.egress.entropy.mode =
+    PII_EGRESS_ENTROPY_MODES.has(String(normalized.pii.egress.entropy.mode || '').toLowerCase())
+      ? String(normalized.pii.egress.entropy.mode).toLowerCase()
+      : 'monitor';
+  normalized.pii.egress.entropy.threshold = Number(normalized.pii.egress.entropy.threshold ?? 4.5);
+  normalized.pii.egress.entropy.min_token_length = Number(normalized.pii.egress.entropy.min_token_length ?? 24);
+  normalized.pii.egress.entropy.max_scan_bytes = Number(normalized.pii.egress.entropy.max_scan_bytes ?? 65536);
+  normalized.pii.egress.entropy.max_findings = Number(normalized.pii.egress.entropy.max_findings ?? 8);
+  normalized.pii.egress.entropy.min_unique_ratio = Number(normalized.pii.egress.entropy.min_unique_ratio ?? 0.3);
+  normalized.pii.egress.entropy.detect_base64 = normalized.pii.egress.entropy.detect_base64 !== false;
+  normalized.pii.egress.entropy.detect_hex = normalized.pii.egress.entropy.detect_hex !== false;
+  normalized.pii.egress.entropy.detect_generic = normalized.pii.egress.entropy.detect_generic !== false;
+  normalized.pii.egress.entropy.redact_replacement =
+    String(normalized.pii.egress.entropy.redact_replacement || '[REDACTED_HIGH_ENTROPY]');
 
   normalized.injection = normalized.injection || {};
   normalized.injection.enabled = normalized.injection.enabled !== false;
@@ -1069,6 +1162,12 @@ function validateConfigShape(config) {
       details
     );
     assertType(
+      swarm.tolerance_window_ms === undefined ||
+        (Number.isInteger(swarm.tolerance_window_ms) && swarm.tolerance_window_ms > 0),
+      '`runtime.swarm.tolerance_window_ms` must be integer > 0',
+      details
+    );
+    assertType(
       Number.isInteger(swarm.nonce_ttl_ms) && swarm.nonce_ttl_ms > 0,
       '`runtime.swarm.nonce_ttl_ms` must be integer > 0',
       details
@@ -1203,6 +1302,97 @@ function validateConfigShape(config) {
     assertType(
       typeof syntheticPoisoning.observability === 'boolean',
       '`runtime.synthetic_poisoning.observability` must be boolean',
+      details
+    );
+  }
+
+  const cognitiveRollback = runtime.cognitive_rollback || {};
+  if (runtime.cognitive_rollback !== undefined) {
+    assertNoUnknownKeys(cognitiveRollback, COGNITIVE_ROLLBACK_KEYS, 'runtime.cognitive_rollback', details);
+    assertType(
+      typeof cognitiveRollback.enabled === 'boolean',
+      '`runtime.cognitive_rollback.enabled` must be boolean',
+      details
+    );
+    assertType(
+      COGNITIVE_ROLLBACK_MODES.has(String(cognitiveRollback.mode)),
+      '`runtime.cognitive_rollback.mode` must be monitor|auto',
+      details
+    );
+    assertType(
+      Array.isArray(cognitiveRollback.triggers) && cognitiveRollback.triggers.length > 0,
+      '`runtime.cognitive_rollback.triggers` must be non-empty array',
+      details
+    );
+    assertType(
+      Array.isArray(cognitiveRollback.target_roles) && cognitiveRollback.target_roles.length > 0,
+      '`runtime.cognitive_rollback.target_roles` must be non-empty array',
+      details
+    );
+    assertType(
+      Number.isInteger(cognitiveRollback.drop_messages) && cognitiveRollback.drop_messages > 0,
+      '`runtime.cognitive_rollback.drop_messages` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(cognitiveRollback.min_messages_remaining) && cognitiveRollback.min_messages_remaining > 0,
+      '`runtime.cognitive_rollback.min_messages_remaining` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof cognitiveRollback.system_message === 'string' && cognitiveRollback.system_message.length > 0,
+      '`runtime.cognitive_rollback.system_message` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof cognitiveRollback.observability === 'boolean',
+      '`runtime.cognitive_rollback.observability` must be boolean',
+      details
+    );
+  }
+
+  const omniShield = runtime.omni_shield || {};
+  if (runtime.omni_shield !== undefined) {
+    assertNoUnknownKeys(omniShield, OMNI_SHIELD_KEYS, 'runtime.omni_shield', details);
+    assertType(typeof omniShield.enabled === 'boolean', '`runtime.omni_shield.enabled` must be boolean', details);
+    assertType(
+      OMNI_SHIELD_MODES.has(String(omniShield.mode)),
+      '`runtime.omni_shield.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(omniShield.max_image_bytes) && omniShield.max_image_bytes > 0,
+      '`runtime.omni_shield.max_image_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof omniShield.allow_remote_image_urls === 'boolean',
+      '`runtime.omni_shield.allow_remote_image_urls` must be boolean',
+      details
+    );
+    assertType(
+      typeof omniShield.allow_base64_images === 'boolean',
+      '`runtime.omni_shield.allow_base64_images` must be boolean',
+      details
+    );
+    assertType(
+      typeof omniShield.block_on_any_image === 'boolean',
+      '`runtime.omni_shield.block_on_any_image` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(omniShield.max_findings) && omniShield.max_findings > 0,
+      '`runtime.omni_shield.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(omniShield.target_roles) && omniShield.target_roles.length > 0,
+      '`runtime.omni_shield.target_roles` must be non-empty array',
+      details
+    );
+    assertType(
+      typeof omniShield.observability === 'boolean',
+      '`runtime.omni_shield.observability` must be boolean',
       details
     );
   }
@@ -2019,6 +2209,73 @@ function validateConfigShape(config) {
         '`pii.egress.stream_block_mode` must be redact|terminate',
         details
       );
+
+      if (egress.entropy !== undefined) {
+        assertType(
+          egress.entropy && typeof egress.entropy === 'object' && !Array.isArray(egress.entropy),
+          '`pii.egress.entropy` must be object',
+          details
+        );
+        if (egress.entropy && typeof egress.entropy === 'object' && !Array.isArray(egress.entropy)) {
+          assertNoUnknownKeys(egress.entropy, PII_EGRESS_ENTROPY_KEYS, 'pii.egress.entropy', details);
+          assertType(typeof egress.entropy.enabled === 'boolean', '`pii.egress.entropy.enabled` must be boolean', details);
+          assertType(
+            PII_EGRESS_ENTROPY_MODES.has(String(egress.entropy.mode)),
+            '`pii.egress.entropy.mode` must be monitor|block',
+            details
+          );
+          assertType(
+            Number.isFinite(Number(egress.entropy.threshold)) &&
+              Number(egress.entropy.threshold) >= 0 &&
+              Number(egress.entropy.threshold) <= 8,
+            '`pii.egress.entropy.threshold` must be number between 0 and 8',
+            details
+          );
+          assertType(
+            Number.isInteger(egress.entropy.min_token_length) && egress.entropy.min_token_length > 0,
+            '`pii.egress.entropy.min_token_length` must be integer > 0',
+            details
+          );
+          assertType(
+            Number.isInteger(egress.entropy.max_scan_bytes) && egress.entropy.max_scan_bytes > 0,
+            '`pii.egress.entropy.max_scan_bytes` must be integer > 0',
+            details
+          );
+          assertType(
+            Number.isInteger(egress.entropy.max_findings) && egress.entropy.max_findings > 0,
+            '`pii.egress.entropy.max_findings` must be integer > 0',
+            details
+          );
+          assertType(
+            Number.isFinite(Number(egress.entropy.min_unique_ratio)) &&
+              Number(egress.entropy.min_unique_ratio) >= 0 &&
+              Number(egress.entropy.min_unique_ratio) <= 1,
+            '`pii.egress.entropy.min_unique_ratio` must be number between 0 and 1',
+            details
+          );
+          assertType(
+            typeof egress.entropy.detect_base64 === 'boolean',
+            '`pii.egress.entropy.detect_base64` must be boolean',
+            details
+          );
+          assertType(
+            typeof egress.entropy.detect_hex === 'boolean',
+            '`pii.egress.entropy.detect_hex` must be boolean',
+            details
+          );
+          assertType(
+            typeof egress.entropy.detect_generic === 'boolean',
+            '`pii.egress.entropy.detect_generic` must be boolean',
+            details
+          );
+          assertType(
+            typeof egress.entropy.redact_replacement === 'string' &&
+              egress.entropy.redact_replacement.length > 0,
+            '`pii.egress.entropy.redact_replacement` must be non-empty string',
+            details
+          );
+        }
+      }
     }
   }
 

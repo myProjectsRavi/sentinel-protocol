@@ -45,4 +45,53 @@ describe('scanBufferedResponse', () => {
     expect(result.blocked).toBe(true);
     expect(result.redacted).toBe(false);
   });
+
+  test('detects high-entropy payloads in monitor mode without blocking', () => {
+    const body = Buffer.from(
+      JSON.stringify({ output: 'payload QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0NTY3ODkwQUJDREVGR0hJSktM' }),
+      'utf8'
+    );
+    const result = scanBufferedResponse({
+      bodyBuffer: body,
+      contentType: 'application/json',
+      scanner: scanner(),
+      maxScanBytes: 65536,
+      severityActions: { critical: 'block', high: 'block', medium: 'redact', low: 'log' },
+      effectiveMode: 'enforce',
+      entropyConfig: {
+        enabled: true,
+        mode: 'monitor',
+        threshold: 4.3,
+        min_token_length: 24,
+      },
+    });
+
+    expect(result.entropy.detected).toBe(true);
+    expect(result.entropy.blocked).toBe(false);
+    expect(result.blocked).toBe(false);
+  });
+
+  test('blocks high-entropy payloads in enforce mode when entropy mode is block', () => {
+    const body = Buffer.from(
+      JSON.stringify({ output: 'leak 4d2f5aaefcb3491aabfe88cc04994fdd9b9e8f223dcab0f11555d8bb2ed0fe6a' }),
+      'utf8'
+    );
+    const result = scanBufferedResponse({
+      bodyBuffer: body,
+      contentType: 'application/json',
+      scanner: scanner(),
+      maxScanBytes: 65536,
+      severityActions: { critical: 'block', high: 'block', medium: 'redact', low: 'log' },
+      effectiveMode: 'enforce',
+      entropyConfig: {
+        enabled: true,
+        mode: 'block',
+        threshold: 3.5,
+        min_token_length: 24,
+      },
+    });
+
+    expect(result.entropy.detected).toBe(true);
+    expect(result.entropy.blocked).toBe(true);
+  });
 });

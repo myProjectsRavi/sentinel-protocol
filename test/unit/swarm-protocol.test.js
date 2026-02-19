@@ -146,6 +146,59 @@ describe('SwarmProtocol', () => {
     expect(result.shouldBlock).toBe(true);
   });
 
+  test('returns explicit clock skew metadata on timestamp mismatch', () => {
+    let now = 1700000100000;
+    const signer = new SwarmProtocol(
+      {
+        enabled: true,
+        node_id: 'node-a',
+        sign_outbound: true,
+        verify_inbound: false,
+        sign_on_providers: ['custom'],
+      },
+      {
+        now: () => now - 12000,
+        randomUuid: () => 'nonce-skew',
+      }
+    );
+    const verifier = new SwarmProtocol(
+      {
+        enabled: true,
+        mode: 'block',
+        node_id: 'node-b',
+        verify_inbound: true,
+        sign_outbound: false,
+        allowed_clock_skew_ms: 5000,
+        trusted_nodes: {
+          'node-a': { public_key_pem: signer.getPublicMetadata().public_key_pem },
+        },
+      },
+      {
+        now: () => now,
+      }
+    );
+
+    const body = Buffer.from('{}', 'utf8');
+    const signed = signer.signOutboundHeaders({
+      headers: {},
+      provider: 'custom',
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyBuffer: body,
+    });
+    const result = verifier.verifyInboundEnvelope({
+      headers: signed.headers,
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyBuffer: body,
+    });
+
+    expect(result.verified).toBe(false);
+    expect(result.reason).toBe('timestamp_skew');
+    expect(Math.abs(Number(result.ageMs))).toBeGreaterThan(5000);
+    expect(result.allowedClockSkewMs).toBe(5000);
+  });
+
   test('does not sign non-eligible providers', () => {
     const signer = new SwarmProtocol({
       enabled: true,

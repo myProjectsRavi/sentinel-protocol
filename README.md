@@ -11,6 +11,7 @@ It provides:
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
 - Format-preserving masking mode for test-safe pseudonyms (`pii.redaction.mode: format_preserving`)
 - Bi-directional protection: ingress request scanning + egress response scanning/redaction
+- Entropy egress analyzer (monitor-first, enforce-time blocking) for encoded exfiltration attempts
 - PII provider modes: `local`, `rapidapi`, `hybrid` (with local fallback controls)
 - Heuristic prompt-injection detection (`injection_threshold` policy matching)
 - Optional neural injection classifier (`injection.neural.*`) with weighted merge
@@ -32,8 +33,11 @@ It provides:
 - Monitor-first canary tool traps (`runtime.canary_tools`) for prompt-injection tool abuse detection
 - Optional Parallax two-model validation (`runtime.parallax`) for high-risk tool execution veto signals
 - Swarm Protocol Phase A (`runtime.swarm`) with signed envelopes, nonce replay protection, and mutual verification
+- Swarm clock-drift observability with per-node skew metrics and explicit skew headers
 - Polymorphic Prompt MTD (`runtime.polymorphic_prompt`) with deterministic rotation and rollback header
 - Synthetic Poisoning (`runtime.synthetic_poisoning`) strict opt-in with legal acknowledgement gate
+- Cognitive rollback (`runtime.cognitive_rollback`) monitor-first with optional auto rollback payloads
+- Omni-Shield Phase A (`runtime.omni_shield`) multimodal image payload detection + policy gate
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -80,6 +84,17 @@ pii:
     stream_enabled: true
     sse_line_max_bytes: 16384
     stream_block_mode: redact # redact | terminate
+    entropy:
+      enabled: false
+      mode: monitor # monitor | block
+      threshold: 4.5
+      min_token_length: 24
+      max_scan_bytes: 65536
+      max_findings: 8
+      min_unique_ratio: 0.3
+      detect_base64: true
+      detect_hex: true
+      detect_generic: true
   rapidapi:
     endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
     host: "pii-firewall-edge.p.rapidapi.com"
@@ -184,6 +199,25 @@ runtime:
     target_roles: [system]
     decoy_label: "SENTINEL_SYNTHETIC_CONTEXT"
     max_insertions_per_request: 1
+    observability: true
+  cognitive_rollback:
+    enabled: false
+    mode: monitor # monitor | auto
+    triggers: [canary_tool_triggered, parallax_veto]
+    target_roles: [user, assistant, tool]
+    drop_messages: 2
+    min_messages_remaining: 2
+    system_message: "[SYSTEM OVERRIDE] Your previous thought process was corrupted. Resume execution from the last safe checkpoint and try a different approach."
+    observability: true
+  omni_shield:
+    enabled: false
+    mode: monitor # monitor | block
+    max_image_bytes: 5242880
+    allow_remote_image_urls: false
+    allow_base64_images: true
+    block_on_any_image: false
+    max_findings: 20
+    target_roles: [user]
     observability: true
   worker_pool:
     enabled: true

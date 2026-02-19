@@ -74,6 +74,8 @@ function runDoctorChecks(config, env = process.env) {
   const swarm = config?.runtime?.swarm || {};
   const polymorphicPrompt = config?.runtime?.polymorphic_prompt || {};
   const syntheticPoisoning = config?.runtime?.synthetic_poisoning || {};
+  const cognitiveRollback = config?.runtime?.cognitive_rollback || {};
+  const omniShield = config?.runtime?.omni_shield || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
   const upstream = config?.runtime?.upstream || {};
@@ -244,6 +246,7 @@ function runDoctorChecks(config, env = process.env) {
   }
 
   if (swarm.enabled === true) {
+    const skewWindow = Number(swarm.allowed_clock_skew_ms ?? swarm.tolerance_window_ms ?? 30000);
     checks.push({
       id: 'swarm-node-id',
       status: String(swarm.node_id || '').length > 0 ? 'pass' : 'fail',
@@ -251,6 +254,14 @@ function runDoctorChecks(config, env = process.env) {
         String(swarm.node_id || '').length > 0
           ? `Swarm node_id configured (${swarm.node_id}).`
           : 'Swarm enabled but runtime.swarm.node_id is empty.',
+    });
+    checks.push({
+      id: 'swarm-clock-skew-window',
+      status: skewWindow >= 5000 ? 'pass' : 'warn',
+      message:
+        skewWindow >= 5000
+          ? `Swarm clock skew window is ${skewWindow}ms (global-friendly).`
+          : `Swarm clock skew window is ${skewWindow}ms. Values below 5000ms can cause legitimate cross-region requests to fail under NTP drift.`,
     });
     checks.push({
       id: 'swarm-trust-store',
@@ -306,6 +317,44 @@ function runDoctorChecks(config, env = process.env) {
         Array.isArray(syntheticPoisoning.allowed_triggers) && syntheticPoisoning.allowed_triggers.length > 0
           ? `Synthetic poisoning triggers: ${syntheticPoisoning.allowed_triggers.join(', ')}`
           : 'Synthetic poisoning enabled but allowed_triggers is empty.',
+    });
+  }
+
+  if (cognitiveRollback.enabled === true) {
+    checks.push({
+      id: 'cognitive-rollback-mode',
+      status: ['monitor', 'auto'].includes(String(cognitiveRollback.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'auto'].includes(String(cognitiveRollback.mode || '').toLowerCase())
+          ? `Cognitive rollback is enabled in '${String(cognitiveRollback.mode || 'monitor')}' mode.`
+          : `Cognitive rollback mode '${String(cognitiveRollback.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'cognitive-rollback-triggers',
+      status: Array.isArray(cognitiveRollback.triggers) && cognitiveRollback.triggers.length > 0 ? 'pass' : 'fail',
+      message:
+        Array.isArray(cognitiveRollback.triggers) && cognitiveRollback.triggers.length > 0
+          ? `Cognitive rollback triggers: ${cognitiveRollback.triggers.join(', ')}`
+          : 'Cognitive rollback enabled but triggers list is empty.',
+    });
+  }
+
+  if (omniShield.enabled === true) {
+    checks.push({
+      id: 'omni-shield-mode',
+      status: ['monitor', 'block'].includes(String(omniShield.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'block'].includes(String(omniShield.mode || '').toLowerCase())
+          ? `Omni-Shield enabled in '${String(omniShield.mode || 'monitor')}' mode.`
+          : `Omni-Shield mode '${String(omniShield.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'omni-shield-image-budget',
+      status: Number(omniShield.max_image_bytes || 0) > 0 ? 'pass' : 'fail',
+      message:
+        Number(omniShield.max_image_bytes || 0) > 0
+          ? `Omni-Shield max_image_bytes=${Number(omniShield.max_image_bytes)}`
+          : 'Omni-Shield enabled but max_image_bytes is invalid.',
     });
   }
 

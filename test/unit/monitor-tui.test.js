@@ -2,7 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { summarizePIITypes, LogTailer } = require('../../src/monitor/tui');
+const { summarizePIITypes, summarizeSwarmNodes, extractThreatEvents, LogTailer } = require('../../src/monitor/tui');
 
 describe('monitor tui helpers', () => {
   test('summarizePIITypes returns top pii type counts', () => {
@@ -14,6 +14,27 @@ describe('monitor tui helpers', () => {
 
     expect(summary[0][0]).toBe('email');
     expect(summary[0][1]).toBe(2);
+  });
+
+  test('summarizeSwarmNodes orders peers by rejection volume', () => {
+    const nodes = summarizeSwarmNodes({
+      swarm_node_metrics: {
+        'node-a': { verified: 4, rejected: 1, timestamp_skew_rejected: 0 },
+        'node-b': { verified: 2, rejected: 5, timestamp_skew_rejected: 2 },
+      },
+    });
+    expect(nodes[0].nodeId).toBe('node-b');
+    expect(nodes[0].skew).toBe(2);
+  });
+
+  test('extractThreatEvents returns latest blocked/egress events', () => {
+    const events = extractThreatEvents([
+      { decision: 'forwarded', response_status: 200, reasons: [] },
+      { decision: 'blocked_egress_entropy', response_status: 403, reasons: ['egress_entropy_detected'] },
+      { decision: 'forwarded', response_status: 200, reasons: ['cognitive_rollback_suggested'] },
+    ]);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].decision).toContain('forwarded');
   });
 
   test('LogTailer reads only appended bytes and survives file rotation', () => {
