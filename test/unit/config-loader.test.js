@@ -170,6 +170,7 @@ describe('config loader and migration', () => {
       ttl_ms: 3600000,
       max_sessions: 2000,
       max_mappings_per_session: 1000,
+      max_memory_bytes: 67108864,
       max_egress_rewrite_entries: 128,
       max_payload_bytes: 524288,
       max_replacements_per_pass: 750,

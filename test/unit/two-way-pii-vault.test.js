@@ -154,4 +154,62 @@ describe('TwoWayPIIVault', () => {
     });
     expect(Boolean(egress.bodyBuffer.toString('utf8').includes('b@example.com'))).toBe(Boolean(fixture.expect_rewritten));
   });
+
+  test('evicts least-recently-used session when max sessions is exceeded', () => {
+    const vault = new TwoWayPIIVault({
+      enabled: true,
+      mode: 'active',
+      max_sessions: 2,
+      target_types: ['email_address'],
+    });
+
+    vault.applyIngress({
+      sessionKey: 's1',
+      text: 'a1@example.com',
+      findings: [{ id: 'email_address', value: 'a1@example.com' }],
+    });
+    vault.applyIngress({
+      sessionKey: 's2',
+      text: 'a2@example.com',
+      findings: [{ id: 'email_address', value: 'a2@example.com' }],
+    });
+
+    // Touch s1 so s2 becomes least recently used.
+    vault.getReverseEntries('s1');
+
+    vault.applyIngress({
+      sessionKey: 's3',
+      text: 'a3@example.com',
+      findings: [{ id: 'email_address', value: 'a3@example.com' }],
+    });
+
+    expect(vault.getReverseEntries('s1').length).toBeGreaterThan(0);
+    expect(vault.getReverseEntries('s2')).toHaveLength(0);
+    expect(vault.getReverseEntries('s3').length).toBeGreaterThan(0);
+
+    const stats = vault.getStats();
+    expect(stats.session_evictions_lru).toBeGreaterThanOrEqual(1);
+  });
+
+  test('enforces global memory cap and reports memory pressure metrics', () => {
+    const vault = new TwoWayPIIVault({
+      enabled: true,
+      mode: 'active',
+      max_memory_bytes: 1024,
+      target_types: ['email_address'],
+    });
+
+    // Create enough distinct sessions to force memory evictions.
+    for (let i = 0; i < 16; i += 1) {
+      vault.applyIngress({
+        sessionKey: `m-${i}`,
+        text: `user${i}@example.com`,
+        findings: [{ id: 'email_address', value: `user${i}@example.com` }],
+      });
+    }
+
+    const stats = vault.getStats();
+    expect(stats.approx_bytes).toBeLessThanOrEqual(stats.max_memory_bytes);
+    expect(stats.session_evictions_memory + stats.memory_pressure_drops).toBeGreaterThanOrEqual(1);
+  });
 });

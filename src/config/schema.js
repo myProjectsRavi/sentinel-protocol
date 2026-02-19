@@ -26,12 +26,15 @@ const RUNTIME_KEYS = new Set([
   'dashboard',
   'budget',
   'loop_breaker',
+  'auto_immune',
   'provenance',
   'deception',
   'honeytoken',
   'latency_normalization',
   'canary_tools',
   'parallax',
+  'shadow_os',
+  'epistemic_anchor',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault', 'ghost_mode']);
@@ -123,6 +126,7 @@ const PII_VAULT_KEYS = new Set([
   'ttl_ms',
   'max_sessions',
   'max_mappings_per_session',
+  'max_memory_bytes',
   'max_egress_rewrite_entries',
   'max_payload_bytes',
   'max_replacements_per_pass',
@@ -165,6 +169,20 @@ const COGNITIVE_ROLLBACK_KEYS = new Set([
   'observability',
 ]);
 const COGNITIVE_ROLLBACK_MODES = new Set(['monitor', 'auto']);
+const AUTO_IMMUNE_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_entries',
+  'max_scan_bytes',
+  'min_confidence_to_match',
+  'learn_min_score',
+  'learn_increment',
+  'max_confidence',
+  'decay_half_life_ms',
+  'observability',
+]);
+const AUTO_IMMUNE_MODES = new Set(['monitor', 'block']);
 const OMNI_SHIELD_KEYS = new Set([
   'enabled',
   'mode',
@@ -286,6 +304,40 @@ const PARALLAX_KEYS = new Set([
   'risk_threshold',
 ]);
 const PARALLAX_MODES = new Set(['monitor', 'block']);
+const SHADOW_OS_KEYS = new Set([
+  'enabled',
+  'mode',
+  'window_ms',
+  'max_sessions',
+  'max_history_per_session',
+  'repeat_threshold',
+  'session_header',
+  'fallback_headers',
+  'high_risk_tools',
+  'sequence_rules',
+  'observability',
+]);
+const SHADOW_OS_MODES = new Set(['monitor', 'block']);
+const SHADOW_OS_SEQUENCE_RULE_KEYS = new Set(['id', 'requires', 'order_required']);
+const EPISTEMIC_ANCHOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'required_acknowledgement',
+  'acknowledgement',
+  'key_header',
+  'fallback_key_headers',
+  'sample_every_turns',
+  'min_turns',
+  'threshold',
+  'cooldown_ms',
+  'max_sessions',
+  'context_window_messages',
+  'model_id',
+  'cache_dir',
+  'max_prompt_chars',
+  'observability',
+]);
+const EPISTEMIC_ANCHOR_MODES = new Set(['monitor', 'block']);
 const BUDGET_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -750,6 +802,7 @@ function applyDefaults(config) {
   piiVault.ttl_ms = Number(piiVault.ttl_ms ?? 3600000);
   piiVault.max_sessions = Number(piiVault.max_sessions ?? 5000);
   piiVault.max_mappings_per_session = Number(piiVault.max_mappings_per_session ?? 1000);
+  piiVault.max_memory_bytes = Number(piiVault.max_memory_bytes ?? 64 * 1024 * 1024);
   piiVault.max_egress_rewrite_entries = Number(piiVault.max_egress_rewrite_entries ?? 256);
   piiVault.max_payload_bytes = Number(piiVault.max_payload_bytes ?? 512 * 1024);
   piiVault.max_replacements_per_pass = Number(piiVault.max_replacements_per_pass ?? 1000);
@@ -914,6 +967,22 @@ function applyDefaults(config) {
   loopBreaker.max_keys = Number(loopBreaker.max_keys ?? 2048);
   loopBreaker.key_header = String(loopBreaker.key_header || 'x-sentinel-agent-id').toLowerCase();
 
+  normalized.runtime.auto_immune = normalized.runtime.auto_immune || {};
+  const autoImmune = normalized.runtime.auto_immune;
+  autoImmune.enabled = autoImmune.enabled === true;
+  autoImmune.mode = AUTO_IMMUNE_MODES.has(String(autoImmune.mode || '').toLowerCase())
+    ? String(autoImmune.mode).toLowerCase()
+    : 'monitor';
+  autoImmune.ttl_ms = Number(autoImmune.ttl_ms ?? 24 * 3600000);
+  autoImmune.max_entries = Number(autoImmune.max_entries ?? 20000);
+  autoImmune.max_scan_bytes = Number(autoImmune.max_scan_bytes ?? 32768);
+  autoImmune.min_confidence_to_match = Number(autoImmune.min_confidence_to_match ?? 0.85);
+  autoImmune.learn_min_score = Number(autoImmune.learn_min_score ?? 0.85);
+  autoImmune.learn_increment = Number(autoImmune.learn_increment ?? 0.2);
+  autoImmune.max_confidence = Number(autoImmune.max_confidence ?? 0.99);
+  autoImmune.decay_half_life_ms = Number(autoImmune.decay_half_life_ms ?? 6 * 3600000);
+  autoImmune.observability = autoImmune.observability !== false;
+
   normalized.runtime.provenance = normalized.runtime.provenance || {};
   const provenance = normalized.runtime.provenance;
   provenance.enabled = provenance.enabled === true;
@@ -993,6 +1062,70 @@ function applyDefaults(config) {
   parallax.secondary_model = String(parallax.secondary_model || '');
   parallax.timeout_ms = Number(parallax.timeout_ms ?? 3000);
   parallax.risk_threshold = Number(parallax.risk_threshold ?? 0.7);
+
+  normalized.runtime.shadow_os = normalized.runtime.shadow_os || {};
+  const shadowOs = normalized.runtime.shadow_os;
+  shadowOs.enabled = shadowOs.enabled === true;
+  shadowOs.mode = SHADOW_OS_MODES.has(String(shadowOs.mode || '').toLowerCase())
+    ? String(shadowOs.mode).toLowerCase()
+    : 'monitor';
+  shadowOs.window_ms = Number(shadowOs.window_ms ?? 15 * 60 * 1000);
+  shadowOs.max_sessions = Number(shadowOs.max_sessions ?? 5000);
+  shadowOs.max_history_per_session = Number(shadowOs.max_history_per_session ?? 128);
+  shadowOs.repeat_threshold = Number(shadowOs.repeat_threshold ?? 4);
+  shadowOs.session_header = String(shadowOs.session_header || 'x-sentinel-session-id').toLowerCase();
+  shadowOs.fallback_headers = Array.isArray(shadowOs.fallback_headers)
+    ? shadowOs.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  shadowOs.high_risk_tools = Array.isArray(shadowOs.high_risk_tools)
+    ? shadowOs.high_risk_tools.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['execute_shell', 'execute_sql', 'aws_cli', 'grant_permissions', 'create_user', 'delete_log', 'drop_database'];
+  shadowOs.sequence_rules = Array.isArray(shadowOs.sequence_rules)
+    ? shadowOs.sequence_rules.map((rule) => ({
+        id: String(rule?.id || ''),
+        requires: Array.isArray(rule?.requires)
+          ? rule.requires.map((item) => String(item || '').trim()).filter(Boolean)
+          : [],
+        order_required: rule?.order_required !== false,
+      })).filter((rule) => rule.id && rule.requires.length > 0)
+    : [
+        {
+          id: 'privilege_escalation_coverup',
+          requires: ['create_user', 'grant_permissions', 'delete_log'],
+          order_required: true,
+        },
+        {
+          id: 'destructive_privilege_chain',
+          requires: ['grant_permissions', 'drop_database'],
+          order_required: false,
+        },
+      ];
+  shadowOs.observability = shadowOs.observability !== false;
+
+  normalized.runtime.epistemic_anchor = normalized.runtime.epistemic_anchor || {};
+  const epistemicAnchor = normalized.runtime.epistemic_anchor;
+  epistemicAnchor.enabled = epistemicAnchor.enabled === true;
+  epistemicAnchor.mode = EPISTEMIC_ANCHOR_MODES.has(String(epistemicAnchor.mode || '').toLowerCase())
+    ? String(epistemicAnchor.mode).toLowerCase()
+    : 'monitor';
+  epistemicAnchor.required_acknowledgement = String(
+    epistemicAnchor.required_acknowledgement || 'I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL'
+  );
+  epistemicAnchor.acknowledgement = String(epistemicAnchor.acknowledgement || '');
+  epistemicAnchor.key_header = String(epistemicAnchor.key_header || 'x-sentinel-session-id').toLowerCase();
+  epistemicAnchor.fallback_key_headers = Array.isArray(epistemicAnchor.fallback_key_headers)
+    ? epistemicAnchor.fallback_key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  epistemicAnchor.sample_every_turns = Number(epistemicAnchor.sample_every_turns ?? 5);
+  epistemicAnchor.min_turns = Number(epistemicAnchor.min_turns ?? 6);
+  epistemicAnchor.threshold = Number(epistemicAnchor.threshold ?? 0.8);
+  epistemicAnchor.cooldown_ms = Number(epistemicAnchor.cooldown_ms ?? 60000);
+  epistemicAnchor.max_sessions = Number(epistemicAnchor.max_sessions ?? 5000);
+  epistemicAnchor.context_window_messages = Number(epistemicAnchor.context_window_messages ?? 8);
+  epistemicAnchor.model_id = String(epistemicAnchor.model_id || 'Xenova/all-MiniLM-L6-v2');
+  epistemicAnchor.cache_dir = String(epistemicAnchor.cache_dir || '~/.sentinel/models');
+  epistemicAnchor.max_prompt_chars = Number(epistemicAnchor.max_prompt_chars ?? 4000);
+  epistemicAnchor.observability = epistemicAnchor.observability !== false;
 
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
@@ -1553,6 +1686,11 @@ function validateConfigShape(config) {
       details
     );
     assertType(
+      Number.isInteger(piiVault.max_memory_bytes) && piiVault.max_memory_bytes > 0,
+      '`runtime.pii_vault.max_memory_bytes` must be integer > 0',
+      details
+    );
+    assertType(
       Number.isInteger(piiVault.max_egress_rewrite_entries) && piiVault.max_egress_rewrite_entries > 0,
       '`runtime.pii_vault.max_egress_rewrite_entries` must be integer > 0',
       details
@@ -2005,6 +2143,70 @@ function validateConfigShape(config) {
     );
   }
 
+  const autoImmune = runtime.auto_immune || {};
+  if (runtime.auto_immune !== undefined) {
+    assertNoUnknownKeys(autoImmune, AUTO_IMMUNE_KEYS, 'runtime.auto_immune', details);
+    assertType(typeof autoImmune.enabled === 'boolean', '`runtime.auto_immune.enabled` must be boolean', details);
+    assertType(
+      AUTO_IMMUNE_MODES.has(String(autoImmune.mode)),
+      '`runtime.auto_immune.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(autoImmune.ttl_ms) && autoImmune.ttl_ms > 0,
+      '`runtime.auto_immune.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(autoImmune.max_entries) && autoImmune.max_entries > 0,
+      '`runtime.auto_immune.max_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(autoImmune.max_scan_bytes) && autoImmune.max_scan_bytes > 0,
+      '`runtime.auto_immune.max_scan_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(autoImmune.min_confidence_to_match))
+        && Number(autoImmune.min_confidence_to_match) >= 0
+        && Number(autoImmune.min_confidence_to_match) <= 1,
+      '`runtime.auto_immune.min_confidence_to_match` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(autoImmune.learn_min_score))
+        && Number(autoImmune.learn_min_score) >= 0
+        && Number(autoImmune.learn_min_score) <= 1,
+      '`runtime.auto_immune.learn_min_score` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(autoImmune.learn_increment))
+        && Number(autoImmune.learn_increment) >= 0
+        && Number(autoImmune.learn_increment) <= 1,
+      '`runtime.auto_immune.learn_increment` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(autoImmune.max_confidence))
+        && Number(autoImmune.max_confidence) >= 0
+        && Number(autoImmune.max_confidence) <= 1,
+      '`runtime.auto_immune.max_confidence` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(autoImmune.decay_half_life_ms) && autoImmune.decay_half_life_ms > 0,
+      '`runtime.auto_immune.decay_half_life_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof autoImmune.observability === 'boolean',
+      '`runtime.auto_immune.observability` must be boolean',
+      details
+    );
+  }
+
   const provenance = runtime.provenance || {};
   if (runtime.provenance !== undefined) {
     assertNoUnknownKeys(provenance, PROVENANCE_KEYS, 'runtime.provenance', details);
@@ -2257,6 +2459,169 @@ function validateConfigShape(config) {
         Number(parallax.risk_threshold) >= 0 &&
         Number(parallax.risk_threshold) <= 1,
       '`runtime.parallax.risk_threshold` must be number between 0 and 1',
+      details
+    );
+  }
+
+  const shadowOs = runtime.shadow_os || {};
+  if (runtime.shadow_os !== undefined) {
+    assertNoUnknownKeys(shadowOs, SHADOW_OS_KEYS, 'runtime.shadow_os', details);
+    assertType(typeof shadowOs.enabled === 'boolean', '`runtime.shadow_os.enabled` must be boolean', details);
+    assertType(
+      SHADOW_OS_MODES.has(String(shadowOs.mode)),
+      '`runtime.shadow_os.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(shadowOs.window_ms) && shadowOs.window_ms > 0,
+      '`runtime.shadow_os.window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(shadowOs.max_sessions) && shadowOs.max_sessions > 0,
+      '`runtime.shadow_os.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(shadowOs.max_history_per_session) && shadowOs.max_history_per_session > 0,
+      '`runtime.shadow_os.max_history_per_session` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(shadowOs.repeat_threshold) && shadowOs.repeat_threshold >= 2,
+      '`runtime.shadow_os.repeat_threshold` must be integer >= 2',
+      details
+    );
+    assertType(
+      typeof shadowOs.session_header === 'string' && shadowOs.session_header.length > 0,
+      '`runtime.shadow_os.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(shadowOs.fallback_headers) && shadowOs.fallback_headers.length > 0,
+      '`runtime.shadow_os.fallback_headers` must be non-empty array',
+      details
+    );
+    assertType(
+      Array.isArray(shadowOs.high_risk_tools) && shadowOs.high_risk_tools.length > 0,
+      '`runtime.shadow_os.high_risk_tools` must be non-empty array',
+      details
+    );
+    assertType(
+      Array.isArray(shadowOs.sequence_rules) && shadowOs.sequence_rules.length > 0,
+      '`runtime.shadow_os.sequence_rules` must be non-empty array',
+      details
+    );
+    if (Array.isArray(shadowOs.sequence_rules)) {
+      shadowOs.sequence_rules.forEach((rule, idx) => {
+        assertNoUnknownKeys(rule, SHADOW_OS_SEQUENCE_RULE_KEYS, `runtime.shadow_os.sequence_rules[${idx}]`, details);
+        assertType(
+          typeof rule.id === 'string' && rule.id.length > 0,
+          `runtime.shadow_os.sequence_rules[${idx}].id must be non-empty string`,
+          details
+        );
+        assertType(
+          Array.isArray(rule.requires) && rule.requires.length > 0,
+          `runtime.shadow_os.sequence_rules[${idx}].requires must be non-empty array`,
+          details
+        );
+        assertType(
+          typeof rule.order_required === 'boolean',
+          `runtime.shadow_os.sequence_rules[${idx}].order_required must be boolean`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof shadowOs.observability === 'boolean',
+      '`runtime.shadow_os.observability` must be boolean',
+      details
+    );
+  }
+
+  const epistemicAnchor = runtime.epistemic_anchor || {};
+  if (runtime.epistemic_anchor !== undefined) {
+    assertNoUnknownKeys(epistemicAnchor, EPISTEMIC_ANCHOR_KEYS, 'runtime.epistemic_anchor', details);
+    assertType(
+      typeof epistemicAnchor.enabled === 'boolean',
+      '`runtime.epistemic_anchor.enabled` must be boolean',
+      details
+    );
+    assertType(
+      EPISTEMIC_ANCHOR_MODES.has(String(epistemicAnchor.mode)),
+      '`runtime.epistemic_anchor.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.required_acknowledgement === 'string' && epistemicAnchor.required_acknowledgement.length > 0,
+      '`runtime.epistemic_anchor.required_acknowledgement` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.acknowledgement === 'string',
+      '`runtime.epistemic_anchor.acknowledgement` must be string',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.key_header === 'string' && epistemicAnchor.key_header.length > 0,
+      '`runtime.epistemic_anchor.key_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(epistemicAnchor.fallback_key_headers) && epistemicAnchor.fallback_key_headers.length > 0,
+      '`runtime.epistemic_anchor.fallback_key_headers` must be non-empty array',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.sample_every_turns) && epistemicAnchor.sample_every_turns > 0,
+      '`runtime.epistemic_anchor.sample_every_turns` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.min_turns) && epistemicAnchor.min_turns > 0,
+      '`runtime.epistemic_anchor.min_turns` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(epistemicAnchor.threshold))
+        && Number(epistemicAnchor.threshold) >= 0
+        && Number(epistemicAnchor.threshold) <= 1,
+      '`runtime.epistemic_anchor.threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.cooldown_ms) && epistemicAnchor.cooldown_ms > 0,
+      '`runtime.epistemic_anchor.cooldown_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.max_sessions) && epistemicAnchor.max_sessions > 0,
+      '`runtime.epistemic_anchor.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.context_window_messages) && epistemicAnchor.context_window_messages > 0,
+      '`runtime.epistemic_anchor.context_window_messages` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.model_id === 'string' && epistemicAnchor.model_id.length > 0,
+      '`runtime.epistemic_anchor.model_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.cache_dir === 'string' && epistemicAnchor.cache_dir.length > 0,
+      '`runtime.epistemic_anchor.cache_dir` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(epistemicAnchor.max_prompt_chars) && epistemicAnchor.max_prompt_chars > 0,
+      '`runtime.epistemic_anchor.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof epistemicAnchor.observability === 'boolean',
+      '`runtime.epistemic_anchor.observability` must be boolean',
       details
     );
   }

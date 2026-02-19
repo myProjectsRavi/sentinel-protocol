@@ -114,6 +114,7 @@ runtime:
     ttl_ms: 3600000
     max_sessions: 5000
     max_mappings_per_session: 1000
+    max_memory_bytes: 67108864
     max_egress_rewrite_entries: 256
     max_payload_bytes: 524288
     max_replacements_per_pass: 1000
@@ -215,6 +216,18 @@ runtime:
     max_recent: 5
     max_keys: 2048
     key_header: x-sentinel-agent-id
+  auto_immune:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 86400000
+    max_entries: 20000
+    max_scan_bytes: 32768
+    min_confidence_to_match: 0.85
+    learn_min_score: 0.85
+    learn_increment: 0.2
+    max_confidence: 0.99
+    decay_half_life_ms: 21600000
+    observability: true
   provenance:
     enabled: false
     key_id: "sentinel-local"
@@ -265,6 +278,41 @@ runtime:
     secondary_model: ""
     timeout_ms: 3000
     risk_threshold: 0.7
+  shadow_os:
+    enabled: false
+    mode: monitor # monitor | block
+    window_ms: 900000
+    max_sessions: 5000
+    max_history_per_session: 128
+    repeat_threshold: 4
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    high_risk_tools: [execute_shell, execute_sql, aws_cli, grant_permissions, create_user, delete_log, drop_database]
+    sequence_rules:
+      - id: privilege_escalation_coverup
+        requires: [create_user, grant_permissions, delete_log]
+        order_required: true
+      - id: destructive_privilege_chain
+        requires: [grant_permissions, drop_database]
+        order_required: false
+    observability: true
+  epistemic_anchor:
+    enabled: false
+    mode: monitor # monitor | block
+    required_acknowledgement: "I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL"
+    acknowledgement: ""
+    key_header: x-sentinel-session-id
+    fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    sample_every_turns: 5
+    min_turns: 6
+    threshold: 0.8
+    cooldown_ms: 60000
+    max_sessions: 5000
+    context_window_messages: 8
+    model_id: Xenova/all-MiniLM-L6-v2
+    cache_dir: ~/.sentinel/models
+    max_prompt_chars: 4000
+    observability: true
   telemetry:
     enabled: true
   upstream:

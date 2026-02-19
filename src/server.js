@@ -26,6 +26,7 @@ const { SemanticCache } = require('./cache/semantic-cache');
 const { BudgetStore } = require('./accounting/budget-store');
 const { DashboardServer } = require('./monitor/dashboard-server');
 const { LoopBreaker } = require('./engines/loop-breaker');
+const { AutoImmune } = require('./engines/auto-immune');
 const { DeceptionEngine } = require('./engines/deception-engine');
 const { ProvenanceSigner } = require('./security/provenance-signer');
 const { HoneytokenInjector } = require('./security/honeytoken-injector');
@@ -40,6 +41,8 @@ const { CanaryToolTrap } = require('./engines/canary-tool-trap');
 const { ParallaxValidator } = require('./engines/parallax-validator');
 const { OmniShield } = require('./engines/omni-shield');
 const { ExperimentalSandbox } = require('./sandbox/experimental-sandbox');
+const { ShadowOS } = require('./sandbox/shadow-os');
+const { EpistemicAnchor } = require('./runtime/epistemic-anchor');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -208,6 +211,9 @@ class SentinelServer {
       sandbox_detected: 0,
       sandbox_blocked: 0,
       sandbox_errors: 0,
+      shadow_os_evaluated: 0,
+      shadow_os_detected: 0,
+      shadow_os_blocked: 0,
       scan_worker_fallbacks: 0,
       warnings_total: 0,
       vcr_replay_hits: 0,
@@ -223,6 +229,9 @@ class SentinelServer {
       canary_routed: 0,
       loop_detected: 0,
       loop_blocked: 0,
+      auto_immune_matches: 0,
+      auto_immune_blocked: 0,
+      auto_immune_learned: 0,
       intent_throttle_matches: 0,
       intent_throttle_blocked: 0,
       intent_throttle_errors: 0,
@@ -230,6 +239,10 @@ class SentinelServer {
       intent_drift_detected: 0,
       intent_drift_blocked: 0,
       intent_drift_errors: 0,
+      epistemic_anchor_evaluated: 0,
+      epistemic_anchor_detected: 0,
+      epistemic_anchor_blocked: 0,
+      epistemic_anchor_errors: 0,
       swarm_inbound_verified: 0,
       swarm_inbound_rejected: 0,
       swarm_replay_rejected: 0,
@@ -299,6 +312,7 @@ class SentinelServer {
     });
     this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
     this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
+    this.autoImmune = new AutoImmune(this.config.runtime?.auto_immune || {});
     this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
     this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
     this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
@@ -341,6 +355,21 @@ class SentinelServer {
     });
     this.omniShield = new OmniShield(this.config.runtime?.omni_shield || {});
     this.experimentalSandbox = new ExperimentalSandbox(this.config.runtime?.sandbox_experimental || {});
+    this.shadowOS = new ShadowOS(this.config.runtime?.shadow_os || {});
+    this.epistemicAnchor = new EpistemicAnchor(this.config.runtime?.epistemic_anchor || {}, {
+      embedText: async (text, options = {}) => {
+        if (!this.scanWorkerPool?.enabled) {
+          throw new Error('embedder_unavailable');
+        }
+        const result = await this.scanWorkerPool.embed({
+          text,
+          modelId: options.modelId,
+          cacheDir: options.cacheDir,
+          maxPromptChars: options.maxPromptChars,
+        });
+        return Array.isArray(result?.vector) ? result.vector : [];
+      },
+    });
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -356,6 +385,12 @@ class SentinelServer {
     if (this.config.runtime?.intent_drift?.enabled === true && this.scanWorkerPool?.enabled !== true) {
       logger.warn('Intent drift is enabled but worker pool is unavailable; drift detector will remain in monitor-only fallback', {
         intent_drift_enabled: true,
+        worker_pool_enabled: false,
+      });
+    }
+    if (this.config.runtime?.epistemic_anchor?.enabled === true && this.scanWorkerPool?.enabled !== true) {
+      logger.warn('Epistemic anchor is enabled but worker pool is unavailable; anchor checks will remain in monitor-only fallback', {
+        epistemic_anchor_enabled: true,
         worker_pool_enabled: false,
       });
     }
@@ -397,7 +432,11 @@ class SentinelServer {
       rapidapi_error_count: this.stats.rapidapi_error_count,
       pii_vault_enabled: this.piiVault.isEnabled(),
       pii_vault_mode: this.piiVault.mode,
+      pii_vault_stats: this.piiVault.getStats ? this.piiVault.getStats() : undefined,
       loop_breaker_enabled: this.loopBreaker.enabled,
+      auto_immune_enabled: this.autoImmune.isEnabled(),
+      auto_immune_mode: this.autoImmune.mode,
+      auto_immune_stats: this.autoImmune.getStats(),
       deception_enabled: this.deceptionEngine.isEnabled(),
       provenance_enabled: this.provenanceSigner.isEnabled(),
       swarm_enabled: this.swarmProtocol.isEnabled(),
@@ -419,6 +458,11 @@ class SentinelServer {
       intent_throttle_mode: this.intentThrottle.mode,
       intent_drift_enabled: this.intentDrift.isEnabled(),
       intent_drift_mode: this.intentDrift.mode,
+      shadow_os_enabled: this.shadowOS.isEnabled(),
+      shadow_os_mode: this.shadowOS.mode,
+      shadow_os_stats: this.shadowOS.getStats(),
+      epistemic_anchor_enabled: this.epistemicAnchor.isEnabled(),
+      epistemic_anchor_mode: this.epistemicAnchor.mode,
       canary_tools_enabled: this.canaryToolTrap.isEnabled(),
       parallax_enabled: this.parallaxValidator.isEnabled(),
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
@@ -979,11 +1023,79 @@ class SentinelServer {
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
       const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
+      let autoImmuneDecision = null;
       let precomputedLocalScan = null;
       let precomputedInjection = null;
       let omniShieldDecision = null;
       let omniShieldSanitizeDecision = null;
       let sandboxDecision = null;
+      let shadowDecision = null;
+
+      autoImmuneDecision = this.autoImmune.check({
+        text: bodyText,
+        effectiveMode,
+      });
+      if (autoImmuneDecision?.enabled && this.autoImmune.observability) {
+        res.setHeader('x-sentinel-auto-immune', autoImmuneDecision.matched ? 'match' : autoImmuneDecision.reason || 'miss');
+        if (Number.isFinite(Number(autoImmuneDecision.confidence))) {
+          res.setHeader('x-sentinel-auto-immune-confidence', String(autoImmuneDecision.confidence));
+        }
+      }
+      if (autoImmuneDecision?.matched) {
+        this.stats.auto_immune_matches += 1;
+        warnings.push('auto_immune:match');
+        this.stats.warnings_total += 1;
+        if (autoImmuneDecision.shouldBlock) {
+          this.stats.blocked_total += 1;
+          this.stats.policy_blocked += 1;
+          this.stats.auto_immune_blocked += 1;
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode: 403,
+            requestStart,
+          });
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'blocked_auto_immune',
+            reasons: ['auto_immune_hit'],
+            pii_types: [],
+            redactions: 0,
+            duration_ms: Date.now() - requestStart,
+            request_bytes: rawBody.length,
+            response_status: 403,
+            response_bytes: 0,
+            provider,
+            auto_immune_fingerprint: autoImmuneDecision.fingerprint,
+            auto_immune_confidence: autoImmuneDecision.confidence,
+            auto_immune_threshold: autoImmuneDecision.threshold,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_policy',
+            status: 403,
+            providerName: provider,
+          });
+          return res.status(403).json({
+            error: 'AUTO_IMMUNE_BLOCKED',
+            reason: 'auto_immune_hit',
+            confidence: autoImmuneDecision.confidence,
+            threshold: autoImmuneDecision.threshold,
+            correlation_id: correlationId,
+          });
+        }
+      }
 
       const swarmInboundDecision = this.swarmProtocol.verifyInboundEnvelope({
         headers: req.headers || {},
@@ -1309,6 +1421,95 @@ class SentinelServer {
       if (injectionScore > 0) {
         this.stats.injection_detected += 1;
       }
+      if (this.autoImmune.isEnabled() && injectionScore > 0) {
+        const learning = this.autoImmune.learn({
+          text: bodyText,
+          score: injectionScore,
+          source: policyDecision.reason || 'injection_score',
+        });
+        if (learning.learned) {
+          this.stats.auto_immune_learned += 1;
+          if (this.autoImmune.observability) {
+            res.setHeader('x-sentinel-auto-immune-learn', 'true');
+            if (learning.fingerprint) {
+              res.setHeader('x-sentinel-auto-immune-fingerprint', learning.fingerprint);
+            }
+          }
+        }
+      }
+
+      if (this.shadowOS.isEnabled()) {
+        shadowDecision = this.shadowOS.evaluate({
+          headers: req.headers || {},
+          bodyJson,
+          method,
+          path: parsedPath.pathname,
+          provider,
+          effectiveMode,
+          correlationId,
+        });
+        if (shadowDecision?.evaluated) {
+          this.stats.shadow_os_evaluated += 1;
+          if (this.shadowOS.observability) {
+            res.setHeader('x-sentinel-shadow-os', shadowDecision.detected ? 'detected' : 'clean');
+            res.setHeader('x-sentinel-shadow-os-tools', String((shadowDecision.highRiskTools || []).length));
+          }
+        }
+        if (shadowDecision?.detected) {
+          this.stats.shadow_os_detected += 1;
+          warnings.push(`shadow_os:${shadowDecision.violations?.[0]?.rule || 'causal_violation'}`);
+          this.stats.warnings_total += 1;
+
+          if (shadowDecision.shouldBlock) {
+            this.stats.blocked_total += 1;
+            this.stats.policy_blocked += 1;
+            this.stats.shadow_os_blocked += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider,
+              retryCount: 0,
+              circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 409,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_shadow_os',
+              reasons: ['shadow_os_causal_violation'],
+              pii_types: [],
+              redactions: 0,
+              duration_ms: Date.now() - requestStart,
+              request_bytes: rawBody.length,
+              response_status: 409,
+              response_bytes: 0,
+              provider,
+              shadow_os_violations: shadowDecision.violations || [],
+              shadow_os_high_risk_tools: shadowDecision.highRiskTools || [],
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_policy',
+              status: 409,
+              providerName: provider,
+            });
+            return res.status(409).json({
+              error: 'SHADOW_OS_VIOLATION',
+              reason: shadowDecision.reason,
+              violations: shadowDecision.violations || [],
+              correlation_id: correlationId,
+            });
+          }
+        }
+      }
 
       if (policyDecision.matched && policyDecision.action === 'block') {
         if (effectiveMode === 'enforce') {
@@ -1484,6 +1685,7 @@ class SentinelServer {
 
       let intentThrottleDecision = null;
       let intentDriftDecision = null;
+      let epistemicAnchorDecision = null;
       let syntheticPoisonDecision = null;
       if (this.intentThrottle.isEnabled()) {
         try {
@@ -1729,6 +1931,105 @@ class SentinelServer {
         ) {
           this.stats.intent_drift_errors += 1;
           warnings.push(`intent_drift:${intentDriftDecision.reason}`);
+          this.stats.warnings_total += 1;
+        }
+      }
+
+      if (this.epistemicAnchor.enabled === true) {
+        try {
+          epistemicAnchorDecision = await this.epistemicAnchor.evaluate({
+            headers: req.headers || {},
+            bodyJson,
+            correlationId,
+            effectiveMode,
+          });
+        } catch (error) {
+          epistemicAnchorDecision = {
+            enabled: true,
+            evaluated: false,
+            drifted: false,
+            shouldBlock: false,
+            reason: 'embedding_error',
+            error: String(error.message || error),
+          };
+        }
+
+        if (epistemicAnchorDecision?.evaluated) {
+          this.stats.epistemic_anchor_evaluated += 1;
+          if (this.epistemicAnchor.observability) {
+            res.setHeader('x-sentinel-epistemic-anchor', String(epistemicAnchorDecision.reason || 'evaluated'));
+            if (Number.isFinite(Number(epistemicAnchorDecision.distance))) {
+              res.setHeader('x-sentinel-epistemic-anchor-distance', String(epistemicAnchorDecision.distance));
+            }
+            if (Number.isFinite(Number(epistemicAnchorDecision.threshold))) {
+              res.setHeader('x-sentinel-epistemic-anchor-threshold', String(epistemicAnchorDecision.threshold));
+            }
+          }
+        }
+
+        if (epistemicAnchorDecision?.drifted) {
+          this.stats.epistemic_anchor_detected += 1;
+          warnings.push(`epistemic_anchor:${epistemicAnchorDecision.reason || 'anchor_divergence'}`);
+          this.stats.warnings_total += 1;
+          if (effectiveMode === 'enforce' && epistemicAnchorDecision.shouldBlock) {
+            this.stats.blocked_total += 1;
+            this.stats.policy_blocked += 1;
+            this.stats.epistemic_anchor_blocked += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider,
+              retryCount: 0,
+              circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 409,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_epistemic_anchor',
+              reasons: [String(epistemicAnchorDecision.reason || 'anchor_divergence')],
+              pii_types: [],
+              redactions: 0,
+              duration_ms: Date.now() - requestStart,
+              request_bytes: rawBody.length,
+              response_status: 409,
+              response_bytes: 0,
+              provider,
+              epistemic_anchor_distance: epistemicAnchorDecision.distance,
+              epistemic_anchor_threshold: epistemicAnchorDecision.threshold,
+              epistemic_anchor_similarity: epistemicAnchorDecision.similarity,
+              epistemic_anchor_anchor_hash: epistemicAnchorDecision.anchorHash,
+              epistemic_anchor_turn_count: epistemicAnchorDecision.turnCount,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_policy',
+              status: 409,
+              providerName: provider,
+            });
+            return res.status(409).json({
+              error: 'EPISTEMIC_ANCHOR_DIVERGENCE',
+              reason: epistemicAnchorDecision.reason,
+              distance: epistemicAnchorDecision.distance,
+              threshold: epistemicAnchorDecision.threshold,
+              correlation_id: correlationId,
+            });
+          }
+        } else if (
+          epistemicAnchorDecision?.reason === 'embedding_error'
+          || epistemicAnchorDecision?.reason === 'anchor_embedding_failed'
+          || epistemicAnchorDecision?.reason === 'current_embedding_failed'
+        ) {
+          this.stats.epistemic_anchor_errors += 1;
+          warnings.push(`epistemic_anchor:${epistemicAnchorDecision.reason}`);
           this.stats.warnings_total += 1;
         }
       }

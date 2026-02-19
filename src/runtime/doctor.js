@@ -79,9 +79,12 @@ function runDoctorChecks(config, env = process.env) {
   const cognitiveRollback = config?.runtime?.cognitive_rollback || {};
   const omniShield = config?.runtime?.omni_shield || {};
   const sandboxExperimental = config?.runtime?.sandbox_experimental || {};
+  const shadowOs = config?.runtime?.shadow_os || {};
+  const epistemicAnchor = config?.runtime?.epistemic_anchor || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
   const upstream = config?.runtime?.upstream || {};
+  const autoImmune = config?.runtime?.auto_immune || {};
   const mesh = upstream.resilience_mesh || {};
   const canary = upstream.canary || {};
   const authVault = upstream.auth_vault || {};
@@ -363,6 +366,15 @@ function runDoctorChecks(config, env = process.env) {
           ? `PII vault session header: ${piiVault.session_header}`
           : 'PII vault is enabled but session_header is empty.',
     });
+    const vaultMemoryBytes = Number(piiVault.max_memory_bytes || 0);
+    checks.push({
+      id: 'pii-vault-memory-cap',
+      status: vaultMemoryBytes >= 8 * 1024 * 1024 ? 'pass' : 'warn',
+      message:
+        vaultMemoryBytes >= 8 * 1024 * 1024
+          ? `PII vault max_memory_bytes=${vaultMemoryBytes}.`
+          : `PII vault max_memory_bytes=${vaultMemoryBytes}. Recommended >= 8388608 for stable active tokenization.`,
+    });
   }
 
   if (polymorphicPrompt.enabled === true) {
@@ -502,6 +514,46 @@ function runDoctorChecks(config, env = process.env) {
     });
   }
 
+  if (shadowOs.enabled === true) {
+    checks.push({
+      id: 'shadow-os-mode',
+      status: ['monitor', 'block'].includes(String(shadowOs.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'block'].includes(String(shadowOs.mode || '').toLowerCase())
+          ? `Shadow OS enabled in '${String(shadowOs.mode || 'monitor')}' mode.`
+          : `Shadow OS mode '${String(shadowOs.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'shadow-os-rules',
+      status: Array.isArray(shadowOs.sequence_rules) && shadowOs.sequence_rules.length > 0 ? 'pass' : 'fail',
+      message:
+        Array.isArray(shadowOs.sequence_rules) && shadowOs.sequence_rules.length > 0
+          ? `Shadow OS sequence rules loaded (${shadowOs.sequence_rules.length}).`
+          : 'Shadow OS enabled but sequence_rules is empty.',
+    });
+  }
+
+  if (epistemicAnchor.enabled === true) {
+    const ackRequired = String(epistemicAnchor.required_acknowledgement || 'I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL');
+    const ackGiven = String(epistemicAnchor.acknowledgement || '');
+    checks.push({
+      id: 'epistemic-anchor-ack',
+      status: ackGiven === ackRequired ? 'pass' : 'warn',
+      message:
+        ackGiven === ackRequired
+          ? 'Epistemic anchor acknowledgement is present.'
+          : 'Epistemic anchor is experimental. Set acknowledgement to required_acknowledgement before enabling enforce behavior.',
+    });
+    checks.push({
+      id: 'epistemic-anchor-threshold',
+      status: Number(epistemicAnchor.threshold || 0) >= 0.6 ? 'pass' : 'warn',
+      message:
+        Number(epistemicAnchor.threshold || 0) >= 0.6
+          ? `Epistemic anchor threshold=${Number(epistemicAnchor.threshold)}`
+          : `Epistemic anchor threshold=${Number(epistemicAnchor.threshold)} may be too sensitive.`,
+    });
+  }
+
   if (dashboard.enabled === true) {
     checks.push({
       id: 'dashboard-local-only',
@@ -532,6 +584,33 @@ function runDoctorChecks(config, env = process.env) {
         Number(budget.input_cost_per_1k_tokens) > 0 || Number(budget.output_cost_per_1k_tokens) > 0
           ? 'Budget token pricing is configured.'
           : 'Budget enabled with zero token pricing. Accounting will track tokens but estimated spend will remain $0.',
+    });
+  }
+
+  if (autoImmune.enabled === true) {
+    checks.push({
+      id: 'auto-immune-mode',
+      status: ['monitor', 'block'].includes(String(autoImmune.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'block'].includes(String(autoImmune.mode || '').toLowerCase())
+          ? `Auto-Immune enabled in '${String(autoImmune.mode || 'monitor')}' mode.`
+          : `Auto-Immune mode '${String(autoImmune.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'auto-immune-confidence-threshold',
+      status: Number(autoImmune.min_confidence_to_match || 0) >= 0.6 ? 'pass' : 'warn',
+      message:
+        Number(autoImmune.min_confidence_to_match || 0) >= 0.6
+          ? `Auto-Immune min_confidence_to_match=${Number(autoImmune.min_confidence_to_match)}`
+          : `Auto-Immune min_confidence_to_match=${Number(autoImmune.min_confidence_to_match)} may be too low and can increase false positives.`,
+    });
+    checks.push({
+      id: 'auto-immune-decay-half-life',
+      status: Number(autoImmune.decay_half_life_ms || 0) >= 300000 ? 'pass' : 'warn',
+      message:
+        Number(autoImmune.decay_half_life_ms || 0) >= 300000
+          ? `Auto-Immune decay_half_life_ms=${Number(autoImmune.decay_half_life_ms)}.`
+          : `Auto-Immune decay_half_life_ms=${Number(autoImmune.decay_half_life_ms)} is very short; learned antibodies may evaporate too quickly.`,
     });
   }
 

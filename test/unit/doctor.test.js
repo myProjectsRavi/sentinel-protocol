@@ -203,6 +203,35 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'pii-vault-target-types' && check.status === 'pass')).toBe(true);
   });
 
+  test('warns when pii vault memory cap is too low', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        pii_vault: {
+          enabled: true,
+          mode: 'active',
+          session_header: 'x-sentinel-session-id',
+          target_types: ['email_address'],
+          max_memory_bytes: 1024,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'pii-vault-memory-cap' && check.status === 'warn')).toBe(true);
+  });
+
+  test('warns when auto-immune confidence threshold is too permissive', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        auto_immune: {
+          enabled: true,
+          mode: 'monitor',
+          min_confidence_to_match: 0.2,
+          decay_half_life_ms: 60000,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'auto-immune-confidence-threshold' && check.status === 'warn')).toBe(true);
+  });
+
   test('warns when swarm skew window is too strict', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {
@@ -316,6 +345,34 @@ describe('doctor checks', () => {
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'sandbox-evasion-normalization' && check.status === 'warn')).toBe(true);
     expect(report.checks.some((check) => check.id === 'sandbox-base64-decoding' && check.status === 'warn')).toBe(true);
+  });
+
+  test('fails when shadow os enabled with empty sequence rules', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        shadow_os: {
+          enabled: true,
+          mode: 'monitor',
+          sequence_rules: [],
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'shadow-os-rules' && check.status === 'fail')).toBe(true);
+  });
+
+  test('warns when epistemic anchor ack is missing', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        epistemic_anchor: {
+          enabled: true,
+          mode: 'monitor',
+          required_acknowledgement: 'I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL',
+          acknowledgement: '',
+          threshold: 0.8,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'epistemic-anchor-ack' && check.status === 'warn')).toBe(true);
   });
 
   test('warns when budget enabled with zero pricing model', () => {
