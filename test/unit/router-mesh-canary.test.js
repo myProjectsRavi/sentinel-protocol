@@ -17,6 +17,7 @@ describe('upstream route plan', () => {
     expect(plan.requestedTarget).toBe('openai');
     expect(plan.candidates).toHaveLength(1);
     expect(plan.primary.provider).toBe('openai');
+    expect(plan.primary.breakerKey).toBe('openai');
     expect(plan.failover.enabled).toBe(false);
   });
 
@@ -77,6 +78,7 @@ describe('upstream route plan', () => {
     expect(plan.canary?.name).toBe('openai-rollout');
     expect(plan.candidates).toHaveLength(1);
     expect(plan.primary.provider).toBe('anthropic');
+    expect(plan.primary.breakerKey).toBe('anthropic');
   });
 
   test('respects explicit target group header over canary', async () => {
@@ -131,5 +133,53 @@ describe('upstream route plan', () => {
     expect(plan.routeSource).toBe('group_header');
     expect(plan.selectedGroup).toBe('stable');
     expect(plan.primary.provider).toBe('openai');
+    expect(plan.primary.breakerKey).toBe('openai');
+  });
+
+  test('uses unique breaker key for named mesh targets', async () => {
+    const plan = await resolveUpstreamPlan(
+      {
+        headers: {
+          'x-sentinel-target': 'openai',
+          'x-sentinel-target-group': 'stable',
+        },
+      },
+      {
+        runtime: {
+          upstream: {
+            custom_targets: {
+              enabled: false,
+              allowlist: [],
+              block_private_networks: true,
+            },
+            resilience_mesh: {
+              enabled: true,
+              groups: {
+                stable: {
+                  enabled: true,
+                  targets: ['openai-primary', 'openai-secondary'],
+                },
+              },
+              targets: {
+                'openai-primary': {
+                  enabled: true,
+                  provider: 'openai',
+                  base_url: 'https://api.openai.com',
+                },
+                'openai-secondary': {
+                  enabled: true,
+                  provider: 'openai',
+                  base_url: 'https://api.openai.com',
+                },
+              },
+            },
+          },
+        },
+      }
+    );
+
+    expect(plan.candidates).toHaveLength(2);
+    expect(plan.candidates[0].breakerKey).toBe('openai:openai-primary');
+    expect(plan.candidates[1].breakerKey).toBe('openai:openai-secondary');
   });
 });

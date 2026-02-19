@@ -195,6 +195,11 @@ function toDescriptor({
 }) {
   const parsed = new URL(baseUrl);
   const normalizedProvider = normalizeProvider(provider);
+  const normalizedTargetName = String(targetName || '').toLowerCase();
+  const breakerKey =
+    normalizedTargetName === normalizedProvider
+      ? normalizedProvider
+      : `${normalizedProvider}:${normalizedTargetName}`;
   return {
     targetName,
     provider: normalizedProvider,
@@ -206,7 +211,7 @@ function toDescriptor({
     staticHeaders: normalizeStaticHeaders(staticHeaders),
     contract: normalizeContract(contract, defaultContractForProvider(normalizedProvider)),
     source: source || 'builtin',
-    breakerKey: `${normalizedProvider}:${targetName}`,
+    breakerKey,
   };
 }
 
