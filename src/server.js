@@ -2011,7 +2011,7 @@ class SentinelServer {
 
   start() {
     const host = this.config.proxy.host;
-    const port = this.options.portOverride || this.config.proxy.port;
+    const port = this.options.portOverride ?? this.config.proxy.port;
 
     fs.writeFileSync(PID_FILE_PATH, String(process.pid), 'utf8');
 
