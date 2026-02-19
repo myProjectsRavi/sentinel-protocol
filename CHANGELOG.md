@@ -9,6 +9,7 @@
 - Cross-provider adapter contracts for OpenAI-compatible contract routing.
 - Stream budget accounting on both stream completion and stream error paths.
 - Local API key vault (`runtime.upstream.auth_vault`) with dummy-key replacement and enforce mode.
+- Agent loop-breaker (`runtime.loop_breaker`) to detect and stop repeated autonomous request loops.
 
 ### Changed
 - Docker and compose defaults now preload semantic + neural ONNX models.

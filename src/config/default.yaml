@@ -52,6 +52,14 @@ runtime:
     output_cost_per_1k_tokens: 0
     charge_replay_hits: false
     retention_days: 90
+  loop_breaker:
+    enabled: true
+    action: block # block | warn
+    window_ms: 30000
+    repeat_threshold: 4
+    max_recent: 5
+    max_keys: 2048
+    key_header: x-sentinel-agent-id
   telemetry:
     enabled: true
   upstream:

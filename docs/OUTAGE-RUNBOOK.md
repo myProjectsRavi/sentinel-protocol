@@ -20,6 +20,7 @@ On error responses, Sentinel sets:
 - Check policy and PII actions in `sentinel.yaml`
 - Check `--dry-run`/`--fail-open` and emergency override state
 - If error is `VAULT_PROVIDER_KEY_MISSING`, verify `runtime.upstream.auth_vault.*` and provider env vars.
+- If error is `AGENT_LOOP_DETECTED`, tune `runtime.loop_breaker.*` thresholds or set `action: warn`.
 
 2. If `x-sentinel-error-source=upstream`
 - Inspect status code:

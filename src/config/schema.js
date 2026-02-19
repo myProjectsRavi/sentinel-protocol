@@ -16,6 +16,7 @@ const RUNTIME_KEYS = new Set([
   'semantic_cache',
   'dashboard',
   'budget',
+  'loop_breaker',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault']);
@@ -55,6 +56,16 @@ const BUDGET_KEYS = new Set([
   'charge_replay_hits',
   'retention_days',
 ]);
+const LOOP_BREAKER_KEYS = new Set([
+  'enabled',
+  'action',
+  'window_ms',
+  'repeat_threshold',
+  'max_recent',
+  'max_keys',
+  'key_header',
+]);
+const LOOP_BREAKER_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -390,6 +401,18 @@ function applyDefaults(config) {
   budget.charge_replay_hits = budget.charge_replay_hits === true;
   budget.retention_days = Number(budget.retention_days ?? 90);
 
+  normalized.runtime.loop_breaker = normalized.runtime.loop_breaker || {};
+  const loopBreaker = normalized.runtime.loop_breaker;
+  loopBreaker.enabled = loopBreaker.enabled === true;
+  loopBreaker.action = LOOP_BREAKER_ACTIONS.has(String(loopBreaker.action).toLowerCase())
+    ? String(loopBreaker.action).toLowerCase()
+    : 'block';
+  loopBreaker.window_ms = Number(loopBreaker.window_ms ?? 30000);
+  loopBreaker.repeat_threshold = Number(loopBreaker.repeat_threshold ?? 4);
+  loopBreaker.max_recent = Number(loopBreaker.max_recent ?? 5);
+  loopBreaker.max_keys = Number(loopBreaker.max_keys ?? 2048);
+  loopBreaker.key_header = String(loopBreaker.key_header || 'x-sentinel-agent-id').toLowerCase();
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
@@ -659,6 +682,42 @@ function validateConfigShape(config) {
     assertType(
       Number.isInteger(budget.retention_days) && budget.retention_days > 0,
       '`runtime.budget.retention_days` must be integer > 0',
+      details
+    );
+  }
+
+  const loopBreaker = runtime.loop_breaker || {};
+  if (runtime.loop_breaker !== undefined) {
+    assertNoUnknownKeys(loopBreaker, LOOP_BREAKER_KEYS, 'runtime.loop_breaker', details);
+    assertType(typeof loopBreaker.enabled === 'boolean', '`runtime.loop_breaker.enabled` must be boolean', details);
+    assertType(
+      LOOP_BREAKER_ACTIONS.has(String(loopBreaker.action)),
+      '`runtime.loop_breaker.action` must be block|warn',
+      details
+    );
+    assertType(
+      Number.isInteger(loopBreaker.window_ms) && loopBreaker.window_ms > 0,
+      '`runtime.loop_breaker.window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(loopBreaker.repeat_threshold) && loopBreaker.repeat_threshold >= 2,
+      '`runtime.loop_breaker.repeat_threshold` must be integer >= 2',
+      details
+    );
+    assertType(
+      Number.isInteger(loopBreaker.max_recent) && loopBreaker.max_recent >= Number(loopBreaker.repeat_threshold || 2),
+      '`runtime.loop_breaker.max_recent` must be integer >= repeat_threshold',
+      details
+    );
+    assertType(
+      Number.isInteger(loopBreaker.max_keys) && loopBreaker.max_keys > 0,
+      '`runtime.loop_breaker.max_keys` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof loopBreaker.key_header === 'string' && loopBreaker.key_header.length > 0,
+      '`runtime.loop_breaker.key_header` must be non-empty string',
       details
     );
   }

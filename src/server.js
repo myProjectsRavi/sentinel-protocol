@@ -24,6 +24,7 @@ const { VCRStore } = require('./runtime/vcr-store');
 const { SemanticCache } = require('./cache/semantic-cache');
 const { BudgetStore } = require('./accounting/budget-store');
 const { DashboardServer } = require('./monitor/dashboard-server');
+const { LoopBreaker } = require('./engines/loop-breaker');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -187,6 +188,8 @@ class SentinelServer {
       budget_charged_usd: 0,
       failover_events: 0,
       canary_routed: 0,
+      loop_detected: 0,
+      loop_blocked: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -232,6 +235,7 @@ class SentinelServer {
       scanWorkerPool: this.scanWorkerPool,
     });
     this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
+    this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -268,6 +272,7 @@ class SentinelServer {
       pii_provider_mode: this.config.pii.provider_mode,
       pii_provider_fallbacks: this.stats.pii_provider_fallbacks,
       rapidapi_error_count: this.stats.rapidapi_error_count,
+      loop_breaker_enabled: this.loopBreaker.enabled,
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
       semantic_cache_enabled: this.semanticCache.isEnabled(),
       budget_enabled: budgetSnapshot.enabled,
@@ -615,6 +620,66 @@ class SentinelServer {
       let piiTypes = [];
       let piiProviderUsed = 'local';
       const egressConfig = this.getEgressConfig();
+      const loopDecision = this.loopBreaker.evaluate({
+        headers: req.headers || {},
+        provider,
+        method,
+        path: parsedPath.pathname,
+        bodyText,
+        bodyJson,
+      });
+      if (loopDecision.detected) {
+        this.stats.loop_detected += 1;
+        if (effectiveMode === 'enforce' && loopDecision.shouldBlock) {
+          this.stats.blocked_total += 1;
+          this.stats.loop_blocked += 1;
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          res.setHeader('x-sentinel-loop-breaker', 'blocked');
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'blocked_loop',
+            reasons: ['agent_loop_detected'],
+            pii_types: [],
+            redactions: 0,
+            duration_ms: Date.now() - requestStart,
+            request_bytes: rawBody.length,
+            response_status: 429,
+            response_bytes: 0,
+            provider,
+            loop_streak: loopDecision.streak,
+            loop_threshold: loopDecision.repeatThreshold,
+            loop_key: loopDecision.key,
+            loop_hash_prefix: loopDecision.hash_prefix,
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_policy',
+            status: 429,
+            providerName: provider,
+          });
+          return res.status(429).json({
+            error: 'AGENT_LOOP_DETECTED',
+            reason: 'agent_loop_detected',
+            streak: loopDecision.streak,
+            threshold: loopDecision.repeatThreshold,
+            correlation_id: correlationId,
+          });
+        }
+        warnings.push(`loop_detected:${loopDecision.streak}`);
+        res.setHeader('x-sentinel-loop-breaker', 'warn');
+        this.stats.warnings_total += 1;
+      }
 
       if (this.config.pii.enabled) {
         let piiEvaluation;

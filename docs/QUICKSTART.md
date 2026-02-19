@@ -76,6 +76,14 @@ proxy:
 
 pii:
   regex_safety_cap_bytes: 51200 # 50KB regex budget
+
+runtime:
+  loop_breaker:
+    enabled: true
+    action: block
+    window_ms: 30000
+    repeat_threshold: 4
+    max_recent: 5
 ```
 
 ## 5. Configure PII provider mode

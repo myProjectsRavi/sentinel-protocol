@@ -29,6 +29,7 @@ This document maps Sentinel v1 hardenings to 20 common OWASP-style risk classes 
 23. Cost-abuse reduction: experimental semantic cache with strict opt-in defaults.
 24. Semantic cache memory-safety: per-entry size limits + total cache RAM budget.
 25. Startup blocking resilience: VCR replay tape loads asynchronously (non-blocking startup).
+26. Agent runaway loop containment: request hash loop-breaker with enforce-mode hard stop.
 
 ## Current Gaps (Planned)
 

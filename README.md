@@ -24,6 +24,7 @@ It provides:
 - Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
+- Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
 - OpenTelemetry hooks for spans and metrics
@@ -84,6 +85,14 @@ injection:
     weight: 1
     mode: max # max | blend
 runtime:
+  loop_breaker:
+    enabled: true
+    action: block # block | warn
+    window_ms: 30000
+    repeat_threshold: 4
+    max_recent: 5
+    max_keys: 2048
+    key_header: x-sentinel-agent-id
   worker_pool:
     enabled: true
     task_timeout_ms: 10000
@@ -188,6 +197,15 @@ Vault behavior:
 - `replace_dummy`: replace only dummy credentials with vault keys.
 - `enforce`: strip client credentials and always inject vault keys (fail closed if missing).
 - Known provider auth headers are scrubbed per request and only the target provider header is forwarded.
+
+## Agent Loop Breaker (Infinite Loop Assassin)
+
+Sentinel can detect repeated autonomous-loop requests and stop them before they burn budget.
+
+- Tracks recent payload hashes per agent identity.
+- If the same payload repeats `repeat_threshold` times inside `window_ms`, Sentinel marks it as a loop.
+- In `enforce` mode with `action: block`, Sentinel returns `429 AGENT_LOOP_DETECTED`.
+- In `monitor/warn`, Sentinel records a warning header: `x-sentinel-loop-breaker: warn`.
 
 Mesh/canary routing controls:
 - Request: `x-sentinel-target-group`, `x-sentinel-contract`, `x-sentinel-canary-key`

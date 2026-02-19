@@ -159,6 +159,47 @@ describe('sentinel integration', () => {
     expect(response.headers['x-sentinel-warning']).toBeDefined();
   });
 
+  test('blocks repeated identical agent requests when loop breaker threshold is hit', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'enforce',
+        runtime: {
+          loop_breaker: {
+            enabled: true,
+            action: 'block',
+            window_ms: 30000,
+            repeat_threshold: 3,
+            max_recent: 5,
+            max_keys: 2048,
+            key_header: 'x-sentinel-agent-id',
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const send = () =>
+      request(server)
+        .post('/v1/chat/completions')
+        .set('content-type', 'application/json')
+        .set('x-sentinel-target', 'custom')
+        .set('x-sentinel-custom-url', upstream.url)
+        .set('x-sentinel-agent-id', 'agent-loop-1')
+        .send({ text: 'repeat this same task' });
+
+    const first = await send();
+    const second = await send();
+    const third = await send();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+    expect(third.body.error).toBe('AGENT_LOOP_DETECTED');
+    expect(third.headers['x-sentinel-error-source']).toBe('sentinel');
+    expect(third.headers['x-sentinel-loop-breaker']).toBe('blocked');
+  });
+
   test('redacts medium PII from upstream buffered response', async () => {
     upstream = await startUpstream((req, res) => res.status(200).json({ output: 'contact john@example.com' }));
     sentinel = new SentinelServer(createBaseConfig({ mode: 'enforce' }));
