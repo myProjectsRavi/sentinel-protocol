@@ -18,7 +18,7 @@ const RUNTIME_KEYS = new Set([
   'budget',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
-const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary']);
+const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault']);
 const WORKER_POOL_KEYS = new Set([
   'enabled',
   'size',
@@ -83,6 +83,10 @@ const RESILIENCE_GROUP_KEYS = new Set(['enabled', 'contract', 'targets']);
 const RESILIENCE_TARGET_KEYS = new Set(['enabled', 'provider', 'contract', 'base_url', 'custom_url', 'headers']);
 const CANARY_KEYS = new Set(['enabled', 'key_header', 'fallback_key_headers', 'splits']);
 const CANARY_SPLIT_KEYS = new Set(['name', 'match_target', 'group_a', 'group_b', 'weight_a', 'weight_b', 'sticky']);
+const AUTH_VAULT_KEYS = new Set(['enabled', 'mode', 'dummy_key', 'providers']);
+const AUTH_VAULT_MODES = new Set(['replace_dummy', 'enforce']);
+const AUTH_VAULT_PROVIDERS = new Set(['openai', 'anthropic', 'google']);
+const AUTH_VAULT_PROVIDER_KEYS = new Set(['enabled', 'api_key', 'env_var']);
 const PII_KEYS = new Set([
   'enabled',
   'provider_mode',
@@ -297,6 +301,34 @@ function applyDefaults(config) {
     normalizedSplit.sticky = normalizedSplit.sticky !== false;
     return normalizedSplit;
   });
+
+  normalized.runtime.upstream.auth_vault = normalized.runtime.upstream.auth_vault || {};
+  const authVault = normalized.runtime.upstream.auth_vault;
+  authVault.enabled = authVault.enabled === true;
+  authVault.mode = AUTH_VAULT_MODES.has(String(authVault.mode || '').toLowerCase())
+    ? String(authVault.mode).toLowerCase()
+    : 'replace_dummy';
+  authVault.dummy_key = String(authVault.dummy_key || 'sk-sentinel-local');
+  authVault.providers =
+    authVault.providers && typeof authVault.providers === 'object' && !Array.isArray(authVault.providers)
+      ? authVault.providers
+      : {};
+  for (const provider of AUTH_VAULT_PROVIDERS) {
+    const providerConfig =
+      authVault.providers[provider] && typeof authVault.providers[provider] === 'object' && !Array.isArray(authVault.providers[provider])
+        ? authVault.providers[provider]
+        : {};
+    providerConfig.enabled = providerConfig.enabled !== false;
+    providerConfig.api_key = String(providerConfig.api_key || '');
+    const defaultEnv =
+      provider === 'openai'
+        ? 'SENTINEL_OPENAI_API_KEY'
+        : provider === 'anthropic'
+          ? 'SENTINEL_ANTHROPIC_API_KEY'
+          : 'SENTINEL_GOOGLE_API_KEY';
+    providerConfig.env_var = String(providerConfig.env_var || defaultEnv);
+    authVault.providers[provider] = providerConfig;
+  }
 
   normalized.runtime.worker_pool = normalized.runtime.worker_pool || {};
   const workerPool = normalized.runtime.worker_pool;
@@ -853,6 +885,72 @@ function validateConfigShape(config) {
         );
         assertType(typeof split.sticky === 'boolean', `runtime.upstream.canary.splits[${idx}].sticky must be boolean`, details);
       });
+    }
+  }
+
+  const authVault = runtime.upstream?.auth_vault;
+  if (authVault !== undefined) {
+    assertNoUnknownKeys(authVault, AUTH_VAULT_KEYS, 'runtime.upstream.auth_vault', details);
+    assertType(
+      authVault.enabled === undefined || typeof authVault.enabled === 'boolean',
+      '`runtime.upstream.auth_vault.enabled` must be boolean',
+      details
+    );
+    assertType(
+      authVault.mode === undefined || AUTH_VAULT_MODES.has(String(authVault.mode)),
+      '`runtime.upstream.auth_vault.mode` must be replace_dummy|enforce',
+      details
+    );
+    assertType(
+      authVault.dummy_key === undefined || (typeof authVault.dummy_key === 'string' && authVault.dummy_key.length > 0),
+      '`runtime.upstream.auth_vault.dummy_key` must be non-empty string',
+      details
+    );
+    if (authVault.providers !== undefined) {
+      assertType(
+        authVault.providers && typeof authVault.providers === 'object' && !Array.isArray(authVault.providers),
+        '`runtime.upstream.auth_vault.providers` must be object',
+        details
+      );
+    }
+    if (authVault.providers && typeof authVault.providers === 'object' && !Array.isArray(authVault.providers)) {
+      for (const [providerName, providerConfig] of Object.entries(authVault.providers)) {
+        if (!AUTH_VAULT_PROVIDERS.has(providerName)) {
+          details.push(
+            `runtime.upstream.auth_vault.providers.${providerName} is not supported (allowed: openai, anthropic, google)`
+          );
+          continue;
+        }
+        assertType(
+          providerConfig && typeof providerConfig === 'object' && !Array.isArray(providerConfig),
+          `runtime.upstream.auth_vault.providers.${providerName} must be object`,
+          details
+        );
+        if (!providerConfig || typeof providerConfig !== 'object' || Array.isArray(providerConfig)) {
+          continue;
+        }
+        assertNoUnknownKeys(
+          providerConfig,
+          AUTH_VAULT_PROVIDER_KEYS,
+          `runtime.upstream.auth_vault.providers.${providerName}`,
+          details
+        );
+        assertType(
+          providerConfig.enabled === undefined || typeof providerConfig.enabled === 'boolean',
+          `runtime.upstream.auth_vault.providers.${providerName}.enabled must be boolean`,
+          details
+        );
+        assertType(
+          providerConfig.api_key === undefined || typeof providerConfig.api_key === 'string',
+          `runtime.upstream.auth_vault.providers.${providerName}.api_key must be string`,
+          details
+        );
+        assertType(
+          providerConfig.env_var === undefined || typeof providerConfig.env_var === 'string',
+          `runtime.upstream.auth_vault.providers.${providerName}.env_var must be string`,
+          details
+        );
+      }
     }
   }
 

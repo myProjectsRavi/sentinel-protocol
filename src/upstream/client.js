@@ -23,6 +23,25 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
+const KNOWN_PROVIDER_AUTH_HEADERS = ['authorization', 'x-api-key', 'x-goog-api-key'];
+const PROVIDER_AUTH_DEFAULTS = {
+  openai: {
+    headerName: 'authorization',
+    scheme: 'bearer',
+    envVar: 'SENTINEL_OPENAI_API_KEY',
+  },
+  anthropic: {
+    headerName: 'x-api-key',
+    scheme: 'raw',
+    envVar: 'SENTINEL_ANTHROPIC_API_KEY',
+  },
+  google: {
+    headerName: 'x-goog-api-key',
+    scheme: 'raw',
+    envVar: 'SENTINEL_GOOGLE_API_KEY',
+  },
+};
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -34,6 +53,228 @@ function normalizeHeaderValue(value) {
     return value.join(', ');
   }
   return value;
+}
+
+function findHeaderKey(headers, targetName) {
+  const wanted = String(targetName || '').toLowerCase();
+  for (const key of Object.keys(headers || {})) {
+    if (String(key).toLowerCase() === wanted) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function getHeader(headers, targetName) {
+  const key = findHeaderKey(headers, targetName);
+  if (!key) {
+    return undefined;
+  }
+  return headers[key];
+}
+
+function setHeader(headers, targetName, value) {
+  const existing = findHeaderKey(headers, targetName);
+  if (existing) {
+    headers[existing] = value;
+    return;
+  }
+  headers[targetName] = value;
+}
+
+function deleteHeader(headers, targetName) {
+  const existing = findHeaderKey(headers, targetName);
+  if (existing) {
+    delete headers[existing];
+  }
+}
+
+function normalizeAuthVaultConfig(raw = {}) {
+  const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const mode = String(config.mode || 'replace_dummy').toLowerCase();
+  const providers = config.providers && typeof config.providers === 'object' && !Array.isArray(config.providers)
+    ? config.providers
+    : {};
+  const normalizedProviders = {};
+
+  for (const [provider, defaults] of Object.entries(PROVIDER_AUTH_DEFAULTS)) {
+    const providerConfig = providers[provider] && typeof providers[provider] === 'object' && !Array.isArray(providers[provider])
+      ? providers[provider]
+      : {};
+    normalizedProviders[provider] = {
+      enabled: providerConfig.enabled !== false,
+      apiKey: String(providerConfig.api_key || ''),
+      envVar: String(providerConfig.env_var || defaults.envVar),
+      headerName: defaults.headerName,
+      scheme: defaults.scheme,
+    };
+  }
+
+  return {
+    enabled: config.enabled === true,
+    mode: mode === 'enforce' ? 'enforce' : 'replace_dummy',
+    dummyKey: String(config.dummy_key || 'sk-sentinel-local'),
+    providers: normalizedProviders,
+  };
+}
+
+function extractCredentialFromHeader(value, scheme) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const text = String(value).trim();
+  if (text.length === 0) {
+    return '';
+  }
+  if (scheme === 'bearer') {
+    const match = text.match(/^Bearer\s+(.+)$/i);
+    if (match) {
+      return String(match[1] || '').trim();
+    }
+  }
+  return text;
+}
+
+function headerContainsDummy(value, dummyKey) {
+  if (!value || !dummyKey) {
+    return false;
+  }
+  const raw = String(value).trim();
+  if (raw === dummyKey) {
+    return true;
+  }
+  const bearerToken = extractCredentialFromHeader(raw, 'bearer');
+  return bearerToken === dummyKey;
+}
+
+function containsDummyCredential(headers, dummyKey) {
+  for (const headerName of KNOWN_PROVIDER_AUTH_HEADERS) {
+    const value = getHeader(headers, headerName);
+    if (headerContainsDummy(value, dummyKey)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function resolveProviderVaultKey(providerConfig) {
+  if (!providerConfig) {
+    return { key: '', source: 'none' };
+  }
+  const envVar = String(providerConfig.envVar || '');
+  if (envVar && process.env[envVar]) {
+    return { key: String(process.env[envVar]), source: 'env', envVar };
+  }
+  if (providerConfig.apiKey) {
+    return { key: String(providerConfig.apiKey), source: 'config', envVar };
+  }
+  return { key: '', source: 'none', envVar };
+}
+
+function formatProviderAuthValue(key, scheme) {
+  if (!key) {
+    return '';
+  }
+  return scheme === 'bearer' ? `Bearer ${key}` : key;
+}
+
+function applyProviderAuthorization({ headers, provider, authVaultConfig }) {
+  const providerName = String(provider || '').toLowerCase();
+  const defaults = PROVIDER_AUTH_DEFAULTS[providerName];
+  if (!defaults) {
+    return {
+      ok: true,
+      headers,
+      auth: {
+        mode: 'passthrough',
+        injected: false,
+      },
+    };
+  }
+
+  const outputHeaders = { ...(headers || {}) };
+  const providerConfig = authVaultConfig.providers[providerName];
+  const providerHeaderName = providerConfig?.headerName || defaults.headerName;
+  const providerScheme = providerConfig?.scheme || defaults.scheme;
+  const originalProviderValue = getHeader(outputHeaders, providerHeaderName);
+  const dummyMatched = containsDummyCredential(outputHeaders, authVaultConfig.dummyKey);
+
+  // Never forward non-target provider credentials to avoid cross-provider key leakage.
+  for (const headerName of KNOWN_PROVIDER_AUTH_HEADERS) {
+    deleteHeader(outputHeaders, headerName);
+  }
+
+  if (!authVaultConfig.enabled || providerConfig?.enabled !== true) {
+    if (originalProviderValue !== undefined) {
+      setHeader(outputHeaders, providerHeaderName, originalProviderValue);
+    }
+    return {
+      ok: true,
+      headers: outputHeaders,
+      auth: {
+        mode: 'passthrough',
+        injected: false,
+        dummyMatched,
+      },
+    };
+  }
+
+  const providerKey = resolveProviderVaultKey(providerConfig);
+  if (authVaultConfig.mode === 'enforce') {
+    if (!providerKey.key) {
+      return {
+        ok: false,
+        errorCode: 'VAULT_PROVIDER_KEY_MISSING',
+        message: `Auth vault enabled for provider ${providerName} but no key is configured. Set ${providerKey.envVar || 'provider env var'} or runtime.upstream.auth_vault.providers.${providerName}.api_key.`,
+      };
+    }
+    setHeader(outputHeaders, providerHeaderName, formatProviderAuthValue(providerKey.key, providerScheme));
+    return {
+      ok: true,
+      headers: outputHeaders,
+      auth: {
+        mode: 'enforce',
+        injected: true,
+        source: providerKey.source,
+        dummyMatched,
+      },
+    };
+  }
+
+  const providerHeaderDummyMatched = headerContainsDummy(originalProviderValue, authVaultConfig.dummyKey);
+  if (dummyMatched || providerHeaderDummyMatched) {
+    if (!providerKey.key) {
+      return {
+        ok: false,
+        errorCode: 'VAULT_PROVIDER_KEY_MISSING',
+        message: `Dummy key detected for provider ${providerName}, but no vault key is configured. Set ${providerKey.envVar || 'provider env var'} or runtime.upstream.auth_vault.providers.${providerName}.api_key.`,
+      };
+    }
+    setHeader(outputHeaders, providerHeaderName, formatProviderAuthValue(providerKey.key, providerScheme));
+    return {
+      ok: true,
+      headers: outputHeaders,
+      auth: {
+        mode: 'replace_dummy',
+        injected: true,
+        source: providerKey.source,
+        dummyMatched: true,
+      },
+    };
+  }
+
+  if (originalProviderValue !== undefined) {
+    setHeader(outputHeaders, providerHeaderName, originalProviderValue);
+  }
+  return {
+    ok: true,
+    headers: outputHeaders,
+    auth: {
+      mode: 'replace_dummy',
+      injected: false,
+      dummyMatched: false,
+    },
+  };
 }
 
 function parseConnectionHeaderTokens(value) {
@@ -143,6 +384,7 @@ class UpstreamClient {
     this.circuitBreakers = options.circuitBreakers;
     this.telemetry = options.telemetry;
     this.dispatchers = new Map();
+    this.authVaultConfig = normalizeAuthVaultConfig(options.authVaultConfig || {});
   }
 
   getPinnedDispatcher({ upstreamHostname, resolvedIp, resolvedFamily }) {
@@ -476,8 +718,29 @@ class UpstreamClient {
       ...(prepared.headerOverrides || {}),
     };
 
+    const authResolution = applyProviderAuthorization({
+      headers: mergedHeaders,
+      provider,
+      authVaultConfig: this.authVaultConfig,
+    });
+    if (!authResolution.ok) {
+      return this.buildSentinelFailure({
+        status: 502,
+        error: authResolution.errorCode || 'VAULT_CONFIGURATION_ERROR',
+        message: authResolution.message || 'Unable to resolve provider credentials from auth vault',
+        failureType: 'vault_configuration_error',
+        provider,
+        targetName,
+        breakerKey,
+        breakerState: this.circuitBreakers.getProviderState(breakerKey).state,
+        correlationId,
+        retryCount: 0,
+        upstreamError: false,
+      });
+    }
+
     const forwardHeaders = buildForwardHeaders(
-      mergedHeaders,
+      authResolution.headers,
       forwardBody.length,
       candidate.upstreamHostHeader
     );

@@ -213,6 +213,7 @@ class SentinelServer {
       retryConfig: config.runtime.upstream.retry,
       circuitBreakers: this.circuitBreakers,
       telemetry: this.telemetry,
+      authVaultConfig: config.runtime?.upstream?.auth_vault || {},
     });
     this.scanWorkerPool = null;
     try {

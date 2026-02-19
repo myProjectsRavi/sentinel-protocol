@@ -8,10 +8,12 @@
 - Sticky Canary A/B routing (`runtime.upstream.canary`) with observability headers.
 - Cross-provider adapter contracts for OpenAI-compatible contract routing.
 - Stream budget accounting on both stream completion and stream error paths.
+- Local API key vault (`runtime.upstream.auth_vault`) with dummy-key replacement and enforce mode.
 
 ### Changed
 - Docker and compose defaults now preload semantic + neural ONNX models.
 - README quickstart is Docker-first for a 2-minute install path.
+- Built-in provider requests now scrub non-target auth headers to prevent cross-provider credential leakage.
 
 ### Fixed
 - Restored backward-compatible circuit-breaker keys for direct providers (`openai|anthropic|google|custom`).

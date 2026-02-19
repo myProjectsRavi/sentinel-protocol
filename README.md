@@ -23,6 +23,7 @@ It provides:
 - Local-only live dashboard (`runtime.dashboard.enabled: true`) on `127.0.0.1:8788`
 - Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
+- Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
 - OpenTelemetry hooks for spans and metrics
@@ -122,6 +123,23 @@ runtime:
       key_header: x-sentinel-canary-key
       fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
       splits: []
+    auth_vault:
+      enabled: false
+      mode: replace_dummy # replace_dummy | enforce
+      dummy_key: "sk-sentinel-local"
+      providers:
+        openai:
+          enabled: true
+          api_key: "" # prefer env var
+          env_var: "SENTINEL_OPENAI_API_KEY"
+        anthropic:
+          enabled: true
+          api_key: ""
+          env_var: "SENTINEL_ANTHROPIC_API_KEY"
+        google:
+          enabled: true
+          api_key: ""
+          env_var: "SENTINEL_GOOGLE_API_KEY"
   dashboard:
     enabled: false
     host: 127.0.0.1
@@ -143,6 +161,33 @@ BYOK policy:
 - Prefer `SENTINEL_RAPIDAPI_KEY` over storing keys in `sentinel.yaml`.
 
 `x-sentinel-*` headers are stripped before forwarding upstream, so Sentinel-only routing and keys are not leaked to OpenAI/Anthropic/Google/custom providers.
+
+## Local API Key Vault (Supply-Chain Protection)
+
+Use Sentinel as a local credential boundary so untrusted agent code only ever sees a dummy key.
+
+1. Put real provider keys in env vars (recommended):
+   - `SENTINEL_OPENAI_API_KEY`
+   - `SENTINEL_ANTHROPIC_API_KEY`
+   - `SENTINEL_GOOGLE_API_KEY`
+2. Enable vault mode in config:
+
+```yaml
+runtime:
+  upstream:
+    auth_vault:
+      enabled: true
+      mode: replace_dummy # or enforce
+      dummy_key: "sk-sentinel-local"
+```
+
+3. In your app, use a dummy key:
+   - `OPENAI_API_KEY=sk-sentinel-local`
+
+Vault behavior:
+- `replace_dummy`: replace only dummy credentials with vault keys.
+- `enforce`: strip client credentials and always inject vault keys (fail closed if missing).
+- Known provider auth headers are scrubbed per request and only the target provider header is forwarded.
 
 Mesh/canary routing controls:
 - Request: `x-sentinel-target-group`, `x-sentinel-contract`, `x-sentinel-canary-key`

@@ -258,7 +258,8 @@ function openAiToGoogleAdapter(candidate) {
         'content-type': 'application/json',
       };
 
-      if (!headerOverrides['x-goog-api-key']) {
+      const requestHeaders = normalizeHeaders(input.reqHeaders || {});
+      if (!requestHeaders['x-goog-api-key'] && !headerOverrides['x-goog-api-key']) {
         const envKey = process.env.SENTINEL_GOOGLE_API_KEY;
         if (envKey) {
           headerOverrides['x-goog-api-key'] = envKey;

@@ -112,6 +112,30 @@ On RapidAPI failures:
 
 Sentinel strips all `x-sentinel-*` headers before forwarding upstream.
 
+## 5.1 Optional: Local API Key Vault (dummy-key replacement)
+
+Use this when running untrusted agent code/packages locally.
+
+```yaml
+runtime:
+  upstream:
+    auth_vault:
+      enabled: true
+      mode: replace_dummy # replace_dummy | enforce
+      dummy_key: "sk-sentinel-local"
+      providers:
+        openai:
+          enabled: true
+          api_key: "" # prefer env var
+          env_var: "SENTINEL_OPENAI_API_KEY"
+```
+
+Recommended:
+- Set real keys in env vars (`SENTINEL_OPENAI_API_KEY`, `SENTINEL_ANTHROPIC_API_KEY`, `SENTINEL_GOOGLE_API_KEY`).
+- In your app, use dummy credentials (for example `OPENAI_API_KEY=sk-sentinel-local`).
+- `replace_dummy`: replace only dummy keys.
+- `enforce`: strip client keys and fail closed if vault keys are missing.
+
 ## 6. Configure prompt-injection detection
 
 Injection scanning is enabled by default. You can tune the default threshold and add rule-level controls.

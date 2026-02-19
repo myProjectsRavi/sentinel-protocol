@@ -1,4 +1,8 @@
-const { runDoctorChecks, detectRapidApiKeySource } = require('../../src/runtime/doctor');
+const {
+  runDoctorChecks,
+  detectRapidApiKeySource,
+  detectAuthVaultKeySource,
+} = require('../../src/runtime/doctor');
 
 function configForMode(mode, overrides = {}) {
   const rapidapiOverrides = overrides.rapidapi || {};
@@ -57,6 +61,15 @@ describe('doctor checks', () => {
 
   test('detects env key source', () => {
     expect(detectRapidApiKeySource({ api_key: 'config-key' }, { SENTINEL_RAPIDAPI_KEY: 'env-key' })).toBe('env');
+  });
+
+  test('detects auth vault key source from env first', () => {
+    expect(
+      detectAuthVaultKeySource(
+        { api_key: 'config-key', env_var: 'SENTINEL_OPENAI_API_KEY' },
+        { SENTINEL_OPENAI_API_KEY: 'env-key' }
+      )
+    ).toBe('env');
   });
 
   test('fails invalid rapidapi endpoint in non-local mode', () => {
@@ -147,5 +160,49 @@ describe('doctor checks', () => {
 
     expect(report.checks.some((check) => check.id === 'canary-mesh-dependency' && check.status === 'warn')).toBe(true);
     expect(report.checks.some((check) => check.id === 'canary-splits' && check.status === 'warn')).toBe(true);
+  });
+
+  test('fails doctor when auth vault enforce mode has no provider key', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        upstream: {
+          auth_vault: {
+            enabled: true,
+            mode: 'enforce',
+            dummy_key: 'sk-sentinel-local',
+            providers: {
+              openai: { enabled: true, api_key: '', env_var: 'SENTINEL_OPENAI_API_KEY' },
+              anthropic: { enabled: false, api_key: '', env_var: 'SENTINEL_ANTHROPIC_API_KEY' },
+              google: { enabled: false, api_key: '', env_var: 'SENTINEL_GOOGLE_API_KEY' },
+            },
+          },
+        },
+      },
+    }), { NODE_ENV: 'production' });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'auth-vault-key-openai' && check.status === 'fail')).toBe(true);
+  });
+
+  test('warns doctor when auth vault replace_dummy mode has missing key', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        upstream: {
+          auth_vault: {
+            enabled: true,
+            mode: 'replace_dummy',
+            dummy_key: 'sk-sentinel-local',
+            providers: {
+              openai: { enabled: true, api_key: '', env_var: 'SENTINEL_OPENAI_API_KEY' },
+              anthropic: { enabled: false, api_key: '', env_var: 'SENTINEL_ANTHROPIC_API_KEY' },
+              google: { enabled: false, api_key: '', env_var: 'SENTINEL_GOOGLE_API_KEY' },
+            },
+          },
+        },
+      },
+    }), { NODE_ENV: 'production' });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks.some((check) => check.id === 'auth-vault-key-openai' && check.status === 'warn')).toBe(true);
   });
 });

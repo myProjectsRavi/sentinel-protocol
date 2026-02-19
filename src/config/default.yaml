@@ -86,6 +86,23 @@ runtime:
       key_header: x-sentinel-canary-key
       fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
       splits: []
+    auth_vault:
+      enabled: false
+      mode: replace_dummy # replace_dummy | enforce
+      dummy_key: "sk-sentinel-local"
+      providers:
+        openai:
+          enabled: true
+          api_key: ""
+          env_var: "SENTINEL_OPENAI_API_KEY"
+        anthropic:
+          enabled: true
+          api_key: ""
+          env_var: "SENTINEL_ANTHROPIC_API_KEY"
+        google:
+          enabled: true
+          api_key: ""
+          env_var: "SENTINEL_GOOGLE_API_KEY"
 
 pii:
   enabled: true

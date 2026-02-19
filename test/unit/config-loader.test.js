@@ -89,4 +89,22 @@ describe('config loader and migration', () => {
       loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
     }).toThrow(/dashboard\.auth_token.*allow_remote=true/);
   });
+
+  test('fails validation when auth vault provider key is unknown', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.upstream.auth_vault.enabled = true;
+    base.runtime.upstream.auth_vault.providers.custom = {
+      enabled: true,
+      api_key: 'abc',
+      env_var: 'SENTINEL_CUSTOM_KEY',
+    };
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/auth_vault\.providers\.custom is not supported/);
+  });
 });

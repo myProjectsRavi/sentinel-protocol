@@ -365,6 +365,73 @@ describe('sentinel integration', () => {
     expect(response.body.leakedInternalRouteHeader).toBe(false);
   });
 
+  test('replaces dummy provider key via auth vault and scrubs non-target auth headers', async () => {
+    upstream = await startUpstream((req, res) => {
+      res.status(200).json({
+        authorization: req.headers.authorization || null,
+        hasAnthropicKey: Boolean(req.headers['x-api-key']),
+        hasGoogleKey: Boolean(req.headers['x-goog-api-key']),
+      });
+    });
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'monitor',
+        runtime: {
+          upstream: {
+            auth_vault: {
+              enabled: true,
+              mode: 'replace_dummy',
+              dummy_key: 'sk-sentinel-local',
+              providers: {
+                openai: {
+                  enabled: true,
+                  api_key: 'sk-real-openai-key',
+                  env_var: 'SENTINEL_OPENAI_API_KEY',
+                },
+                anthropic: {
+                  enabled: true,
+                  api_key: '',
+                  env_var: 'SENTINEL_ANTHROPIC_API_KEY',
+                },
+                google: {
+                  enabled: true,
+                  api_key: '',
+                  env_var: 'SENTINEL_GOOGLE_API_KEY',
+                },
+              },
+            },
+            resilience_mesh: {
+              targets: {
+                meshopenai: {
+                  enabled: true,
+                  provider: 'openai',
+                  contract: 'passthrough',
+                  base_url: upstream.url,
+                  headers: {},
+                },
+              },
+            },
+          },
+        },
+      })
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'meshopenai')
+      .set('authorization', 'Bearer sk-sentinel-local')
+      .set('x-api-key', 'anthropic-client-key')
+      .set('x-goog-api-key', 'google-client-key')
+      .send({ text: 'hello world' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.authorization).toBe('Bearer sk-real-openai-key');
+    expect(response.body.hasAnthropicKey).toBe(false);
+    expect(response.body.hasGoogleKey).toBe(false);
+  });
+
   test('scrubs hop-by-hop headers and overrides host header', async () => {
     upstream = await startUpstream((req, res) => {
       res.status(200).json({

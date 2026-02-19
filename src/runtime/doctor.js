@@ -43,6 +43,17 @@ function detectRapidApiKeySource(rapidapiConfig = {}, env = process.env) {
   return 'none';
 }
 
+function detectAuthVaultKeySource(providerConfig = {}, env = process.env) {
+  const envVar = String(providerConfig.env_var || '');
+  if (envVar && env[envVar]) {
+    return 'env';
+  }
+  if (providerConfig.api_key) {
+    return 'config';
+  }
+  return 'none';
+}
+
 function summarizeChecks(checks) {
   const summary = { pass: 0, warn: 0, fail: 0 };
   for (const check of checks) {
@@ -64,6 +75,7 @@ function runDoctorChecks(config, env = process.env) {
   const upstream = config?.runtime?.upstream || {};
   const mesh = upstream.resilience_mesh || {};
   const canary = upstream.canary || {};
+  const authVault = upstream.auth_vault || {};
   const workerPool = config?.runtime?.worker_pool || {};
   const fallbackToLocal = rapidapi.fallback_to_local !== false;
   const nodeEnv = String(env.NODE_ENV || '').toLowerCase();
@@ -265,6 +277,71 @@ function runDoctorChecks(config, env = process.env) {
     });
   }
 
+  if (authVault.enabled === true) {
+    const mode = String(authVault.mode || 'replace_dummy').toLowerCase();
+    const dummyKey = String(authVault.dummy_key || '');
+    const providers =
+      authVault.providers && typeof authVault.providers === 'object' && !Array.isArray(authVault.providers)
+        ? authVault.providers
+        : {};
+
+    checks.push({
+      id: 'auth-vault-mode',
+      status: ['replace_dummy', 'enforce'].includes(mode) ? 'pass' : 'fail',
+      message:
+        ['replace_dummy', 'enforce'].includes(mode)
+          ? `Auth vault enabled in '${mode}' mode.`
+          : `Auth vault mode '${mode}' is invalid.`,
+    });
+
+    checks.push({
+      id: 'auth-vault-dummy-key',
+      status: dummyKey.length > 0 ? 'pass' : 'fail',
+      message: dummyKey.length > 0
+        ? 'Auth vault dummy key is configured.'
+        : 'Auth vault dummy key is empty.',
+    });
+
+    for (const providerName of ['openai', 'anthropic', 'google']) {
+      const providerConfig =
+        providers[providerName] && typeof providers[providerName] === 'object' && !Array.isArray(providers[providerName])
+          ? providers[providerName]
+          : {};
+      if (providerConfig.enabled === false) {
+        checks.push({
+          id: `auth-vault-key-${providerName}`,
+          status: 'pass',
+          message: `Auth vault provider '${providerName}' is disabled.`,
+        });
+        continue;
+      }
+
+      const source = detectAuthVaultKeySource(providerConfig, env);
+      if (source === 'env') {
+        checks.push({
+          id: `auth-vault-key-${providerName}`,
+          status: 'pass',
+          message: `Auth vault key for '${providerName}' found via ${providerConfig.env_var || 'env var'}.`,
+        });
+      } else if (source === 'config') {
+        checks.push({
+          id: `auth-vault-key-${providerName}`,
+          status: 'warn',
+          message: `Auth vault key for '${providerName}' is stored in config. Prefer ${providerConfig.env_var || 'env var'}.`,
+        });
+      } else {
+        checks.push({
+          id: `auth-vault-key-${providerName}`,
+          status: mode === 'enforce' ? 'fail' : 'warn',
+          message:
+            mode === 'enforce'
+              ? `Auth vault enforce mode requires a key for '${providerName}'.`
+              : `No vault key found for '${providerName}'. Dummy-key replacement for this provider will fail.`,
+        });
+      }
+    }
+  }
+
   const summary = summarizeChecks(checks);
   return {
     ok: summary.fail === 0,
@@ -296,5 +373,6 @@ module.exports = {
   runDoctorChecks,
   formatDoctorReport,
   detectRapidApiKeySource,
+  detectAuthVaultKeySource,
   validateRapidApiEndpoint,
 };
