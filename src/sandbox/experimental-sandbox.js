@@ -28,6 +28,100 @@ function snippetHash(text) {
   return crypto.createHash('sha256').update(String(text || ''), 'utf8').digest('hex').slice(0, 16);
 }
 
+function decodeEscapedSequences(text) {
+  return String(text || '')
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => {
+      try {
+        return String.fromCharCode(Number.parseInt(hex, 16));
+      } catch {
+        return _;
+      }
+    })
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => {
+      try {
+        return String.fromCharCode(Number.parseInt(hex, 16));
+      } catch {
+        return _;
+      }
+    });
+}
+
+function normalizeForDetection(text) {
+  let out = String(text || '');
+  if (!out) {
+    return '';
+  }
+  out = out.normalize('NFKC');
+  out = out.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  out = decodeEscapedSequences(out);
+  out = out
+    .replace(/(['"`])\s*\+\s*(['"`])/g, '')
+    .replace(/\+\s*(['"`])/g, '$1')
+    .replace(/(['"`])\s*\+/g, '$1');
+  out = out.replace(/\s+/g, ' ').toLowerCase();
+  return out.trim();
+}
+
+function maybeDecodeBase64Token(token, maxDecodedBytes = 8192) {
+  const normalized = String(token || '').replace(/\s+/g, '');
+  if (normalized.length < 16 || normalized.length > maxDecodedBytes * 2) {
+    return null;
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    return null;
+  }
+  try {
+    const buf = Buffer.from(normalized, 'base64');
+    if (!buf || buf.length === 0 || buf.length > maxDecodedBytes) {
+      return null;
+    }
+    let printable = 0;
+    for (const byte of buf.values()) {
+      if ((byte >= 32 && byte <= 126) || byte === 9 || byte === 10 || byte === 13) {
+        printable += 1;
+      }
+    }
+    if (printable / buf.length < 0.85) {
+      return null;
+    }
+    return buf.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function extractCandidateVariants(text, options = {}) {
+  const variants = [];
+  const maxVariants = clampPositiveInt(options.maxVariants, 4, 1, 20);
+  const includeBase64 = options.decodeBase64 === true;
+  const maxDecodedBytes = clampPositiveInt(options.maxDecodedBytes, 8192, 128, 1024 * 1024);
+  const normalized = normalizeForDetection(text);
+  if (normalized) {
+    variants.push({ kind: 'normalized', text: normalized });
+  }
+  if (includeBase64) {
+    const tokenRe = /[A-Za-z0-9+/]{16,}={0,2}/g;
+    const seen = new Set();
+    let match = tokenRe.exec(text);
+    while (match && variants.length < maxVariants) {
+      const token = String(match[0] || '');
+      if (!seen.has(token)) {
+        seen.add(token);
+        const decoded = maybeDecodeBase64Token(token, maxDecodedBytes);
+        if (decoded) {
+          variants.push({
+            kind: 'decoded_base64',
+            text: normalizeForDetection(decoded),
+            encoded_hash: snippetHash(token),
+          });
+        }
+      }
+      match = tokenRe.exec(text);
+    }
+  }
+  return variants.slice(0, maxVariants);
+}
+
 function normalizePatternList(patterns) {
   const defaults = [
     'child_process',
@@ -146,6 +240,10 @@ class ExperimentalSandbox {
     this.mode = normalizeMode(normalized.mode, 'monitor');
     this.maxCodeChars = clampPositiveInt(normalized.max_code_chars, 20000, 256, 2000000);
     this.maxFindings = clampPositiveInt(normalized.max_findings, 25, 1, 1000);
+    this.normalizeEvasion = normalized.normalize_evasion !== false;
+    this.decodeBase64 = normalized.decode_base64 !== false;
+    this.maxDecodedBytes = clampPositiveInt(normalized.max_decoded_bytes, 8192, 128, 1024 * 1024);
+    this.maxVariantsPerCandidate = clampPositiveInt(normalized.max_variants_per_candidate, 4, 1, 20);
     this.patterns = normalizePatternList(normalized.disallowed_patterns);
     this.targetToolNames = new Set(
       Array.isArray(normalized.target_tool_names)
@@ -192,6 +290,40 @@ class ExperimentalSandbox {
           snippet_hash: snippetHash(candidate.text),
         });
       }
+      if (this.normalizeEvasion) {
+        const variants = extractCandidateVariants(candidate.text, {
+          decodeBase64: this.decodeBase64,
+          maxDecodedBytes: this.maxDecodedBytes,
+          maxVariants: this.maxVariantsPerCandidate,
+        });
+        for (const variant of variants) {
+          for (const pattern of this.patterns) {
+            if (findings.length >= this.maxFindings) {
+              break;
+            }
+            const match = pattern.regex.exec(variant.text);
+            if (!match) {
+              continue;
+            }
+            findings.push({
+              source: candidate.source,
+              message_index: candidate.message_index,
+              part_index: candidate.part_index,
+              tool_index: candidate.tool_index,
+              tool_name: candidate.tool_name,
+              role: candidate.role,
+              pattern: pattern.source,
+              match_preview: String(match[0] || '').slice(0, 80),
+              snippet_hash: snippetHash(candidate.text),
+              evasion_variant: variant.kind,
+              encoded_hash: variant.encoded_hash,
+            });
+          }
+          if (findings.length >= this.maxFindings) {
+            break;
+          }
+        }
+      }
       if (findings.length >= this.maxFindings) {
         break;
       }
@@ -209,4 +341,6 @@ class ExperimentalSandbox {
 module.exports = {
   ExperimentalSandbox,
   collectCandidates,
+  normalizeForDetection,
+  extractCandidateVariants,
 };

@@ -1,4 +1,10 @@
+const fs = require('fs');
+const path = require('path');
 const { ExperimentalSandbox, collectCandidates } = require('../../src/sandbox/experimental-sandbox');
+
+const EVASION_FIXTURES = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'hardening', 'sandbox-evasion-cases.json'), 'utf8')
+);
 
 describe('ExperimentalSandbox', () => {
   test('is disabled by default', () => {
@@ -94,5 +100,37 @@ describe('ExperimentalSandbox', () => {
     );
 
     expect(candidates.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('detects evasion patterns from fixtures', () => {
+    for (const fixture of EVASION_FIXTURES) {
+      const sandbox = new ExperimentalSandbox({
+        enabled: true,
+        mode: 'block',
+        normalize_evasion: true,
+        decode_base64: true,
+        disallowed_patterns: fixture.patterns,
+        target_tool_names: ['execute_shell'],
+      });
+      const result = sandbox.inspect({
+        effectiveMode: 'enforce',
+        bodyJson: {
+          messages: [
+            {
+              role: 'assistant',
+              tool_calls: [
+                {
+                  function: {
+                    name: 'execute_shell',
+                    arguments: fixture.input,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      });
+      expect(Boolean(result.detected)).toBe(Boolean(fixture.expect_detected));
+    }
   });
 });

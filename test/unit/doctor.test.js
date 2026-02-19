@@ -159,6 +159,18 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'intent-drift-threshold' && check.status === 'warn')).toBe(true);
   });
 
+  test('warns when intent drift risk boost is too high', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        intent_drift: {
+          enabled: true,
+          risk_boost: 0.9,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'intent-drift-risk-boost' && check.status === 'warn')).toBe(true);
+  });
+
   test('warns when strict swarm verification has empty trust store', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {
@@ -259,6 +271,24 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'omni-shield-image-budget' && check.status === 'pass')).toBe(true);
   });
 
+  test('warns when omni-shield plugin timeout is outside recommended range', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        omni_shield: {
+          enabled: true,
+          mode: 'monitor',
+          max_image_bytes: 5 * 1024 * 1024,
+          plugin: {
+            enabled: true,
+            timeout_ms: 50_000,
+            fail_closed: true,
+          },
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'omni-shield-plugin-timeout' && check.status === 'warn')).toBe(true);
+  });
+
   test('fails when experimental sandbox enabled without patterns', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {
@@ -270,6 +300,22 @@ describe('doctor checks', () => {
       },
     }), { NODE_ENV: 'production' });
     expect(report.checks.some((check) => check.id === 'sandbox-experimental-patterns' && check.status === 'fail')).toBe(true);
+  });
+
+  test('warns when experimental sandbox evasion normalization is disabled', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        sandbox_experimental: {
+          enabled: true,
+          mode: 'monitor',
+          disallowed_patterns: ['child_process'],
+          normalize_evasion: false,
+          decode_base64: false,
+        },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.checks.some((check) => check.id === 'sandbox-evasion-normalization' && check.status === 'warn')).toBe(true);
+    expect(report.checks.some((check) => check.id === 'sandbox-base64-decoding' && check.status === 'warn')).toBe(true);
   });
 
   test('warns when budget enabled with zero pricing model', () => {

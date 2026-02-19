@@ -291,6 +291,16 @@ function runDoctorChecks(config, env = process.env) {
           ? `Intent drift threshold=${threshold} is within recommended operating range (0.2-0.7).`
           : `Intent drift threshold=${threshold} is outside recommended range (0.2-0.7); expect either false positives or missed drift.`,
     });
+
+    const riskBoost = Number(intentDrift.risk_boost ?? 0.12);
+    checks.push({
+      id: 'intent-drift-risk-boost',
+      status: riskBoost >= 0 && riskBoost <= 0.4 ? 'pass' : 'warn',
+      message:
+        riskBoost >= 0 && riskBoost <= 0.4
+          ? `Intent drift risk_boost=${riskBoost} is in recommended range (0-0.4).`
+          : `Intent drift risk_boost=${riskBoost} is high; tune to reduce false positives.`,
+    });
   }
 
   if (swarm.enabled === true) {
@@ -431,6 +441,27 @@ function runDoctorChecks(config, env = process.env) {
           ? `Omni-Shield max_image_bytes=${Number(omniShield.max_image_bytes)}`
           : 'Omni-Shield enabled but max_image_bytes is invalid.',
     });
+
+    const plugin = omniShield.plugin || {};
+    if (plugin.enabled === true) {
+      const timeoutMs = Number(plugin.timeout_ms || 0);
+      checks.push({
+        id: 'omni-shield-plugin-timeout',
+        status: timeoutMs >= 100 && timeoutMs <= 5000 ? 'pass' : 'warn',
+        message:
+          timeoutMs >= 100 && timeoutMs <= 5000
+            ? `Omni-Shield plugin timeout=${timeoutMs}ms.`
+            : `Omni-Shield plugin timeout=${timeoutMs}ms. Recommended range is 100-5000ms.`,
+      });
+      checks.push({
+        id: 'omni-shield-plugin-fail-closed',
+        status: plugin.fail_closed === true ? 'warn' : 'pass',
+        message:
+          plugin.fail_closed === true
+            ? 'Omni-Shield plugin fail-closed is enabled. Verify chaos scenarios to avoid accidental hard-blocks.'
+            : 'Omni-Shield plugin fail-closed is disabled (safer for initial rollout).',
+      });
+    }
   }
 
   if (sandboxExperimental.enabled === true) {
@@ -452,6 +483,22 @@ function runDoctorChecks(config, env = process.env) {
         String(sandboxExperimental.mode || '').toLowerCase() === 'block'
           ? 'Sandbox experimental mode is block. Validate false positives before production rollout.'
           : `Sandbox experimental mode is '${String(sandboxExperimental.mode || 'monitor')}'.`,
+    });
+    checks.push({
+      id: 'sandbox-evasion-normalization',
+      status: sandboxExperimental.normalize_evasion === false ? 'warn' : 'pass',
+      message:
+        sandboxExperimental.normalize_evasion === false
+          ? 'Sandbox evasion normalization is disabled. Escaped/obfuscated payloads may bypass detection.'
+          : 'Sandbox evasion normalization is enabled.',
+    });
+    checks.push({
+      id: 'sandbox-base64-decoding',
+      status: sandboxExperimental.decode_base64 === false ? 'warn' : 'pass',
+      message:
+        sandboxExperimental.decode_base64 === false
+          ? 'Sandbox base64 decoding is disabled. Encoded payloads may evade detection.'
+          : `Sandbox base64 decoding enabled (max_decoded_bytes=${Number(sandboxExperimental.max_decoded_bytes || 0)}).`,
     });
   }
 

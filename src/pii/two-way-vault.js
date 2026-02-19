@@ -91,9 +91,17 @@ function looksTextualContentType(contentType = '') {
 }
 
 function replaceAllByMap(text, mappingEntries) {
+  return replaceAllByMapWithCap(text, mappingEntries, Number.POSITIVE_INFINITY);
+}
+
+function replaceAllByMapWithCap(text, mappingEntries, maxReplacements) {
   let out = String(text || '');
   let replacements = 0;
+  const cap = Number.isFinite(Number(maxReplacements)) ? Math.max(0, Number(maxReplacements)) : Number.POSITIVE_INFINITY;
   for (const item of mappingEntries) {
+    if (replacements >= cap) {
+      break;
+    }
     const from = String(item.from || '');
     const to = String(item.to || '');
     if (!from || from === to) {
@@ -105,6 +113,10 @@ function replaceAllByMap(text, mappingEntries) {
     if (before !== out) {
       const count = (before.match(re) || []).length;
       replacements += count;
+      if (replacements >= cap) {
+        replacements = cap;
+        break;
+      }
     }
   }
   return {
@@ -124,6 +136,9 @@ class VaultRewriteTransform extends Transform {
     this.decoder = new StringDecoder('utf8');
     this.pending = '';
     this.replacements = 0;
+    this.maxReplacements = Number.isFinite(Number(options.maxReplacements))
+      ? Math.max(0, Number(options.maxReplacements))
+      : Number.POSITIVE_INFINITY;
     this.onMetrics = typeof options.onMetrics === 'function' ? options.onMetrics : null;
   }
 
@@ -140,7 +155,7 @@ class VaultRewriteTransform extends Transform {
       const safeLength = Math.max(0, joined.length - carryLength);
       const safeText = joined.slice(0, safeLength);
       this.pending = joined.slice(safeLength);
-      const rewritten = replaceAllByMap(safeText, this.entries);
+      const rewritten = replaceAllByMapWithCap(safeText, this.entries, this.maxReplacements - this.replacements);
       this.replacements += rewritten.replacements;
       this.push(rewritten.text);
       callback();
@@ -153,7 +168,7 @@ class VaultRewriteTransform extends Transform {
     try {
       const tail = this.decoder.end();
       const joined = `${this.pending}${tail || ''}`;
-      const rewritten = replaceAllByMap(joined, this.entries);
+      const rewritten = replaceAllByMapWithCap(joined, this.entries, this.maxReplacements - this.replacements);
       this.replacements += rewritten.replacements;
       this.push(rewritten.text);
       if (this.onMetrics) {
@@ -181,6 +196,9 @@ class TwoWayPIIVault {
     this.ttlMs = clampPositiveInt(normalized.ttl_ms, 3600000, 1000, 7 * 24 * 3600000);
     this.maxSessions = clampPositiveInt(normalized.max_sessions, 5000, 1, 500000);
     this.maxMappingsPerSession = clampPositiveInt(normalized.max_mappings_per_session, 1000, 1, 50000);
+    this.maxEgressRewriteEntries = clampPositiveInt(normalized.max_egress_rewrite_entries, 256, 1, 10000);
+    this.maxPayloadBytes = clampPositiveInt(normalized.max_payload_bytes, 512 * 1024, 64, 20 * 1024 * 1024);
+    this.maxReplacementsPerPass = clampPositiveInt(normalized.max_replacements_per_pass, 1000, 1, 1000000);
     this.tokenDomain = String(normalized.token_domain || 'sentinel.local');
     this.tokenPrefix = String(normalized.token_prefix || 'sentinel_');
     this.targetTypes = new Set(
@@ -319,6 +337,17 @@ class TwoWayPIIVault {
     }
 
     const input = String(text || '');
+    if (Buffer.byteLength(input, 'utf8') > this.maxPayloadBytes) {
+      return {
+        enabled: true,
+        detected: false,
+        applied: false,
+        monitorOnly: this.mode === 'monitor',
+        skipped: 'payload_too_large',
+        text: input,
+        mappings: [],
+      };
+    }
     const eligible = [];
     const seenValues = new Set();
     for (const finding of findings || []) {
@@ -383,7 +412,7 @@ class TwoWayPIIVault {
       });
     }
     replaceEntries.sort((a, b) => String(b.from).length - String(a.from).length);
-    const rewritten = replaceAllByMap(input, replaceEntries);
+    const rewritten = replaceAllByMapWithCap(input, replaceEntries, this.maxReplacementsPerPass);
 
     return {
       enabled: true,
@@ -409,6 +438,9 @@ class TwoWayPIIVault {
         to: entry.value,
         pii_type: entry.piiType,
       });
+      if (entries.length >= this.maxEgressRewriteEntries) {
+        break;
+      }
     }
     entries.sort((a, b) => String(b.from).length - String(a.from).length);
     return entries;
@@ -431,6 +463,15 @@ class TwoWayPIIVault {
         mappedTypes: [],
       };
     }
+    if (bodyBuffer.length > this.maxPayloadBytes) {
+      return {
+        changed: false,
+        bodyBuffer,
+        replacements: 0,
+        mappedTypes: [],
+        skipped: 'payload_too_large',
+      };
+    }
     const entries = this.getReverseEntries(sessionKey);
     if (entries.length === 0) {
       return {
@@ -441,7 +482,7 @@ class TwoWayPIIVault {
       };
     }
     const input = bodyBuffer.toString('utf8');
-    const rewritten = replaceAllByMap(input, entries);
+    const rewritten = replaceAllByMapWithCap(input, entries, this.maxReplacementsPerPass);
     return {
       changed: rewritten.replacements > 0,
       bodyBuffer: rewritten.replacements > 0 ? Buffer.from(rewritten.text, 'utf8') : bodyBuffer,
@@ -463,6 +504,7 @@ class TwoWayPIIVault {
     }
     return new VaultRewriteTransform({
       entries,
+      maxReplacements: this.maxReplacementsPerPass,
       onMetrics,
     });
   }
@@ -472,5 +514,6 @@ module.exports = {
   TwoWayPIIVault,
   VaultRewriteTransform,
   replaceAllByMap,
+  replaceAllByMapWithCap,
   looksTextualContentType,
 };

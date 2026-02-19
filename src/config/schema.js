@@ -79,6 +79,10 @@ const INTENT_DRIFT_KEYS = new Set([
   'mode',
   'key_header',
   'fallback_key_headers',
+  'target_roles',
+  'strip_volatile_tokens',
+  'risk_keywords',
+  'risk_boost',
   'sample_every_turns',
   'min_turns',
   'threshold',
@@ -119,6 +123,9 @@ const PII_VAULT_KEYS = new Set([
   'ttl_ms',
   'max_sessions',
   'max_mappings_per_session',
+  'max_egress_rewrite_entries',
+  'max_payload_bytes',
+  'max_replacements_per_pass',
   'token_domain',
   'token_prefix',
   'target_types',
@@ -178,6 +185,7 @@ const OMNI_SHIELD_PLUGIN_KEYS = new Set([
   'mode',
   'fail_closed',
   'max_rewrites',
+  'timeout_ms',
   'observability',
 ]);
 const OMNI_SHIELD_PLUGIN_MODES = new Set(['enforce', 'always']);
@@ -186,6 +194,10 @@ const SANDBOX_EXPERIMENTAL_KEYS = new Set([
   'mode',
   'max_code_chars',
   'max_findings',
+  'normalize_evasion',
+  'decode_base64',
+  'max_decoded_bytes',
+  'max_variants_per_candidate',
   'disallowed_patterns',
   'target_tool_names',
   'observability',
@@ -657,6 +669,25 @@ function applyDefaults(config) {
   intentDrift.fallback_key_headers = Array.isArray(intentDrift.fallback_key_headers)
     ? intentDrift.fallback_key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
     : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  intentDrift.target_roles = Array.isArray(intentDrift.target_roles)
+    ? intentDrift.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['system', 'user', 'assistant'];
+  intentDrift.strip_volatile_tokens = intentDrift.strip_volatile_tokens !== false;
+  intentDrift.risk_keywords = Array.isArray(intentDrift.risk_keywords)
+    ? intentDrift.risk_keywords.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : [
+        'password',
+        'credential',
+        'api key',
+        'token',
+        'secret',
+        'id_rsa',
+        'ssh key',
+        'bypass',
+        'ignore previous instructions',
+        'override safety',
+      ];
+  intentDrift.risk_boost = Number(intentDrift.risk_boost ?? 0.12);
   intentDrift.sample_every_turns = Number(intentDrift.sample_every_turns ?? 10);
   intentDrift.min_turns = Number(intentDrift.min_turns ?? 10);
   intentDrift.threshold = Number(intentDrift.threshold ?? 0.35);
@@ -719,6 +750,9 @@ function applyDefaults(config) {
   piiVault.ttl_ms = Number(piiVault.ttl_ms ?? 3600000);
   piiVault.max_sessions = Number(piiVault.max_sessions ?? 5000);
   piiVault.max_mappings_per_session = Number(piiVault.max_mappings_per_session ?? 1000);
+  piiVault.max_egress_rewrite_entries = Number(piiVault.max_egress_rewrite_entries ?? 256);
+  piiVault.max_payload_bytes = Number(piiVault.max_payload_bytes ?? 512 * 1024);
+  piiVault.max_replacements_per_pass = Number(piiVault.max_replacements_per_pass ?? 1000);
   piiVault.token_domain = String(piiVault.token_domain || 'sentinel.local');
   piiVault.token_prefix = String(piiVault.token_prefix || 'sentinel_');
   piiVault.target_types = Array.isArray(piiVault.target_types)
@@ -809,6 +843,7 @@ function applyDefaults(config) {
     : 'enforce';
   omniShield.plugin.fail_closed = omniShield.plugin.fail_closed === true;
   omniShield.plugin.max_rewrites = Number(omniShield.plugin.max_rewrites ?? 20);
+  omniShield.plugin.timeout_ms = Number(omniShield.plugin.timeout_ms ?? 1500);
   omniShield.plugin.observability = omniShield.plugin.observability !== false;
 
   normalized.runtime.sandbox_experimental = normalized.runtime.sandbox_experimental || {};
@@ -819,6 +854,10 @@ function applyDefaults(config) {
     : 'monitor';
   sandboxExperimental.max_code_chars = Number(sandboxExperimental.max_code_chars ?? 20000);
   sandboxExperimental.max_findings = Number(sandboxExperimental.max_findings ?? 25);
+  sandboxExperimental.normalize_evasion = sandboxExperimental.normalize_evasion !== false;
+  sandboxExperimental.decode_base64 = sandboxExperimental.decode_base64 !== false;
+  sandboxExperimental.max_decoded_bytes = Number(sandboxExperimental.max_decoded_bytes ?? 8192);
+  sandboxExperimental.max_variants_per_candidate = Number(sandboxExperimental.max_variants_per_candidate ?? 4);
   sandboxExperimental.disallowed_patterns = Array.isArray(sandboxExperimental.disallowed_patterns)
     ? sandboxExperimental.disallowed_patterns.map((item) => String(item || '')).filter(Boolean)
     : [
@@ -1311,6 +1350,46 @@ function validateConfigShape(config) {
       });
     }
     assertType(
+      Array.isArray(intentDrift.target_roles) && intentDrift.target_roles.length > 0,
+      '`runtime.intent_drift.target_roles` must be non-empty array',
+      details
+    );
+    if (Array.isArray(intentDrift.target_roles)) {
+      intentDrift.target_roles.forEach((role, idx) => {
+        assertType(
+          typeof role === 'string' && role.length > 0,
+          `runtime.intent_drift.target_roles[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof intentDrift.strip_volatile_tokens === 'boolean',
+      '`runtime.intent_drift.strip_volatile_tokens` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(intentDrift.risk_keywords) && intentDrift.risk_keywords.length > 0,
+      '`runtime.intent_drift.risk_keywords` must be non-empty array',
+      details
+    );
+    if (Array.isArray(intentDrift.risk_keywords)) {
+      intentDrift.risk_keywords.forEach((keyword, idx) => {
+        assertType(
+          typeof keyword === 'string' && keyword.length > 0,
+          `runtime.intent_drift.risk_keywords[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isFinite(Number(intentDrift.risk_boost)) &&
+        Number(intentDrift.risk_boost) >= 0 &&
+        Number(intentDrift.risk_boost) <= 1,
+      '`runtime.intent_drift.risk_boost` must be number between 0 and 1',
+      details
+    );
+    assertType(
       Number.isInteger(intentDrift.sample_every_turns) && intentDrift.sample_every_turns > 0,
       '`runtime.intent_drift.sample_every_turns` must be integer > 0',
       details
@@ -1471,6 +1550,21 @@ function validateConfigShape(config) {
     assertType(
       Number.isInteger(piiVault.max_mappings_per_session) && piiVault.max_mappings_per_session > 0,
       '`runtime.pii_vault.max_mappings_per_session` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.max_egress_rewrite_entries) && piiVault.max_egress_rewrite_entries > 0,
+      '`runtime.pii_vault.max_egress_rewrite_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.max_payload_bytes) && piiVault.max_payload_bytes > 0,
+      '`runtime.pii_vault.max_payload_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(piiVault.max_replacements_per_pass) && piiVault.max_replacements_per_pass > 0,
+      '`runtime.pii_vault.max_replacements_per_pass` must be integer > 0',
       details
     );
     assertType(
@@ -1711,6 +1805,11 @@ function validateConfigShape(config) {
         details
       );
       assertType(
+        Number.isInteger(omniPlugin.timeout_ms) && omniPlugin.timeout_ms > 0,
+        '`runtime.omni_shield.plugin.timeout_ms` must be integer > 0',
+        details
+      );
+      assertType(
         typeof omniPlugin.observability === 'boolean',
         '`runtime.omni_shield.plugin.observability` must be boolean',
         details
@@ -1744,6 +1843,27 @@ function validateConfigShape(config) {
     assertType(
       Number.isInteger(sandboxExperimental.max_findings) && sandboxExperimental.max_findings > 0,
       '`runtime.sandbox_experimental.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof sandboxExperimental.normalize_evasion === 'boolean',
+      '`runtime.sandbox_experimental.normalize_evasion` must be boolean',
+      details
+    );
+    assertType(
+      typeof sandboxExperimental.decode_base64 === 'boolean',
+      '`runtime.sandbox_experimental.decode_base64` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(sandboxExperimental.max_decoded_bytes) && sandboxExperimental.max_decoded_bytes > 0,
+      '`runtime.sandbox_experimental.max_decoded_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(sandboxExperimental.max_variants_per_candidate) &&
+        sandboxExperimental.max_variants_per_candidate > 0,
+      '`runtime.sandbox_experimental.max_variants_per_candidate` must be integer > 0',
       details
     );
     assertType(

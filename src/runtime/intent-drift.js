@@ -77,6 +77,47 @@ function extractMessageText(message) {
   return '';
 }
 
+function normalizeTextForEmbedding(text, stripVolatileTokens = true) {
+  let out = String(text || '');
+  if (!out) {
+    return '';
+  }
+  out = out.normalize('NFKC');
+  out = out.replace(/[\u200B-\u200D\uFEFF]/g, '');
+  if (stripVolatileTokens) {
+    out = out
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, ' [uuid] ')
+      .replace(
+        /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:z|[+-]\d{2}:\d{2})\b/gi,
+        ' [timestamp] '
+      )
+      .replace(/\btrace[_-]?id\s*[:=]\s*[a-z0-9-]{8,}\b/gi, ' trace_id:[id] ')
+      .replace(/\bspan[_-]?id\s*[:=]\s*[a-z0-9-]{8,}\b/gi, ' span_id:[id] ')
+      .replace(/\breq(?:uest)?[_-]?id\s*[:=]\s*[a-z0-9-]{8,}\b/gi, ' request_id:[id] ')
+      .replace(/\b[0-9a-f]{24,}\b/gi, ' [hexid] ');
+  }
+  out = out.replace(/\s+/g, ' ').trim();
+  return out;
+}
+
+function countKeywordHits(text, keywords = []) {
+  const haystack = String(text || '').toLowerCase();
+  if (!haystack) {
+    return 0;
+  }
+  let hits = 0;
+  for (const raw of keywords) {
+    const token = String(raw || '').trim().toLowerCase();
+    if (!token) {
+      continue;
+    }
+    if (haystack.includes(token)) {
+      hits += 1;
+    }
+  }
+  return hits;
+}
+
 function cosineSimilarity(a = [], b = []) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length === 0 || b.length === 0) {
     return 0;
@@ -116,6 +157,27 @@ class IntentDriftDetector {
     this.cacheDir = String(normalized.cache_dir || '~/.sentinel/models');
     this.maxPromptChars = clampPositiveInt(normalized.max_prompt_chars, 4000, 128, 20000);
     this.cooldownMs = clampPositiveInt(normalized.cooldown_ms, 60000, 1000, 3600000);
+    this.targetRoles = new Set(
+      Array.isArray(normalized.target_roles)
+        ? normalized.target_roles.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+        : ['system', 'user', 'assistant']
+    );
+    this.stripVolatileTokens = normalized.strip_volatile_tokens !== false;
+    this.riskKeywords = Array.isArray(normalized.risk_keywords)
+      ? normalized.risk_keywords.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+      : [
+          'password',
+          'credential',
+          'api key',
+          'token',
+          'secret',
+          'id_rsa',
+          'ssh key',
+          'bypass',
+          'ignore previous instructions',
+          'override safety',
+        ];
+    this.riskBoost = clampProbability(normalized.risk_boost, 0.12);
     this.observability = normalized.observability !== false;
 
     this.now = typeof deps.now === 'function' ? deps.now : Date.now;
@@ -191,10 +253,10 @@ class IntentDriftDetector {
     for (const msg of messages) {
       const role = String(msg?.role || '').toLowerCase();
       if (!systemText && role === 'system') {
-        systemText = extractMessageText(msg);
+        systemText = normalizeTextForEmbedding(extractMessageText(msg), this.stripVolatileTokens);
       }
       if (!userText && role === 'user') {
-        userText = extractMessageText(msg);
+        userText = normalizeTextForEmbedding(extractMessageText(msg), this.stripVolatileTokens);
       }
       if (systemText && userText) {
         break;
@@ -206,7 +268,17 @@ class IntentDriftDetector {
   buildCurrentText(messages = []) {
     const tail = messages.slice(Math.max(0, messages.length - this.contextWindowMessages));
     return tail
-      .map((message) => `${String(message?.role || 'unknown')}: ${extractMessageText(message)}`)
+      .filter((message) => {
+        if (this.targetRoles.size === 0) {
+          return true;
+        }
+        return this.targetRoles.has(String(message?.role || '').toLowerCase());
+      })
+      .map((message) => {
+        const role = String(message?.role || 'unknown').toLowerCase();
+        const normalized = normalizeTextForEmbedding(extractMessageText(message), this.stripVolatileTokens);
+        return `${role}: ${normalized}`;
+      })
       .join('\n')
       .slice(0, this.maxPromptChars);
   }
@@ -272,6 +344,8 @@ class IntentDriftDetector {
         };
       }
       state.anchorVector = anchorVector;
+      state.anchorText = anchorText;
+      state.anchorRisk = countKeywordHits(anchorText, this.riskKeywords);
       state.anchorHash = crypto.createHash('sha256').update(anchorText, 'utf8').digest('hex').slice(0, 16);
       return {
         enabled: true,
@@ -337,8 +411,12 @@ class IntentDriftDetector {
 
     const similarity = cosineSimilarity(state.anchorVector, currentVector);
     const distance = 1 - similarity;
-    state.lastDistance = distance;
-    const drifted = distance >= this.threshold;
+    const currentRisk = countKeywordHits(currentText, this.riskKeywords);
+    const anchorRisk = Number(state.anchorRisk || 0);
+    const riskDelta = Math.max(0, currentRisk - anchorRisk);
+    const adjustedDistance = Math.min(1, distance + (riskDelta * this.riskBoost));
+    state.lastDistance = adjustedDistance;
+    const drifted = adjustedDistance >= this.threshold;
     if (drifted && nowMs > state.blockedUntil) {
       state.blockedUntil = nowMs + this.cooldownMs;
     }
@@ -353,6 +431,8 @@ class IntentDriftDetector {
       turnCount: state.turnCount,
       similarity: Number(similarity.toFixed(6)),
       distance: Number(distance.toFixed(6)),
+      adjustedDistance: Number(adjustedDistance.toFixed(6)),
+      riskDelta,
       threshold: this.threshold,
       blockedUntil: state.blockedUntil,
       anchorHash: state.anchorHash,

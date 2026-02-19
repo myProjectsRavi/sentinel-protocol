@@ -1,5 +1,11 @@
+const fs = require('fs');
+const path = require('path');
 const { Readable } = require('stream');
 const { TwoWayPIIVault } = require('../../src/pii/two-way-vault');
+
+const VAULT_FIXTURES = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'hardening', 'vault-attack-cases.json'), 'utf8')
+);
 
 async function collect(stream) {
   const chunks = [];
@@ -80,5 +86,72 @@ describe('TwoWayPIIVault', () => {
     const out = await collect(source.pipe(transform));
     expect(out).toContain('ravi@example.com');
     expect(out).not.toContain(token);
+  });
+
+  test('guardrails: cross-session token replay does not detokenize', () => {
+    const fixture = VAULT_FIXTURES.find((item) => item.id === 'cross_session_token_replay');
+    const vault = new TwoWayPIIVault({
+      enabled: true,
+      mode: 'active',
+      target_types: ['email_address'],
+    });
+    const sessionA = 'session-A';
+    const sessionB = 'session-B';
+    const ingress = vault.applyIngress({
+      sessionKey: sessionA,
+      text: 'send to ravi@example.com',
+      findings: [{ id: 'email_address', value: 'ravi@example.com' }],
+    });
+    const token = ingress.mappings[0].token;
+    const egressB = vault.applyEgressBuffer({
+      sessionKey: sessionB,
+      contentType: 'application/json',
+      bodyBuffer: Buffer.from(`{"target":"${token}"}`, 'utf8'),
+    });
+    expect(Boolean(egressB.changed)).toBe(Boolean(fixture.expect_rewritten));
+  });
+
+  test('guardrails: ingress skips over-sized payload', () => {
+    const fixture = VAULT_FIXTURES.find((item) => item.id === 'ingress_large_payload_skip');
+    const vault = new TwoWayPIIVault({
+      enabled: true,
+      mode: 'active',
+      target_types: ['email_address'],
+      max_payload_bytes: 64,
+    });
+    const result = vault.applyIngress({
+      sessionKey: 's-large',
+      text: `prefix-${'a'.repeat(256)}-ravi@example.com`,
+      findings: [{ id: 'email_address', value: 'ravi@example.com' }],
+    });
+    expect(result.applied).toBe(false);
+    expect(result.skipped).toBe(fixture.expect_skipped);
+  });
+
+  test('guardrails: egress rewrite entry cap limits detokenization scope', () => {
+    const fixture = VAULT_FIXTURES.find((item) => item.id === 'egress_entry_cap');
+    const vault = new TwoWayPIIVault({
+      enabled: true,
+      mode: 'active',
+      target_types: ['email_address'],
+      max_egress_rewrite_entries: 1,
+    });
+    const sessionKey = 's-cap';
+    const first = vault.applyIngress({
+      sessionKey,
+      text: 'first a@example.com',
+      findings: [{ id: 'email_address', value: 'a@example.com' }],
+    });
+    const second = vault.applyIngress({
+      sessionKey,
+      text: 'second b@example.com',
+      findings: [{ id: 'email_address', value: 'b@example.com' }],
+    });
+    const egress = vault.applyEgressBuffer({
+      sessionKey,
+      contentType: 'application/json',
+      bodyBuffer: Buffer.from(`{"one":"${first.mappings[0].token}","two":"${second.mappings[0].token}"}`, 'utf8'),
+    });
+    expect(Boolean(egress.bodyBuffer.toString('utf8').includes('b@example.com'))).toBe(Boolean(fixture.expect_rewritten));
   });
 });

@@ -1,4 +1,10 @@
+const fs = require('fs');
+const path = require('path');
 const { IntentDriftDetector, cosineSimilarity } = require('../../src/runtime/intent-drift');
+
+const DRIFT_FIXTURES = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'hardening', 'drift-bypass-cases.json'), 'utf8')
+);
 
 function embedStub(text) {
   const normalized = String(text || '').toLowerCase();
@@ -114,5 +120,40 @@ describe('IntentDriftDetector', () => {
   test('cosineSimilarity returns 0 on invalid vectors', () => {
     expect(cosineSimilarity([], [1, 2, 3])).toBe(0);
     expect(cosineSimilarity([0, 0], [0, 0])).toBe(0);
+  });
+
+  test('fixture-driven drift bypass cases', async () => {
+    for (const fixture of DRIFT_FIXTURES) {
+      const detector = new IntentDriftDetector({
+        enabled: true,
+        mode: 'block',
+        key_header: 'x-sentinel-session-id',
+        target_roles: ['system', 'user'],
+        strip_volatile_tokens: true,
+        risk_keywords: ['password', 'api key', 'secret', 'credential', 'bypass'],
+        risk_boost: 0.2,
+        sample_every_turns: 1,
+        min_turns: 2,
+        threshold: 0.15,
+      });
+
+      const embedCollision = async () => [1, 0, 0];
+      await detector.evaluate({
+        headers: { 'x-sentinel-session-id': `fx-${fixture.id}` },
+        effectiveMode: 'enforce',
+        correlationId: `init-${fixture.id}`,
+        bodyJson: { messages: fixture.anchor },
+        embedText: embedCollision,
+      });
+      const decision = await detector.evaluate({
+        headers: { 'x-sentinel-session-id': `fx-${fixture.id}` },
+        effectiveMode: 'enforce',
+        correlationId: `next-${fixture.id}`,
+        bodyJson: { messages: fixture.followup },
+        embedText: embedCollision,
+      });
+
+      expect(Boolean(decision.drifted)).toBe(Boolean(fixture.expect_drifted));
+    }
   });
 });

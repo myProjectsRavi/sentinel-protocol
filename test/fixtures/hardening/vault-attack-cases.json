@@ -1,0 +1,14 @@
+[
+  {
+    "id": "cross_session_token_replay",
+    "expect_rewritten": false
+  },
+  {
+    "id": "ingress_large_payload_skip",
+    "expect_skipped": "payload_too_large"
+  },
+  {
+    "id": "egress_entry_cap",
+    "expect_rewritten": false
+  }
+]

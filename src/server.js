@@ -1093,7 +1093,7 @@ class SentinelServer {
         }
       }
       if (omniShieldDecision.detected && this.omniShield.plugin?.enabled === true) {
-        omniShieldSanitizeDecision = this.omniShield.sanitizePayload({
+        omniShieldSanitizeDecision = await this.omniShield.sanitizePayload({
           bodyJson,
           findings: omniShieldDecision.findings,
           effectiveMode,
@@ -1636,8 +1636,17 @@ class SentinelServer {
         }
         if (intentDriftDecision?.enabled && this.intentDrift.observability) {
           res.setHeader('x-sentinel-intent-drift', String(intentDriftDecision.reason || 'not_evaluated'));
-          if (Number.isFinite(Number(intentDriftDecision.distance))) {
-            res.setHeader('x-sentinel-intent-drift-distance', String(intentDriftDecision.distance));
+          const distanceForHeader = Number.isFinite(Number(intentDriftDecision.adjustedDistance))
+            ? intentDriftDecision.adjustedDistance
+            : intentDriftDecision.distance;
+          if (Number.isFinite(Number(distanceForHeader))) {
+            res.setHeader('x-sentinel-intent-drift-distance', String(distanceForHeader));
+          }
+          if (Number.isFinite(Number(intentDriftDecision.adjustedDistance))) {
+            res.setHeader('x-sentinel-intent-drift-adjusted-distance', String(intentDriftDecision.adjustedDistance));
+          }
+          if (Number.isFinite(Number(intentDriftDecision.riskDelta))) {
+            res.setHeader('x-sentinel-intent-drift-risk-delta', String(intentDriftDecision.riskDelta));
           }
           if (Number.isFinite(Number(intentDriftDecision.threshold))) {
             res.setHeader('x-sentinel-intent-drift-threshold', String(intentDriftDecision.threshold));
@@ -1685,6 +1694,8 @@ class SentinelServer {
               response_bytes: 0,
               provider,
               intent_drift_distance: intentDriftDecision.distance,
+              intent_drift_adjusted_distance: intentDriftDecision.adjustedDistance,
+              intent_drift_risk_delta: intentDriftDecision.riskDelta,
               intent_drift_similarity: intentDriftDecision.similarity,
               intent_drift_threshold: intentDriftDecision.threshold,
               intent_drift_turn_count: intentDriftDecision.turnCount,
@@ -1701,6 +1712,8 @@ class SentinelServer {
               error: 'INTENT_DRIFT_DETECTED',
               reason: intentDriftDecision.reason,
               distance: intentDriftDecision.distance,
+              adjusted_distance: intentDriftDecision.adjustedDistance,
+              risk_delta: intentDriftDecision.riskDelta,
               threshold: intentDriftDecision.threshold,
               similarity: intentDriftDecision.similarity,
               turn_count: intentDriftDecision.turnCount,

@@ -32,6 +32,25 @@ function normalizePluginMode(value, fallback = 'enforce') {
   return normalized === 'always' ? 'always' : 'enforce';
 }
 
+function withTimeout(promise, timeoutMs) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`plugin_timeout_after_${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  });
+}
+
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function approximateBase64Bytes(data) {
   const normalized = String(data || '').replace(/\s+/g, '');
   if (!normalized) {
@@ -77,6 +96,7 @@ class OmniShield {
       mode: normalizePluginMode(plugin.mode, 'enforce'),
       failClosed: plugin.fail_closed === true,
       maxRewrites: clampPositiveInt(plugin.max_rewrites, 20, 1, 1000),
+      timeoutMs: clampPositiveInt(plugin.timeout_ms, 1500, 50, 30000),
       observability: plugin.observability !== false,
     };
     this.loadedPlugin = null;
@@ -216,7 +236,7 @@ class OmniShield {
     };
   }
 
-  sanitizePayload({ bodyJson, findings, effectiveMode = 'monitor' } = {}) {
+  async sanitizePayload({ bodyJson, findings, effectiveMode = 'monitor' } = {}) {
     if (!this.shouldRunPlugin(effectiveMode)) {
       return {
         enabled: this.plugin.enabled,
@@ -230,23 +250,37 @@ class OmniShield {
     }
     try {
       const sanitizer = this.resolvePlugin();
-      const result = sanitizer({
-        bodyJson,
+      const safeBodyJson = isPlainObject(bodyJson) ? JSON.parse(JSON.stringify(bodyJson)) : bodyJson;
+      const result = await withTimeout(Promise.resolve(sanitizer({
+        bodyJson: safeBodyJson,
         findings: Array.isArray(findings) ? findings : [],
         pluginConfig: this.plugin,
-      }) || { applied: false, rewrites: 0, unsupported: 0, bodyJson };
+      })), this.plugin.timeoutMs);
+      if (!isPlainObject(result)) {
+        throw new Error('plugin_invalid_result');
+      }
+      const rewrites = Number(result.rewrites || 0);
       const unsupported = Number(result.unsupported || 0);
-      const shouldBlock = this.plugin.failClosed && unsupported > 0 && String(effectiveMode || '') === 'enforce';
+      if (!Number.isFinite(rewrites) || rewrites < 0) {
+        throw new Error('plugin_invalid_rewrites');
+      }
+      if (!Number.isFinite(unsupported) || unsupported < 0) {
+        throw new Error('plugin_invalid_unsupported');
+      }
+      const boundedRewrites = Math.min(this.plugin.maxRewrites, Math.floor(rewrites));
+      const boundedUnsupported = Math.floor(unsupported);
+      const shouldBlock = this.plugin.failClosed && boundedUnsupported > 0 && String(effectiveMode || '') === 'enforce';
       return {
         enabled: true,
         applied: result.applied === true,
-        rewrites: Number(result.rewrites || 0),
-        unsupported,
+        rewrites: boundedRewrites,
+        unsupported: boundedUnsupported,
         shouldBlock,
         reason: shouldBlock ? 'plugin_fail_closed' : 'ok',
-        bodyJson: result.bodyJson || bodyJson,
+        bodyJson: isPlainObject(result.bodyJson) ? result.bodyJson : bodyJson,
       };
     } catch (error) {
+      const message = String(error.message || error);
       const shouldBlock = this.plugin.failClosed && String(effectiveMode || '') === 'enforce';
       return {
         enabled: true,
@@ -254,8 +288,8 @@ class OmniShield {
         rewrites: 0,
         unsupported: 0,
         shouldBlock,
-        reason: 'plugin_error',
-        error: String(error.message || error),
+        reason: message.startsWith('plugin_timeout_after_') ? 'plugin_timeout' : 'plugin_error',
+        error: message,
         bodyJson,
       };
     }

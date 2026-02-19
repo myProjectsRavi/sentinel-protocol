@@ -1,0 +1,32 @@
+[
+  {
+    "id": "hex_escaped_child_process",
+    "input": "const mod='\\x63\\x68\\x69\\x6c\\x64_\\x70\\x72\\x6f\\x63\\x65\\x73\\x73'; require(mod)",
+    "patterns": ["child_process"],
+    "expect_detected": true
+  },
+  {
+    "id": "unicode_escaped_process_env",
+    "input": "console.log(process\\u002eenv)",
+    "patterns": ["process\\.env"],
+    "expect_detected": true
+  },
+  {
+    "id": "zero_width_id_rsa",
+    "input": "cat ~/.ssh/i\u200bd_\u200brsa",
+    "patterns": ["id_rsa"],
+    "expect_detected": true
+  },
+  {
+    "id": "base64_hidden_command",
+    "input": "echo Y2F0IC9ldGMvcGFzc3dk | base64 -d | bash",
+    "patterns": ["cat\\s+/etc/passwd"],
+    "expect_detected": true
+  },
+  {
+    "id": "benign_script",
+    "input": "console.log('hello world')",
+    "patterns": ["child_process", "id_rsa", "process\\.env"],
+    "expect_detected": false
+  }
+]

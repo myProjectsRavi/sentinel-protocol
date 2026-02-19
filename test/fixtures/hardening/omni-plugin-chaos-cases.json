@@ -1,0 +1,37 @@
+[
+  {
+    "id": "throw_sync",
+    "behavior": "throw_sync",
+    "fail_closed": true,
+    "expect_block": true,
+    "expect_reason": "plugin_error"
+  },
+  {
+    "id": "reject_async",
+    "behavior": "reject_async",
+    "fail_closed": true,
+    "expect_block": true,
+    "expect_reason": "plugin_error"
+  },
+  {
+    "id": "timeout_async",
+    "behavior": "timeout_async",
+    "fail_closed": true,
+    "expect_block": true,
+    "expect_reason": "plugin_timeout"
+  },
+  {
+    "id": "malformed_result",
+    "behavior": "malformed_result",
+    "fail_closed": true,
+    "expect_block": true,
+    "expect_reason": "plugin_error"
+  },
+  {
+    "id": "unsupported_no_fail_closed",
+    "behavior": "unsupported",
+    "fail_closed": false,
+    "expect_block": false,
+    "expect_reason": "ok"
+  }
+]
