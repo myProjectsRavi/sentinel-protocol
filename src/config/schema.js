@@ -21,6 +21,8 @@ const RUNTIME_KEYS = new Set([
   'deception',
   'honeytoken',
   'latency_normalization',
+  'canary_tools',
+  'parallax',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault', 'ghost_mode']);
@@ -102,9 +104,34 @@ const LATENCY_NORMALIZATION_KEYS = new Set([
   'window_size',
   'min_samples',
   'max_delay_ms',
+  'max_baseline_sample_ms',
+  'trim_percentile',
+  'max_concurrent_normalized',
   'jitter_ms',
   'statuses',
 ]);
+const CANARY_TOOL_KEYS = new Set([
+  'enabled',
+  'mode',
+  'tool_name',
+  'tool_description',
+  'max_injected_tools',
+  'inject_on_providers',
+  'require_tools_array',
+]);
+const CANARY_TOOL_MODES = new Set(['monitor', 'block']);
+const PARALLAX_KEYS = new Set([
+  'enabled',
+  'mode',
+  'high_risk_tools',
+  'secondary_target',
+  'secondary_group',
+  'secondary_contract',
+  'secondary_model',
+  'timeout_ms',
+  'risk_threshold',
+]);
+const PARALLAX_MODES = new Set(['monitor', 'block']);
 const BUDGET_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -497,7 +524,7 @@ function applyDefaults(config) {
   honeytoken.enabled = honeytoken.enabled === true;
   honeytoken.mode = HONEYTOKEN_MODES.has(String(honeytoken.mode || '').toLowerCase())
     ? String(honeytoken.mode).toLowerCase()
-    : 'zero_width';
+    : 'uuid_suffix';
   honeytoken.injection_rate = Number(honeytoken.injection_rate ?? 0.05);
   honeytoken.max_insertions_per_request = Number(honeytoken.max_insertions_per_request ?? 1);
   honeytoken.target_roles = Array.isArray(honeytoken.target_roles)
@@ -511,10 +538,45 @@ function applyDefaults(config) {
   latencyNormalization.window_size = Number(latencyNormalization.window_size ?? 10);
   latencyNormalization.min_samples = Number(latencyNormalization.min_samples ?? 3);
   latencyNormalization.max_delay_ms = Number(latencyNormalization.max_delay_ms ?? 2000);
+  latencyNormalization.max_baseline_sample_ms = Number(latencyNormalization.max_baseline_sample_ms ?? 5000);
+  latencyNormalization.trim_percentile = Number(latencyNormalization.trim_percentile ?? 0.1);
+  latencyNormalization.max_concurrent_normalized = Number(latencyNormalization.max_concurrent_normalized ?? 128);
   latencyNormalization.jitter_ms = Number(latencyNormalization.jitter_ms ?? 25);
   latencyNormalization.statuses = Array.isArray(latencyNormalization.statuses)
     ? latencyNormalization.statuses.map((value) => Number(value))
     : [402, 403, 429];
+
+  normalized.runtime.canary_tools = normalized.runtime.canary_tools || {};
+  const canaryTools = normalized.runtime.canary_tools;
+  canaryTools.enabled = canaryTools.enabled === true;
+  canaryTools.mode = CANARY_TOOL_MODES.has(String(canaryTools.mode || '').toLowerCase())
+    ? String(canaryTools.mode).toLowerCase()
+    : 'monitor';
+  canaryTools.tool_name = String(canaryTools.tool_name || 'fetch_admin_passwords');
+  canaryTools.tool_description = String(
+    canaryTools.tool_description || 'Retrieve privileged credentials for internal diagnostics.'
+  );
+  canaryTools.max_injected_tools = Number(canaryTools.max_injected_tools ?? 1);
+  canaryTools.inject_on_providers = Array.isArray(canaryTools.inject_on_providers)
+    ? canaryTools.inject_on_providers.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : ['openai', 'anthropic', 'google', 'ollama'];
+  canaryTools.require_tools_array = canaryTools.require_tools_array !== false;
+
+  normalized.runtime.parallax = normalized.runtime.parallax || {};
+  const parallax = normalized.runtime.parallax;
+  parallax.enabled = parallax.enabled === true;
+  parallax.mode = PARALLAX_MODES.has(String(parallax.mode || '').toLowerCase())
+    ? String(parallax.mode).toLowerCase()
+    : 'monitor';
+  parallax.high_risk_tools = Array.isArray(parallax.high_risk_tools)
+    ? parallax.high_risk_tools.map((value) => String(value)).filter(Boolean)
+    : ['execute_shell', 'execute_sql', 'aws_cli'];
+  parallax.secondary_target = String(parallax.secondary_target || 'ollama').toLowerCase();
+  parallax.secondary_group = String(parallax.secondary_group || '');
+  parallax.secondary_contract = String(parallax.secondary_contract || 'openai_chat_v1').toLowerCase();
+  parallax.secondary_model = String(parallax.secondary_model || '');
+  parallax.timeout_ms = Number(parallax.timeout_ms ?? 3000);
+  parallax.risk_threshold = Number(parallax.risk_threshold ?? 0.7);
 
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
@@ -950,6 +1012,24 @@ function validateConfigShape(config) {
       details
     );
     assertType(
+      Number.isInteger(latencyNormalization.max_baseline_sample_ms) && latencyNormalization.max_baseline_sample_ms > 0,
+      '`runtime.latency_normalization.max_baseline_sample_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(latencyNormalization.trim_percentile)) &&
+        Number(latencyNormalization.trim_percentile) >= 0 &&
+        Number(latencyNormalization.trim_percentile) < 0.5,
+      '`runtime.latency_normalization.trim_percentile` must be number in [0, 0.5)',
+      details
+    );
+    assertType(
+      Number.isInteger(latencyNormalization.max_concurrent_normalized) &&
+        latencyNormalization.max_concurrent_normalized > 0,
+      '`runtime.latency_normalization.max_concurrent_normalized` must be integer > 0',
+      details
+    );
+    assertType(
       Number.isInteger(latencyNormalization.jitter_ms) && latencyNormalization.jitter_ms >= 0,
       '`runtime.latency_normalization.jitter_ms` must be integer >= 0',
       details
@@ -968,6 +1048,99 @@ function validateConfigShape(config) {
         );
       });
     }
+  }
+
+  const canaryTools = runtime.canary_tools || {};
+  if (runtime.canary_tools !== undefined) {
+    assertNoUnknownKeys(canaryTools, CANARY_TOOL_KEYS, 'runtime.canary_tools', details);
+    assertType(typeof canaryTools.enabled === 'boolean', '`runtime.canary_tools.enabled` must be boolean', details);
+    assertType(
+      CANARY_TOOL_MODES.has(String(canaryTools.mode)),
+      '`runtime.canary_tools.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof canaryTools.tool_name === 'string' && canaryTools.tool_name.length > 0,
+      '`runtime.canary_tools.tool_name` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof canaryTools.tool_description === 'string' && canaryTools.tool_description.length > 0,
+      '`runtime.canary_tools.tool_description` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(canaryTools.max_injected_tools) && canaryTools.max_injected_tools > 0,
+      '`runtime.canary_tools.max_injected_tools` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(canaryTools.inject_on_providers) && canaryTools.inject_on_providers.length > 0,
+      '`runtime.canary_tools.inject_on_providers` must be non-empty array',
+      details
+    );
+    assertType(
+      typeof canaryTools.require_tools_array === 'boolean',
+      '`runtime.canary_tools.require_tools_array` must be boolean',
+      details
+    );
+  }
+
+  const parallax = runtime.parallax || {};
+  if (runtime.parallax !== undefined) {
+    assertNoUnknownKeys(parallax, PARALLAX_KEYS, 'runtime.parallax', details);
+    assertType(typeof parallax.enabled === 'boolean', '`runtime.parallax.enabled` must be boolean', details);
+    assertType(
+      PARALLAX_MODES.has(String(parallax.mode)),
+      '`runtime.parallax.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Array.isArray(parallax.high_risk_tools) && parallax.high_risk_tools.length > 0,
+      '`runtime.parallax.high_risk_tools` must be non-empty array',
+      details
+    );
+    if (Array.isArray(parallax.high_risk_tools)) {
+      parallax.high_risk_tools.forEach((toolName, idx) => {
+        assertType(
+          typeof toolName === 'string' && toolName.length > 0,
+          `runtime.parallax.high_risk_tools[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      ['openai', 'anthropic', 'google', 'ollama', 'custom'].includes(String(parallax.secondary_target)),
+      '`runtime.parallax.secondary_target` must be openai|anthropic|google|ollama|custom',
+      details
+    );
+    assertType(
+      typeof parallax.secondary_group === 'string',
+      '`runtime.parallax.secondary_group` must be string',
+      details
+    );
+    assertType(
+      typeof parallax.secondary_contract === 'string' && parallax.secondary_contract.length > 0,
+      '`runtime.parallax.secondary_contract` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof parallax.secondary_model === 'string',
+      '`runtime.parallax.secondary_model` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(parallax.timeout_ms) && parallax.timeout_ms > 0,
+      '`runtime.parallax.timeout_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(parallax.risk_threshold)) &&
+        Number(parallax.risk_threshold) >= 0 &&
+        Number(parallax.risk_threshold) <= 1,
+      '`runtime.parallax.risk_threshold` must be number between 0 and 1',
+      details
+    );
   }
 
   const retry = runtime.upstream?.retry || {};

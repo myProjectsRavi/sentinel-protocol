@@ -29,6 +29,8 @@ const { DeceptionEngine } = require('./engines/deception-engine');
 const { ProvenanceSigner } = require('./security/provenance-signer');
 const { HoneytokenInjector } = require('./security/honeytoken-injector');
 const { LatencyNormalizer } = require('./runtime/latency-normalizer');
+const { CanaryToolTrap } = require('./engines/canary-tool-trap');
+const { ParallaxValidator } = require('./engines/parallax-validator');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -204,6 +206,10 @@ class SentinelServer {
       deception_streamed: 0,
       honeytoken_injected: 0,
       latency_normalized: 0,
+      canary_tool_injected: 0,
+      canary_tool_triggered: 0,
+      parallax_evaluated: 0,
+      parallax_vetoed: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -255,6 +261,11 @@ class SentinelServer {
     this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
     this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
     this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
+    this.canaryToolTrap = new CanaryToolTrap(this.config.runtime?.canary_tools || {});
+    this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
+      upstreamClient: this.upstreamClient,
+      config: this.config,
+    });
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -296,6 +307,8 @@ class SentinelServer {
       provenance_enabled: this.provenanceSigner.isEnabled(),
       honeytoken_enabled: this.honeytokenInjector.isEnabled(),
       latency_normalization_enabled: this.latencyNormalizer.isEnabled(),
+      canary_tools_enabled: this.canaryToolTrap.isEnabled(),
+      parallax_enabled: this.parallaxValidator.isEnabled(),
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
       semantic_cache_enabled: this.semanticCache.isEnabled(),
       budget_enabled: budgetSnapshot.enabled,
@@ -380,14 +393,26 @@ class SentinelServer {
     if (!plan.apply) {
       return plan;
     }
-    await sleep(plan.delayMs);
-    if (!res.headersSent) {
-      res.setHeader('x-sentinel-latency-normalized', 'true');
-      res.setHeader('x-sentinel-latency-delay-ms', String(plan.delayMs));
-      res.setHeader('x-sentinel-latency-target-ms', String(plan.targetMs || 0));
+    if (!this.latencyNormalizer.tryAcquire()) {
+      return {
+        ...plan,
+        apply: false,
+        delayMs: 0,
+        reason: 'normalization_capacity_reached',
+      };
     }
-    this.stats.latency_normalized += 1;
-    return plan;
+    try {
+      await sleep(plan.delayMs);
+      if (!res.headersSent) {
+        res.setHeader('x-sentinel-latency-normalized', 'true');
+        res.setHeader('x-sentinel-latency-delay-ms', String(plan.delayMs));
+        res.setHeader('x-sentinel-latency-target-ms', String(plan.targetMs || 0));
+      }
+      this.stats.latency_normalized += 1;
+      return plan;
+    } finally {
+      this.latencyNormalizer.release();
+    }
   }
 
   async maybeServeDeceptionResponse({
@@ -1148,6 +1173,11 @@ class SentinelServer {
         }
       }
 
+      const parallaxInputBodyJson =
+        bodyJson && typeof bodyJson === 'object'
+          ? JSON.parse(JSON.stringify(bodyJson))
+          : null;
+
       let honeytokenDecision = null;
       if (this.honeytokenInjector.isEnabled()) {
         const injected = this.honeytokenInjector.inject({
@@ -1166,6 +1196,21 @@ class SentinelServer {
           res.setHeader('x-sentinel-honeytoken-id', String(injected.meta.token_hash).slice(0, 16));
         }
       }
+
+      let canaryToolDecision = null;
+      if (this.canaryToolTrap.isEnabled()) {
+        const canaryInjected = this.canaryToolTrap.inject(bodyJson, { provider });
+        if (canaryInjected.applied) {
+          bodyJson = canaryInjected.bodyJson;
+          bodyText = canaryInjected.bodyText;
+          canaryToolDecision = canaryInjected.meta;
+          this.stats.canary_tool_injected += 1;
+          res.setHeader('x-sentinel-canary-tool', 'injected');
+          res.setHeader('x-sentinel-canary-tool-name', canaryInjected.meta.tool_name);
+        }
+      }
+      let canaryTriggered = null;
+      let parallaxDecision = null;
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
       const forwardHeaders = scrubForwardHeaders(req.headers);
@@ -1436,6 +1481,14 @@ class SentinelServer {
           honeytoken_applied: Boolean(honeytokenDecision),
           honeytoken_mode: honeytokenDecision?.mode,
           honeytoken_token_hash: honeytokenDecision?.token_hash,
+          canary_tool_injected: Boolean(canaryToolDecision),
+          canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+          canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+          parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+          parallax_veto: Boolean(parallaxDecision?.veto),
+          parallax_risk: parallaxDecision?.risk,
+          parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+          parallax_high_risk_tools: parallaxDecision?.highRiskTools,
         });
 
         this.writeStatus();
@@ -1610,6 +1663,14 @@ class SentinelServer {
             honeytoken_applied: Boolean(honeytokenDecision),
             honeytoken_mode: honeytokenDecision?.mode,
             honeytoken_token_hash: honeytokenDecision?.token_hash,
+            canary_tool_injected: Boolean(canaryToolDecision),
+            canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+            canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+            parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+            parallax_veto: Boolean(parallaxDecision?.veto),
+            parallax_risk: parallaxDecision?.risk,
+            parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+            parallax_high_risk_tools: parallaxDecision?.highRiskTools,
           });
           this.writeStatus();
           finalizeRequestTelemetry({
@@ -1649,6 +1710,14 @@ class SentinelServer {
                 honeytoken_applied: Boolean(honeytokenDecision),
                 honeytoken_mode: honeytokenDecision?.mode,
                 honeytoken_token_hash: honeytokenDecision?.token_hash,
+                canary_tool_injected: Boolean(canaryToolDecision),
+                canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+                canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+                parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+                parallax_veto: Boolean(parallaxDecision?.veto),
+                parallax_risk: parallaxDecision?.risk,
+                parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+                parallax_high_risk_tools: parallaxDecision?.highRiskTools,
                 budget_charged_usd: budgetCharge?.chargedUsd,
                 budget_spent_usd: budgetCharge?.spentUsd,
                 budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -1685,6 +1754,14 @@ class SentinelServer {
               honeytoken_applied: Boolean(honeytokenDecision),
               honeytoken_mode: honeytokenDecision?.mode,
               honeytoken_token_hash: honeytokenDecision?.token_hash,
+              canary_tool_injected: Boolean(canaryToolDecision),
+              canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+              canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+              parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+              parallax_veto: Boolean(parallaxDecision?.veto),
+              parallax_risk: parallaxDecision?.risk,
+              parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+              parallax_high_risk_tools: parallaxDecision?.highRiskTools,
               budget_charged_usd: budgetCharge?.chargedUsd,
               budget_spent_usd: budgetCharge?.spentUsd,
               budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -1799,6 +1876,161 @@ class SentinelServer {
         }
       }
 
+      canaryTriggered = null;
+      if (this.canaryToolTrap.isEnabled()) {
+        canaryTriggered = this.canaryToolTrap.detectTriggered(
+          outboundBody,
+          upstream.responseHeaders?.['content-type']
+        );
+        if (canaryTriggered.triggered) {
+          this.stats.canary_tool_triggered += 1;
+          warnings.push('canary_tool_triggered');
+          this.stats.warnings_total += 1;
+          res.setHeader('x-sentinel-canary-tool-triggered', 'true');
+          res.setHeader('x-sentinel-canary-tool-name', canaryTriggered.toolName);
+
+          if (effectiveMode === 'enforce' && this.canaryToolTrap.mode === 'block') {
+            this.stats.blocked_total += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider: routedProvider,
+              retryCount: upstream.diagnostics.retryCount || 0,
+              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 403,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_canary_tool',
+              reasons: ['canary_tool_triggered'],
+              pii_types: piiTypes,
+              redactions: redactedCount,
+              duration_ms: durationMs,
+              request_bytes: bodyBuffer.length,
+              response_status: 403,
+              response_bytes: 0,
+              provider: routedProvider,
+              upstream_target: routedTarget,
+              canary_tool_name: canaryTriggered.toolName,
+              route_source: routePlan.routeSource,
+              route_group: routePlan.selectedGroup || undefined,
+              route_contract: routePlan.desiredContract,
+              requested_target: routePlan.requestedTarget,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_policy',
+              status: 403,
+              providerName: routedProvider,
+            });
+            return res.status(403).json({
+              error: 'CANARY_TOOL_TRIGGERED',
+              reason: 'canary_tool_triggered',
+              tool_name: canaryTriggered.toolName,
+              correlation_id: correlationId,
+            });
+          }
+        }
+      }
+
+      parallaxDecision = null;
+      if (this.parallaxValidator.isEnabled()) {
+        parallaxDecision = await this.parallaxValidator.evaluate({
+          req,
+          correlationId,
+          requestBodyJson: parallaxInputBodyJson || bodyJson,
+          responseBody: outboundBody,
+          responseContentType: upstream.responseHeaders?.['content-type'],
+        });
+        if (parallaxDecision.evaluated) {
+          this.stats.parallax_evaluated += 1;
+        }
+        if (parallaxDecision.error) {
+          warnings.push(`parallax_error:${parallaxDecision.error}`);
+          this.stats.warnings_total += 1;
+        } else if (parallaxDecision.evaluated && parallaxDecision.veto) {
+          this.stats.parallax_vetoed += 1;
+          warnings.push('parallax_veto');
+          this.stats.warnings_total += 1;
+          res.setHeader('x-sentinel-parallax', 'veto');
+          res.setHeader('x-sentinel-parallax-risk', String(parallaxDecision.risk));
+          res.setHeader('x-sentinel-parallax-provider', String(parallaxDecision.secondaryProvider || 'unknown'));
+
+          if (effectiveMode === 'enforce' && this.parallaxValidator.mode === 'block') {
+            this.stats.blocked_total += 1;
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider: routedProvider,
+              retryCount: upstream.diagnostics.retryCount || 0,
+              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 403,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_parallax',
+              reasons: ['parallax_veto'],
+              pii_types: piiTypes,
+              redactions: redactedCount,
+              duration_ms: durationMs,
+              request_bytes: bodyBuffer.length,
+              response_status: 403,
+              response_bytes: 0,
+              provider: routedProvider,
+              upstream_target: routedTarget,
+              parallax_risk: parallaxDecision.risk,
+              parallax_reason: parallaxDecision.reason,
+              parallax_secondary_provider: parallaxDecision.secondaryProvider,
+              parallax_high_risk_tools: parallaxDecision.highRiskTools,
+              route_source: routePlan.routeSource,
+              route_group: routePlan.selectedGroup || undefined,
+              route_contract: routePlan.desiredContract,
+              requested_target: routePlan.requestedTarget,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_policy',
+              status: 403,
+              providerName: routedProvider,
+            });
+            return res.status(403).json({
+              error: 'PARALLAX_VETO',
+              reason: 'parallax_veto',
+              risk: parallaxDecision.risk,
+              secondary_provider: parallaxDecision.secondaryProvider,
+              high_risk_tools: parallaxDecision.highRiskTools,
+              correlation_id: correlationId,
+            });
+          }
+        } else if (parallaxDecision.evaluated) {
+          res.setHeader('x-sentinel-parallax', 'allow');
+          if (Number.isFinite(Number(parallaxDecision.risk))) {
+            res.setHeader('x-sentinel-parallax-risk', String(parallaxDecision.risk));
+          }
+          if (parallaxDecision.secondaryProvider) {
+            res.setHeader('x-sentinel-parallax-provider', String(parallaxDecision.secondaryProvider));
+          }
+        }
+      }
+
       if (warnings.length > 0) {
         res.setHeader('x-sentinel-warning', warnings.join(','));
       }
@@ -1895,6 +2127,14 @@ class SentinelServer {
         honeytoken_applied: Boolean(honeytokenDecision),
         honeytoken_mode: honeytokenDecision?.mode,
         honeytoken_token_hash: honeytokenDecision?.token_hash,
+        canary_tool_injected: Boolean(canaryToolDecision),
+        canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+        canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+        parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+        parallax_veto: Boolean(parallaxDecision?.veto),
+        parallax_risk: parallaxDecision?.risk,
+        parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+        parallax_high_risk_tools: parallaxDecision?.highRiskTools,
       });
 
       if (upstream.status < 400) {

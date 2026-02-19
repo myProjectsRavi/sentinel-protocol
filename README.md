@@ -29,6 +29,8 @@ It provides:
 - Cryptographic provenance signing (`runtime.provenance`) with stream trailer support
 - Opt-in honeytoken watermark injection (`runtime.honeytoken`) for downstream leakage audits
 - Opt-in blocked-response latency normalization (`runtime.latency_normalization`) against timing probes
+- Monitor-first canary tool traps (`runtime.canary_tools`) for prompt-injection tool abuse detection
+- Optional Parallax two-model validation (`runtime.parallax`) for high-risk tool execution veto signals
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -116,7 +118,7 @@ runtime:
     max_signable_bytes: 2097152
   honeytoken:
     enabled: false
-    mode: zero_width # zero_width | uuid_suffix
+    mode: uuid_suffix # uuid_suffix | zero_width
     injection_rate: 0.05
     max_insertions_per_request: 1
     target_roles: [user]
@@ -126,8 +128,29 @@ runtime:
     window_size: 10
     min_samples: 3
     max_delay_ms: 2000
+    max_baseline_sample_ms: 5000
+    trim_percentile: 0.1
+    max_concurrent_normalized: 128
     jitter_ms: 25
     statuses: [402, 403, 429]
+  canary_tools:
+    enabled: false
+    mode: monitor # monitor | block
+    tool_name: "fetch_admin_passwords"
+    tool_description: "Retrieve privileged credentials for internal diagnostics."
+    max_injected_tools: 1
+    inject_on_providers: [openai, anthropic, google, ollama]
+    require_tools_array: true
+  parallax:
+    enabled: false
+    mode: monitor # monitor | block
+    high_risk_tools: [execute_shell, execute_sql, aws_cli]
+    secondary_target: ollama
+    secondary_group: ""
+    secondary_contract: openai_chat_v1
+    secondary_model: ""
+    timeout_ms: 3000
+    risk_threshold: 0.7
   worker_pool:
     enabled: true
     task_timeout_ms: 10000
