@@ -5,6 +5,7 @@ const SUPPORTED_CONTRACTS = new Set([
   'openai_chat_v1',
   'anthropic_messages_v1',
   'google_generative_v1',
+  'ollama_chat_v1',
 ]);
 
 function normalizeContract(value, fallback = 'passthrough') {
@@ -332,6 +333,129 @@ function openAiToGoogleAdapter(candidate) {
   };
 }
 
+function toOllamaMessages(openAiMessages = []) {
+  return openAiMessages
+    .filter((message) => ['system', 'user', 'assistant'].includes(String(message?.role || '').toLowerCase()))
+    .map((message) => ({
+      role: String(message.role || '').toLowerCase(),
+      content: String(message.content || ''),
+    }));
+}
+
+function mapOllamaFinishReason(reason) {
+  const normalized = String(reason || '').toLowerCase();
+  if (!normalized) {
+    return 'stop';
+  }
+  if (normalized.includes('length') || normalized === 'max_tokens') {
+    return 'length';
+  }
+  if (normalized.includes('tool')) {
+    return 'tool_calls';
+  }
+  return 'stop';
+}
+
+function openAiToOllamaAdapter(candidate) {
+  return {
+    name: 'openai_to_ollama',
+    supportsStreaming: false,
+    prepareRequest(input) {
+      const parsed = input.bodyJson || safeJsonParseBuffer(input.bodyBuffer);
+      if (!parsed || !Array.isArray(parsed.messages)) {
+        throw new Error('openai_chat_v1 -> ollama_chat_v1 requires JSON body with messages');
+      }
+
+      const maxTokens = Number(parsed.max_tokens || parsed.max_completion_tokens || 0);
+      const ollamaPayload = {
+        model: String(parsed.model || candidate?.model || process.env.SENTINEL_OLLAMA_MODEL || 'llama3.1'),
+        stream: false,
+        messages: toOllamaMessages(parsed.messages),
+      };
+
+      const options = {};
+      if (Number.isFinite(Number(parsed.temperature))) {
+        options.temperature = Number(parsed.temperature);
+      }
+      if (Number.isFinite(Number(parsed.top_p))) {
+        options.top_p = Number(parsed.top_p);
+      }
+      if (Number.isInteger(maxTokens) && maxTokens > 0) {
+        options.num_predict = maxTokens;
+      }
+      if (Object.keys(options).length > 0) {
+        ollamaPayload.options = options;
+      }
+
+      return {
+        method: 'POST',
+        pathWithQuery: '/api/chat',
+        bodyBuffer: toJsonBuffer(ollamaPayload),
+        headerOverrides: {
+          'content-type': 'application/json',
+        },
+      };
+    },
+    transformBufferedResponse(input) {
+      if (input.status >= 400) {
+        return {
+          status: input.status,
+          bodyBuffer: input.bodyBuffer,
+          responseHeaders: input.responseHeaders,
+        };
+      }
+
+      const parsed = safeJsonParseBuffer(input.bodyBuffer);
+      if (!parsed) {
+        return {
+          status: input.status,
+          bodyBuffer: input.bodyBuffer,
+          responseHeaders: input.responseHeaders,
+        };
+      }
+
+      const assistantText = String(parsed?.message?.content || parsed?.response || '');
+      const promptTokens = Number(parsed.prompt_eval_count || 0);
+      const completionTokens = Number(parsed.eval_count || 0);
+      const model = parsed.model || candidate?.model || null;
+      const created = parsed.created_at ? Math.floor(new Date(parsed.created_at).getTime() / 1000) : Math.floor(Date.now() / 1000);
+
+      const openAiResponse = {
+        id: `chatcmpl_${crypto.randomUUID()}`,
+        object: 'chat.completion',
+        created: Number.isFinite(created) ? created : Math.floor(Date.now() / 1000),
+        model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: assistantText,
+            },
+            finish_reason: mapOllamaFinishReason(parsed.done_reason),
+          },
+        ],
+        usage: {
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          total_tokens: promptTokens + completionTokens,
+        },
+      };
+
+      const responseHeaders = {
+        ...(input.responseHeaders || {}),
+        'content-type': 'application/json',
+      };
+
+      return {
+        status: input.status,
+        bodyBuffer: toJsonBuffer(openAiResponse),
+        responseHeaders,
+      };
+    },
+  };
+}
+
 function selectUpstreamAdapter(input = {}) {
   const desiredContract = normalizeContract(input.desiredContract, 'passthrough');
   const candidateContract = normalizeContract(input.candidateContract, input.providerContract || 'passthrough');
@@ -355,6 +479,13 @@ function selectUpstreamAdapter(input = {}) {
     return {
       ok: true,
       adapter: openAiToGoogleAdapter(input.candidate),
+    };
+  }
+
+  if (desiredContract === 'openai_chat_v1' && provider === 'ollama') {
+    return {
+      ok: true,
+      adapter: openAiToOllamaAdapter(input.candidate),
     };
   }
 

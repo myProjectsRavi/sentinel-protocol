@@ -182,4 +182,30 @@ describe('upstream route plan', () => {
     expect(plan.candidates[0].breakerKey).toBe('openai:openai-primary');
     expect(plan.candidates[1].breakerKey).toBe('openai:openai-secondary');
   });
+
+  test('resolves builtin ollama target with local base URL', async () => {
+    const plan = await resolveUpstreamPlan(
+      {
+        headers: {
+          'x-sentinel-target': 'ollama',
+        },
+      },
+      {
+        runtime: {
+          upstream: {
+            custom_targets: {
+              enabled: false,
+              allowlist: [],
+              block_private_networks: true,
+            },
+          },
+        },
+      }
+    );
+
+    expect(plan.primary.provider).toBe('ollama');
+    expect(plan.primary.baseUrl).toContain('127.0.0.1:11434');
+    expect(plan.primary.contract).toBe('ollama_chat_v1');
+    expect(plan.desiredContract).toBe('openai_chat_v1');
+  });
 });

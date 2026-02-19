@@ -53,6 +53,7 @@ Route to provider with header:
 - `x-sentinel-target: openai`
 - `x-sentinel-target: anthropic`
 - `x-sentinel-target: google`
+- `x-sentinel-target: ollama`
 - `x-sentinel-target: custom` + `x-sentinel-custom-url`
 
 `custom` targets are disabled by default for SSRF safety.

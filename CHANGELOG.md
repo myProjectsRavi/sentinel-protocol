@@ -11,6 +11,7 @@
 - Local API key vault (`runtime.upstream.auth_vault`) with dummy-key replacement and enforce mode.
 - Agent loop-breaker (`runtime.loop_breaker`) to detect and stop repeated autonomous request loops.
 - Ghost mode (`runtime.upstream.ghost_mode`) for SDK telemetry/fingerprint header stripping.
+- Local Parachute provider support for Ollama with OpenAI-contract adapter and failover compatibility.
 
 ### Changed
 - Docker and compose defaults now preload semantic + neural ONNX models.

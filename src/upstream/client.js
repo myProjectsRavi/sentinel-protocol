@@ -203,6 +203,20 @@ function formatProviderAuthValue(key, scheme) {
 
 function applyProviderAuthorization({ headers, provider, authVaultConfig }) {
   const providerName = String(provider || '').toLowerCase();
+  if (providerName === 'ollama') {
+    const outputHeaders = { ...(headers || {}) };
+    for (const headerName of KNOWN_PROVIDER_AUTH_HEADERS) {
+      deleteHeader(outputHeaders, headerName);
+    }
+    return {
+      ok: true,
+      headers: outputHeaders,
+      auth: {
+        mode: 'local_no_auth',
+        injected: false,
+      },
+    };
+  }
   const defaults = PROVIDER_AUTH_DEFAULTS[providerName];
   if (!defaults) {
     return {

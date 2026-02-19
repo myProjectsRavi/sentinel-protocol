@@ -218,4 +218,53 @@ describe('UpstreamClient auth vault handling', () => {
     expect(fetchOptions.headers['x-stainless-arch']).toBeUndefined();
     expect(fetchOptions.headers['user-agent']).toBe('Sentinel/1.0 (Privacy Proxy)');
   });
+
+  test('ollama provider strips upstream API credential headers', async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+
+    const client = new UpstreamClient({
+      timeoutMs: 2000,
+      retryConfig: {
+        enabled: false,
+        max_attempts: 0,
+        allow_post_with_idempotency_key: false,
+      },
+      circuitBreakers: new FakeCircuitBreakers(),
+      telemetry: null,
+      authVaultConfig: {
+        enabled: false,
+      },
+      ghostModeConfig: {
+        enabled: false,
+      },
+    });
+
+    const result = await client.forwardRequest({
+      req: {
+        headers: {
+          authorization: 'Bearer sk-live-openai',
+          'x-api-key': 'sk-ant-live',
+          'x-goog-api-key': 'AIza-live',
+        },
+      },
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyBuffer: Buffer.from(JSON.stringify({ message: 'hello' })),
+      bodyJson: { message: 'hello' },
+      correlationId: 'corr-ollama-1',
+      wantsStream: false,
+      routePlan: buildRoutePlan('ollama'),
+    });
+
+    expect(result.ok).toBe(true);
+    const fetchOptions = global.fetch.mock.calls[0][1];
+    expect(fetchOptions.headers.authorization).toBeUndefined();
+    expect(fetchOptions.headers['x-api-key']).toBeUndefined();
+    expect(fetchOptions.headers['x-goog-api-key']).toBeUndefined();
+  });
 });

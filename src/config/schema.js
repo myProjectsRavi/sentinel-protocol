@@ -895,8 +895,8 @@ function validateConfigShape(config) {
           details
         );
         assertType(
-          ['openai', 'anthropic', 'google', 'custom'].includes(String(targetConfig.provider).toLowerCase()),
-          `runtime.upstream.resilience_mesh.targets.${targetName}.provider must be openai|anthropic|google|custom`,
+          ['openai', 'anthropic', 'google', 'ollama', 'custom'].includes(String(targetConfig.provider).toLowerCase()),
+          `runtime.upstream.resilience_mesh.targets.${targetName}.provider must be openai|anthropic|google|ollama|custom`,
           details
         );
         assertType(

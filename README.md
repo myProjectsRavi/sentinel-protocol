@@ -26,6 +26,7 @@ It provides:
 - Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
 - Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
+- Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
 - OpenTelemetry hooks for spans and metrics
@@ -46,7 +47,7 @@ Then point your agent base URL to:
 http://127.0.0.1:8787
 ```
 
-Use `x-sentinel-target: anthropic|openai|google|custom` to route providers.
+Use `x-sentinel-target: anthropic|openai|google|ollama|custom` to route providers.
 `custom` targets are disabled by default and require explicit allowlisting in config.
 
 ## Local Development Quick Start
@@ -244,6 +245,43 @@ runtime:
         - user-agent
       override_user_agent: true
       user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
+```
+
+## Local Parachute (Ollama Air-Gapped Fallback)
+
+Sentinel now supports `ollama` as a built-in provider target.
+
+- Direct route header: `x-sentinel-target: ollama`
+- Default base URL: `http://127.0.0.1:11434` (override with `SENTINEL_OLLAMA_URL`)
+- OpenAI contract requests are adapted to Ollama chat and normalized back to OpenAI-compatible output.
+- For direct `ollama` routing, Sentinel defaults desired contract to `openai_chat_v1` for drop-in OpenAI client compatibility.
+
+Example mesh fallback chain:
+
+```yaml
+runtime:
+  upstream:
+    resilience_mesh:
+      enabled: true
+      max_failover_hops: 2
+      groups:
+        reliable:
+          enabled: true
+          contract: openai_chat_v1
+          targets: [openai-primary, anthropic-secondary, local-ollama]
+      targets:
+        openai-primary:
+          enabled: true
+          provider: openai
+          base_url: https://api.openai.com
+        anthropic-secondary:
+          enabled: true
+          provider: anthropic
+          base_url: https://api.anthropic.com
+        local-ollama:
+          enabled: true
+          provider: ollama
+          base_url: http://127.0.0.1:11434
 ```
 
 Mesh/canary routing controls:

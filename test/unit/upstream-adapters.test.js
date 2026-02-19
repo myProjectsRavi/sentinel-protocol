@@ -92,4 +92,64 @@ describe('upstream adapters', () => {
     expect(selection.ok).toBe(false);
     expect(selection.reason).toMatch(/No adapter/);
   });
+
+  test('adapts openai chat request to ollama chat and back', () => {
+    const selection = selectUpstreamAdapter({
+      desiredContract: 'openai_chat_v1',
+      candidateContract: 'ollama_chat_v1',
+      provider: 'ollama',
+      candidate: {},
+    });
+
+    expect(selection.ok).toBe(true);
+    const prepared = selection.adapter.prepareRequest({
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyJson: {
+        model: 'llama3.1',
+        max_tokens: 128,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: 'You are concise.' },
+          { role: 'user', content: 'Hello' },
+        ],
+      },
+      bodyBuffer: Buffer.alloc(0),
+      reqHeaders: {},
+      wantsStream: false,
+      candidate: {},
+    });
+
+    expect(prepared.pathWithQuery).toBe('/api/chat');
+    const payload = JSON.parse(prepared.bodyBuffer.toString('utf8'));
+    expect(payload.model).toBe('llama3.1');
+    expect(payload.stream).toBe(false);
+    expect(payload.messages).toHaveLength(2);
+    expect(payload.options.num_predict).toBe(128);
+
+    const transformed = selection.adapter.transformBufferedResponse({
+      status: 200,
+      responseHeaders: { 'content-type': 'application/json' },
+      bodyBuffer: Buffer.from(
+        JSON.stringify({
+          model: 'llama3.1',
+          created_at: '2026-02-19T00:00:00.000Z',
+          message: {
+            role: 'assistant',
+            content: 'Hello from local model',
+          },
+          done_reason: 'stop',
+          prompt_eval_count: 22,
+          eval_count: 9,
+        })
+      ),
+      candidate: {},
+    });
+
+    const out = JSON.parse(transformed.bodyBuffer.toString('utf8'));
+    expect(out.object).toBe('chat.completion');
+    expect(out.choices[0].message.content).toBe('Hello from local model');
+    expect(out.usage.prompt_tokens).toBe(22);
+    expect(out.usage.completion_tokens).toBe(9);
+  });
 });

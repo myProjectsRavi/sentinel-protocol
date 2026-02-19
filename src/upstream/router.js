@@ -9,6 +9,7 @@ const SUPPORTED_CONTRACTS = new Set([
   'openai_chat_v1',
   'anthropic_messages_v1',
   'google_generative_v1',
+  'ollama_chat_v1',
 ]);
 
 function normalizeAllowlist(rawList) {
@@ -126,7 +127,7 @@ function toPositiveInt(value, fallback) {
 
 function normalizeProvider(provider, fallback = 'openai') {
   const lowered = String(provider || fallback).toLowerCase();
-  if (['openai', 'anthropic', 'google', 'custom'].includes(lowered)) {
+  if (['openai', 'anthropic', 'google', 'ollama', 'custom'].includes(lowered)) {
     return lowered;
   }
   return fallback;
@@ -148,6 +149,8 @@ function defaultContractForProvider(provider) {
       return 'anthropic_messages_v1';
     case 'google':
       return 'google_generative_v1';
+    case 'ollama':
+      return 'ollama_chat_v1';
     default:
       return 'passthrough';
   }
@@ -179,6 +182,9 @@ function getBaseUrlForProvider(provider) {
   }
   if (provider === 'openai') {
     return process.env.SENTINEL_OPENAI_URL || 'https://api.openai.com';
+  }
+  if (provider === 'ollama') {
+    return process.env.SENTINEL_OLLAMA_URL || 'http://127.0.0.1:11434';
   }
   return null;
 }
@@ -242,7 +248,7 @@ function normalizeMeshConfig(raw = {}) {
     failoverOnStatus: failoverOnStatus.length > 0 ? failoverOnStatus : DEFAULT_FAILOVER_STATUS,
     failoverOnErrors: failoverOnErrors.length > 0 ? failoverOnErrors : DEFAULT_FAILOVER_ERRORS,
     defaultGroup: raw.default_group ? String(raw.default_group).toLowerCase() : '',
-    contract: normalizeContract(raw.contract, 'passthrough'),
+    contract: raw.contract ? normalizeContract(raw.contract, 'passthrough') : '',
     groups,
     targets,
   };
@@ -618,8 +624,12 @@ async function resolveUpstreamPlan(req, config = {}) {
   }
 
   const requestedContract = normalizeRequestedContract(req);
+  const defaultDesiredContract =
+    requestedTarget === 'ollama'
+      ? 'openai_chat_v1'
+      : candidates[0].contract;
   const desiredContract = normalizeContract(
-    requestedContract || groupContract || meshConfig.contract || candidates[0].contract,
+    requestedContract || groupContract || meshConfig.contract || defaultDesiredContract,
     'passthrough'
   );
 
