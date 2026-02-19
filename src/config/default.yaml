@@ -75,6 +75,20 @@ runtime:
     sse_token_interval_ms: 1000
     sse_max_tokens: 20
     non_stream_delay_ms: 250
+  honeytoken:
+    enabled: false
+    mode: zero_width # zero_width | uuid_suffix
+    injection_rate: 0.05
+    max_insertions_per_request: 1
+    target_roles: [user]
+    token_prefix: "SNTL"
+  latency_normalization:
+    enabled: false
+    window_size: 10
+    min_samples: 3
+    max_delay_ms: 2000
+    jitter_ms: 25
+    statuses: [402, 403, 429]
   telemetry:
     enabled: true
   upstream:

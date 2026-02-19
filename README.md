@@ -27,6 +27,8 @@ It provides:
 - Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
 - Opt-in deception tarpit (`runtime.deception`) for high-confidence injection/loop traps
 - Cryptographic provenance signing (`runtime.provenance`) with stream trailer support
+- Opt-in honeytoken watermark injection (`runtime.honeytoken`) for downstream leakage audits
+- Opt-in blocked-response latency normalization (`runtime.latency_normalization`) against timing probes
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -112,6 +114,20 @@ runtime:
     sign_stream_trailers: true
     expose_public_key_endpoint: true
     max_signable_bytes: 2097152
+  honeytoken:
+    enabled: false
+    mode: zero_width # zero_width | uuid_suffix
+    injection_rate: 0.05
+    max_insertions_per_request: 1
+    target_roles: [user]
+    token_prefix: "SNTL"
+  latency_normalization:
+    enabled: false
+    window_size: 10
+    min_samples: 3
+    max_delay_ms: 2000
+    jitter_ms: 25
+    statuses: [402, 403, 429]
   worker_pool:
     enabled: true
     task_timeout_ms: 10000

@@ -27,6 +27,8 @@ const { DashboardServer } = require('./monitor/dashboard-server');
 const { LoopBreaker } = require('./engines/loop-breaker');
 const { DeceptionEngine } = require('./engines/deception-engine');
 const { ProvenanceSigner } = require('./security/provenance-signer');
+const { HoneytokenInjector } = require('./security/honeytoken-injector');
+const { LatencyNormalizer } = require('./runtime/latency-normalizer');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -155,6 +157,12 @@ function positiveIntOr(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 class SentinelServer {
   constructor(config, options = {}) {
     ensureSentinelHome();
@@ -194,6 +202,8 @@ class SentinelServer {
       loop_blocked: 0,
       deception_engaged: 0,
       deception_streamed: 0,
+      honeytoken_injected: 0,
+      latency_normalized: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -243,6 +253,8 @@ class SentinelServer {
     this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
     this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
     this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
+    this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
+    this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -282,6 +294,8 @@ class SentinelServer {
       loop_breaker_enabled: this.loopBreaker.enabled,
       deception_enabled: this.deceptionEngine.isEnabled(),
       provenance_enabled: this.provenanceSigner.isEnabled(),
+      honeytoken_enabled: this.honeytokenInjector.isEnabled(),
+      latency_normalization_enabled: this.latencyNormalizer.isEnabled(),
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
       semantic_cache_enabled: this.semanticCache.isEnabled(),
       budget_enabled: budgetSnapshot.enabled,
@@ -356,6 +370,24 @@ class SentinelServer {
       res.setHeader(key, value);
     }
     res.setHeader('x-sentinel-signature-status', 'signed');
+  }
+
+  async maybeNormalizeBlockedLatency({ res, statusCode, requestStart }) {
+    const plan = this.latencyNormalizer.planDelay({
+      elapsedMs: Date.now() - Number(requestStart || Date.now()),
+      statusCode,
+    });
+    if (!plan.apply) {
+      return plan;
+    }
+    await sleep(plan.delayMs);
+    if (!res.headersSent) {
+      res.setHeader('x-sentinel-latency-normalized', 'true');
+      res.setHeader('x-sentinel-latency-delay-ms', String(plan.delayMs));
+      res.setHeader('x-sentinel-latency-target-ms', String(plan.targetMs || 0));
+    }
+    this.stats.latency_normalized += 1;
+    return plan;
   }
 
   async maybeServeDeceptionResponse({
@@ -840,6 +872,11 @@ class SentinelServer {
           };
 
           responseHeaderDiagnostics(res, diagnostics);
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode: 403,
+            requestStart,
+          });
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
             correlation_id: correlationId,
@@ -925,6 +962,11 @@ class SentinelServer {
           };
           responseHeaderDiagnostics(res, diagnostics);
           res.setHeader('x-sentinel-loop-breaker', 'blocked');
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode: 429,
+            requestStart,
+          });
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
             correlation_id: correlationId,
@@ -1054,6 +1096,11 @@ class SentinelServer {
           res.setHeader('x-sentinel-warning', warnings.join(','));
         }
         res.setHeader('x-sentinel-pii-provider', piiProviderUsed);
+        await this.maybeNormalizeBlockedLatency({
+          res,
+          statusCode: 403,
+          requestStart,
+        });
 
         this.auditLogger.write({
           timestamp: new Date().toISOString(),
@@ -1101,6 +1148,25 @@ class SentinelServer {
         }
       }
 
+      let honeytokenDecision = null;
+      if (this.honeytokenInjector.isEnabled()) {
+        const injected = this.honeytokenInjector.inject({
+          bodyJson,
+          bodyText,
+          provider,
+          path: parsedPath.pathname,
+        });
+        if (injected.applied) {
+          bodyJson = injected.bodyJson;
+          bodyText = injected.bodyText;
+          honeytokenDecision = injected.meta;
+          this.stats.honeytoken_injected += 1;
+          res.setHeader('x-sentinel-honeytoken', 'injected');
+          res.setHeader('x-sentinel-honeytoken-mode', injected.meta.mode);
+          res.setHeader('x-sentinel-honeytoken-id', String(injected.meta.token_hash).slice(0, 16));
+        }
+      }
+
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
       const forwardHeaders = scrubForwardHeaders(req.headers);
 
@@ -1130,6 +1196,11 @@ class SentinelServer {
             correlationId,
           };
           responseHeaderDiagnostics(res, diagnostics);
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode: 402,
+            requestStart,
+          });
           this.auditLogger.write({
             timestamp: new Date().toISOString(),
             correlation_id: correlationId,
@@ -1362,6 +1433,9 @@ class SentinelServer {
           route_group: routePlan.selectedGroup || undefined,
           route_contract: routePlan.desiredContract,
           requested_target: routePlan.requestedTarget,
+          honeytoken_applied: Boolean(honeytokenDecision),
+          honeytoken_mode: honeytokenDecision?.mode,
+          honeytoken_token_hash: honeytokenDecision?.token_hash,
         });
 
         this.writeStatus();
@@ -1504,6 +1578,7 @@ class SentinelServer {
               res.addTrailers(ProvenanceSigner.proofHeaders(proof));
             }
           }
+          this.latencyNormalizer.recordSuccess(Date.now() - requestStart);
           const budgetCharge = await finalizeStreamBudget();
 
           this.auditLogger.write({
@@ -1532,6 +1607,9 @@ class SentinelServer {
             route_group: routePlan.selectedGroup || undefined,
             route_contract: routePlan.desiredContract,
             requested_target: routePlan.requestedTarget,
+            honeytoken_applied: Boolean(honeytokenDecision),
+            honeytoken_mode: honeytokenDecision?.mode,
+            honeytoken_token_hash: honeytokenDecision?.token_hash,
           });
           this.writeStatus();
           finalizeRequestTelemetry({
@@ -1568,6 +1646,9 @@ class SentinelServer {
                 route_group: routePlan.selectedGroup || undefined,
                 route_contract: routePlan.desiredContract,
                 requested_target: routePlan.requestedTarget,
+                honeytoken_applied: Boolean(honeytokenDecision),
+                honeytoken_mode: honeytokenDecision?.mode,
+                honeytoken_token_hash: honeytokenDecision?.token_hash,
                 budget_charged_usd: budgetCharge?.chargedUsd,
                 budget_spent_usd: budgetCharge?.spentUsd,
                 budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -1601,6 +1682,9 @@ class SentinelServer {
               route_group: routePlan.selectedGroup || undefined,
               route_contract: routePlan.desiredContract,
               requested_target: routePlan.requestedTarget,
+              honeytoken_applied: Boolean(honeytokenDecision),
+              honeytoken_mode: honeytokenDecision?.mode,
+              honeytoken_token_hash: honeytokenDecision?.token_hash,
               budget_charged_usd: budgetCharge?.chargedUsd,
               budget_spent_usd: budgetCharge?.spentUsd,
               budget_remaining_usd: budgetCharge?.remainingUsd,
@@ -1673,6 +1757,11 @@ class SentinelServer {
             };
             responseHeaderDiagnostics(res, diagnostics);
             res.setHeader('x-sentinel-egress-action', 'block');
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 403,
+              requestStart,
+            });
             this.auditLogger.write({
               timestamp: new Date().toISOString(),
               correlation_id: correlationId,
@@ -1803,8 +1892,12 @@ class SentinelServer {
         route_group: routePlan.selectedGroup || undefined,
         route_contract: routePlan.desiredContract,
         requested_target: routePlan.requestedTarget,
+        honeytoken_applied: Boolean(honeytokenDecision),
+        honeytoken_mode: honeytokenDecision?.mode,
+        honeytoken_token_hash: honeytokenDecision?.token_hash,
       });
 
+      this.latencyNormalizer.recordSuccess(Date.now() - requestStart);
       this.writeStatus();
       finalizeRequestTelemetry({
         decision: 'forwarded',

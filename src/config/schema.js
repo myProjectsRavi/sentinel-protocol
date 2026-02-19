@@ -19,6 +19,8 @@ const RUNTIME_KEYS = new Set([
   'loop_breaker',
   'provenance',
   'deception',
+  'honeytoken',
+  'latency_normalization',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault', 'ghost_mode']);
@@ -86,6 +88,23 @@ const DECEPTION_KEYS = new Set([
   'non_stream_delay_ms',
 ]);
 const DECEPTION_MODES = new Set(['off', 'tarpit']);
+const HONEYTOKEN_KEYS = new Set([
+  'enabled',
+  'mode',
+  'injection_rate',
+  'max_insertions_per_request',
+  'target_roles',
+  'token_prefix',
+]);
+const HONEYTOKEN_MODES = new Set(['zero_width', 'uuid_suffix']);
+const LATENCY_NORMALIZATION_KEYS = new Set([
+  'enabled',
+  'window_size',
+  'min_samples',
+  'max_delay_ms',
+  'jitter_ms',
+  'statuses',
+]);
 const BUDGET_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -473,6 +492,30 @@ function applyDefaults(config) {
   deception.sse_max_tokens = Number(deception.sse_max_tokens ?? 20);
   deception.non_stream_delay_ms = Number(deception.non_stream_delay_ms ?? 250);
 
+  normalized.runtime.honeytoken = normalized.runtime.honeytoken || {};
+  const honeytoken = normalized.runtime.honeytoken;
+  honeytoken.enabled = honeytoken.enabled === true;
+  honeytoken.mode = HONEYTOKEN_MODES.has(String(honeytoken.mode || '').toLowerCase())
+    ? String(honeytoken.mode).toLowerCase()
+    : 'zero_width';
+  honeytoken.injection_rate = Number(honeytoken.injection_rate ?? 0.05);
+  honeytoken.max_insertions_per_request = Number(honeytoken.max_insertions_per_request ?? 1);
+  honeytoken.target_roles = Array.isArray(honeytoken.target_roles)
+    ? honeytoken.target_roles.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : ['user'];
+  honeytoken.token_prefix = String(honeytoken.token_prefix || 'SNTL');
+
+  normalized.runtime.latency_normalization = normalized.runtime.latency_normalization || {};
+  const latencyNormalization = normalized.runtime.latency_normalization;
+  latencyNormalization.enabled = latencyNormalization.enabled === true;
+  latencyNormalization.window_size = Number(latencyNormalization.window_size ?? 10);
+  latencyNormalization.min_samples = Number(latencyNormalization.min_samples ?? 3);
+  latencyNormalization.max_delay_ms = Number(latencyNormalization.max_delay_ms ?? 2000);
+  latencyNormalization.jitter_ms = Number(latencyNormalization.jitter_ms ?? 25);
+  latencyNormalization.statuses = Array.isArray(latencyNormalization.statuses)
+    ? latencyNormalization.statuses.map((value) => Number(value))
+    : [402, 403, 429];
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
@@ -837,6 +880,94 @@ function validateConfigShape(config) {
       '`runtime.deception.non_stream_delay_ms` must be integer >= 0',
       details
     );
+  }
+
+  const honeytoken = runtime.honeytoken || {};
+  if (runtime.honeytoken !== undefined) {
+    assertNoUnknownKeys(honeytoken, HONEYTOKEN_KEYS, 'runtime.honeytoken', details);
+    assertType(typeof honeytoken.enabled === 'boolean', '`runtime.honeytoken.enabled` must be boolean', details);
+    assertType(
+      HONEYTOKEN_MODES.has(String(honeytoken.mode)),
+      '`runtime.honeytoken.mode` must be zero_width|uuid_suffix',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(honeytoken.injection_rate)) &&
+        Number(honeytoken.injection_rate) >= 0 &&
+        Number(honeytoken.injection_rate) <= 1,
+      '`runtime.honeytoken.injection_rate` must be between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(honeytoken.max_insertions_per_request) && honeytoken.max_insertions_per_request > 0,
+      '`runtime.honeytoken.max_insertions_per_request` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(honeytoken.target_roles) && honeytoken.target_roles.length > 0,
+      '`runtime.honeytoken.target_roles` must be non-empty array',
+      details
+    );
+    if (Array.isArray(honeytoken.target_roles)) {
+      honeytoken.target_roles.forEach((role, idx) => {
+        assertType(
+          typeof role === 'string' && role.length > 0,
+          `runtime.honeytoken.target_roles[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof honeytoken.token_prefix === 'string' && honeytoken.token_prefix.length > 0,
+      '`runtime.honeytoken.token_prefix` must be non-empty string',
+      details
+    );
+  }
+
+  const latencyNormalization = runtime.latency_normalization || {};
+  if (runtime.latency_normalization !== undefined) {
+    assertNoUnknownKeys(latencyNormalization, LATENCY_NORMALIZATION_KEYS, 'runtime.latency_normalization', details);
+    assertType(
+      typeof latencyNormalization.enabled === 'boolean',
+      '`runtime.latency_normalization.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(latencyNormalization.window_size) && latencyNormalization.window_size > 0,
+      '`runtime.latency_normalization.window_size` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(latencyNormalization.min_samples) &&
+        latencyNormalization.min_samples > 0 &&
+        latencyNormalization.min_samples <= latencyNormalization.window_size,
+      '`runtime.latency_normalization.min_samples` must be integer > 0 and <= window_size',
+      details
+    );
+    assertType(
+      Number.isInteger(latencyNormalization.max_delay_ms) && latencyNormalization.max_delay_ms > 0,
+      '`runtime.latency_normalization.max_delay_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(latencyNormalization.jitter_ms) && latencyNormalization.jitter_ms >= 0,
+      '`runtime.latency_normalization.jitter_ms` must be integer >= 0',
+      details
+    );
+    assertType(
+      Array.isArray(latencyNormalization.statuses) && latencyNormalization.statuses.length > 0,
+      '`runtime.latency_normalization.statuses` must be non-empty array',
+      details
+    );
+    if (Array.isArray(latencyNormalization.statuses)) {
+      latencyNormalization.statuses.forEach((status, idx) => {
+        assertType(
+          Number.isInteger(status) && status >= 100 && status <= 599,
+          `runtime.latency_normalization.statuses[${idx}] must be HTTP status integer`,
+          details
+        );
+      });
+    }
   }
 
   const retry = runtime.upstream?.retry || {};
