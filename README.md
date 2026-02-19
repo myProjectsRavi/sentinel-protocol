@@ -25,6 +25,8 @@ It provides:
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
 - Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
+- Opt-in deception tarpit (`runtime.deception`) for high-confidence injection/loop traps
+- Cryptographic provenance signing (`runtime.provenance`) with stream trailer support
 - Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
 - Upstream resilience (conservative retry + per-provider circuit breaker)
@@ -95,6 +97,21 @@ runtime:
     max_recent: 5
     max_keys: 2048
     key_header: x-sentinel-agent-id
+  deception:
+    enabled: false
+    mode: off # off | tarpit
+    on_injection: true
+    on_loop: true
+    min_injection_score: 0.9
+    sse_token_interval_ms: 1000
+    sse_max_tokens: 20
+    non_stream_delay_ms: 250
+  provenance:
+    enabled: false
+    key_id: "sentinel-local"
+    sign_stream_trailers: true
+    expose_public_key_endpoint: true
+    max_signable_bytes: 2097152
   worker_pool:
     enabled: true
     task_timeout_ms: 10000

@@ -25,6 +25,8 @@ const { SemanticCache } = require('./cache/semantic-cache');
 const { BudgetStore } = require('./accounting/budget-store');
 const { DashboardServer } = require('./monitor/dashboard-server');
 const { LoopBreaker } = require('./engines/loop-breaker');
+const { DeceptionEngine } = require('./engines/deception-engine');
+const { ProvenanceSigner } = require('./security/provenance-signer');
 const {
   PID_FILE_PATH,
   STATUS_FILE_PATH,
@@ -190,6 +192,8 @@ class SentinelServer {
       canary_routed: 0,
       loop_detected: 0,
       loop_blocked: 0,
+      deception_engaged: 0,
+      deception_streamed: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter();
@@ -237,6 +241,8 @@ class SentinelServer {
     });
     this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
     this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
+    this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
+    this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -274,6 +280,8 @@ class SentinelServer {
       pii_provider_fallbacks: this.stats.pii_provider_fallbacks,
       rapidapi_error_count: this.stats.rapidapi_error_count,
       loop_breaker_enabled: this.loopBreaker.enabled,
+      deception_enabled: this.deceptionEngine.isEnabled(),
+      provenance_enabled: this.provenanceSigner.isEnabled(),
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
       semantic_cache_enabled: this.semanticCache.isEnabled(),
       budget_enabled: budgetSnapshot.enabled,
@@ -308,6 +316,204 @@ class SentinelServer {
     };
   }
 
+  toResponseBodyBuffer(body) {
+    if (Buffer.isBuffer(body)) {
+      return body;
+    }
+    if (body === undefined || body === null) {
+      return Buffer.alloc(0);
+    }
+    if (typeof body === 'string') {
+      return Buffer.from(body, 'utf8');
+    }
+    if (typeof body === 'object') {
+      return Buffer.from(JSON.stringify(body), 'utf8');
+    }
+    return Buffer.from(String(body), 'utf8');
+  }
+
+  applyBufferedProvenanceHeaders(res, { body, statusCode, provider, correlationId }) {
+    if (!this.provenanceSigner.isEnabled() || res.headersSent) {
+      return;
+    }
+    if (res.getHeader('x-sentinel-signature')) {
+      return;
+    }
+
+    const proof = this.provenanceSigner.signBufferedResponse({
+      bodyBuffer: this.toResponseBodyBuffer(body),
+      statusCode,
+      provider,
+      correlationId,
+    });
+    if (!proof) {
+      res.setHeader('x-sentinel-signature-status', 'skipped');
+      return;
+    }
+
+    const proofHeaders = ProvenanceSigner.proofHeaders(proof);
+    for (const [key, value] of Object.entries(proofHeaders)) {
+      res.setHeader(key, value);
+    }
+    res.setHeader('x-sentinel-signature-status', 'signed');
+  }
+
+  async maybeServeDeceptionResponse({
+    res,
+    trigger,
+    provider,
+    effectiveMode,
+    wantsStream,
+    injectionScore,
+    correlationId,
+    requestStart,
+    requestBytes,
+    piiTypes,
+    redactedCount,
+    warnings,
+    routePlan,
+    finalizeRequestTelemetry,
+  }) {
+    const decision = this.deceptionEngine.shouldEngage({
+      trigger,
+      injectionScore,
+      effectiveMode,
+    });
+    if (!decision.engage) {
+      return false;
+    }
+
+    this.stats.deception_engaged += 1;
+    const statusCode = 200;
+    const diagnostics = {
+      errorSource: 'sentinel',
+      upstreamError: false,
+      provider,
+      retryCount: 0,
+      circuitState: this.circuitBreakers.getProviderState(provider).state,
+      correlationId,
+    };
+    responseHeaderDiagnostics(res, diagnostics);
+    res.setHeader('x-sentinel-deception', 'tarpit');
+    res.setHeader('x-sentinel-deception-trigger', trigger);
+
+    if (wantsStream) {
+      this.stats.deception_streamed += 1;
+      res.status(statusCode);
+      res.setHeader('content-type', 'text/event-stream; charset=utf-8');
+      res.setHeader('cache-control', 'no-cache, no-transform');
+      res.setHeader('connection', 'keep-alive');
+
+      const streamProof = this.provenanceSigner.createStreamContext({
+        statusCode,
+        provider,
+        correlationId,
+      });
+      const canAddTrailers =
+        Boolean(streamProof) &&
+        this.provenanceSigner.signStreamTrailers === true &&
+        typeof res.addTrailers === 'function';
+      if (canAddTrailers) {
+        res.setHeader(
+          'trailer',
+          'x-sentinel-signature-v, x-sentinel-signature-alg, x-sentinel-signature-key-id, x-sentinel-signature-input, x-sentinel-payload-sha256, x-sentinel-signature'
+        );
+        res.setHeader('x-sentinel-signature-status', 'stream-trailer');
+      } else if (this.provenanceSigner.isEnabled()) {
+        res.setHeader('x-sentinel-signature-status', 'stream-unsigned');
+      }
+
+      let streamedBytes = 0;
+      await this.deceptionEngine.streamToSSE(res, {
+        trigger,
+        onChunk: (chunk) => {
+          streamedBytes += chunk.length;
+          if (streamProof) {
+            streamProof.update(chunk);
+          }
+        },
+      });
+
+      if (canAddTrailers) {
+        const proof = streamProof.finalize();
+        if (proof) {
+          res.addTrailers(ProvenanceSigner.proofHeaders(proof));
+        }
+      }
+
+      this.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: this.config.version,
+        mode: effectiveMode,
+        decision: 'deception_tarpit',
+        reasons: [`deception_${trigger}`],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: requestBytes,
+        response_status: statusCode,
+        response_bytes: streamedBytes,
+        provider,
+        route_source: routePlan?.routeSource,
+        route_group: routePlan?.selectedGroup || undefined,
+        route_contract: routePlan?.desiredContract,
+        requested_target: routePlan?.requestedTarget,
+      });
+      this.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'deception_tarpit',
+        status: statusCode,
+        providerName: provider,
+      });
+      return true;
+    }
+
+    if (this.deceptionEngine.nonStreamDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.deceptionEngine.nonStreamDelayMs));
+    }
+    const bodyBuffer = this.deceptionEngine.createBufferedPayload({
+      trigger,
+      provider,
+    });
+    this.applyBufferedProvenanceHeaders(res, {
+      body: bodyBuffer,
+      statusCode,
+      provider,
+      correlationId,
+    });
+    this.auditLogger.write({
+      timestamp: new Date().toISOString(),
+      correlation_id: correlationId,
+      config_version: this.config.version,
+      mode: effectiveMode,
+      decision: 'deception_tarpit',
+      reasons: [`deception_${trigger}`],
+      pii_types: piiTypes,
+      redactions: redactedCount,
+      duration_ms: Date.now() - requestStart,
+      request_bytes: requestBytes,
+      response_status: statusCode,
+      response_bytes: bodyBuffer.length,
+      provider,
+      route_source: routePlan?.routeSource,
+      route_group: routePlan?.selectedGroup || undefined,
+      route_contract: routePlan?.desiredContract,
+      requested_target: routePlan?.requestedTarget,
+    });
+    this.writeStatus();
+    finalizeRequestTelemetry({
+      decision: 'deception_tarpit',
+      status: statusCode,
+      providerName: provider,
+    });
+    if (warnings.length > 0) {
+      res.setHeader('x-sentinel-warning', warnings.join(','));
+    }
+    res.status(statusCode).send(bodyBuffer);
+    return true;
+  }
+
   setupApp() {
     this.app.use(
       express.raw({
@@ -337,10 +543,41 @@ class SentinelServer {
       res.status(200).json({ status: 'ok' });
     });
 
+    this.app.get('/_sentinel/provenance/public-key', (req, res) => {
+      if (!this.provenanceSigner.isEnabled() || this.provenanceSigner.exposePublicKeyEndpoint !== true) {
+        res.status(404).json({
+          error: 'PROVENANCE_DISABLED',
+        });
+        return;
+      }
+      res.status(200).json(this.provenanceSigner.getPublicMetadata());
+    });
+
     this.app.all('*', async (req, res) => {
       const correlationId = uuidv4();
       const method = req.method.toUpperCase();
       res.setHeader('x-sentinel-correlation-id', correlationId);
+      let provenanceProvider = 'unknown';
+      const originalSend = res.send.bind(res);
+      const originalJson = res.json.bind(res);
+      res.send = (body) => {
+        this.applyBufferedProvenanceHeaders(res, {
+          body,
+          statusCode: res.statusCode,
+          provider: provenanceProvider,
+          correlationId,
+        });
+        return originalSend(body);
+      };
+      res.json = (body) => {
+        this.applyBufferedProvenanceHeaders(res, {
+          body,
+          statusCode: res.statusCode,
+          provider: provenanceProvider,
+          correlationId,
+        });
+        return originalJson(body);
+      };
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       let bodyText = rawBody.toString('utf8');
       const parsedPath = new URL(req.originalUrl, 'http://localhost');
@@ -406,6 +643,7 @@ class SentinelServer {
         routePlan = await resolveUpstreamPlan(req, this.config);
         const primary = routePlan.primary;
         provider = primary.provider;
+        provenanceProvider = provider;
         baseUrl = primary.baseUrl;
         resolvedIp = primary.resolvedIp || null;
         resolvedFamily = primary.resolvedFamily || null;
@@ -474,6 +712,9 @@ class SentinelServer {
         }
         bodyJson = parsedBody.value;
       }
+      const wantsStream =
+        String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
+        (bodyJson && bodyJson.stream === true);
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
       let precomputedLocalScan = null;
@@ -563,6 +804,27 @@ class SentinelServer {
 
       if (policyDecision.matched && policyDecision.action === 'block') {
         if (effectiveMode === 'enforce') {
+          if (policyDecision.reason === 'prompt_injection_detected') {
+            const deceived = await this.maybeServeDeceptionResponse({
+              res,
+              trigger: 'injection',
+              provider,
+              effectiveMode,
+              wantsStream,
+              injectionScore,
+              correlationId,
+              requestStart,
+              requestBytes: rawBody.length,
+              piiTypes: [],
+              redactedCount: 0,
+              warnings,
+              routePlan,
+              finalizeRequestTelemetry,
+            });
+            if (deceived) {
+              return;
+            }
+          }
           this.stats.blocked_total += 1;
           this.stats.policy_blocked += 1;
           if (policyDecision.reason === 'prompt_injection_detected') {
@@ -632,6 +894,25 @@ class SentinelServer {
       if (loopDecision.detected) {
         this.stats.loop_detected += 1;
         if (effectiveMode === 'enforce' && loopDecision.shouldBlock) {
+          const deceived = await this.maybeServeDeceptionResponse({
+            res,
+            trigger: 'loop',
+            provider,
+            effectiveMode,
+            wantsStream,
+            injectionScore,
+            correlationId,
+            requestStart,
+            requestBytes: rawBody.length,
+            piiTypes,
+            redactedCount,
+            warnings,
+            routePlan,
+            finalizeRequestTelemetry,
+          });
+          if (deceived) {
+            return;
+          }
           this.stats.blocked_total += 1;
           this.stats.loop_blocked += 1;
           const diagnostics = {
@@ -822,9 +1103,6 @@ class SentinelServer {
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
       const forwardHeaders = scrubForwardHeaders(req.headers);
-      const wantsStream =
-        String(req.headers.accept || '').toLowerCase().includes('text/event-stream') ||
-        (bodyJson && bodyJson.stream === true);
 
       const budgetEstimate = this.budgetStore.estimateRequest({
         provider,
@@ -1029,6 +1307,7 @@ class SentinelServer {
       const durationMs = Date.now() - start;
       const diagnostics = upstream.diagnostics;
       const routedProvider = upstream.route?.selectedProvider || provider;
+      provenanceProvider = routedProvider;
       const routedTarget = upstream.route?.selectedTarget || routePlan.primary.targetName;
       const routedBreakerKey = upstream.route?.selectedBreakerKey || breakerKey;
 
@@ -1111,6 +1390,24 @@ class SentinelServer {
         let streamProjectedRedaction = null;
         let streamBlockedSeverity = null;
         const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
+        const streamProof = this.provenanceSigner.createStreamContext({
+          statusCode: upstream.status,
+          provider: routedProvider,
+          correlationId,
+        });
+        const canAddProofTrailers =
+          Boolean(streamProof) &&
+          this.provenanceSigner.signStreamTrailers === true &&
+          typeof res.addTrailers === 'function';
+        if (canAddProofTrailers) {
+          res.setHeader(
+            'trailer',
+            'x-sentinel-signature-v, x-sentinel-signature-alg, x-sentinel-signature-key-id, x-sentinel-signature-input, x-sentinel-payload-sha256, x-sentinel-signature'
+          );
+          res.setHeader('x-sentinel-signature-status', 'stream-trailer');
+        } else if (this.provenanceSigner.isEnabled()) {
+          res.setHeader('x-sentinel-signature-status', 'stream-unsigned');
+        }
 
         if (egressConfig.enabled && egressConfig.streamEnabled && upstreamContentType.includes('text/event-stream')) {
           const streamRedactor = new SSERedactionTransform({
@@ -1163,6 +1460,9 @@ class SentinelServer {
 
         streamOut.on('data', (chunk) => {
           streamedBytes += chunk.length;
+          if (streamProof) {
+            streamProof.update(chunk);
+          }
         });
 
         let streamBudgetFinalizePromise = null;
@@ -1198,6 +1498,12 @@ class SentinelServer {
         };
 
         streamOut.on('end', async () => {
+          if (canAddProofTrailers) {
+            const proof = streamProof.finalize();
+            if (proof) {
+              res.addTrailers(ProvenanceSigner.proofHeaders(proof));
+            }
+          }
           const budgetCharge = await finalizeStreamBudget();
 
           this.auditLogger.write({

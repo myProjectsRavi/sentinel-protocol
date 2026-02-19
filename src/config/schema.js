@@ -17,6 +17,8 @@ const RUNTIME_KEYS = new Set([
   'dashboard',
   'budget',
   'loop_breaker',
+  'provenance',
+  'deception',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
 const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault', 'ghost_mode']);
@@ -66,6 +68,24 @@ const LOOP_BREAKER_KEYS = new Set([
   'key_header',
 ]);
 const LOOP_BREAKER_ACTIONS = new Set(['block', 'warn']);
+const PROVENANCE_KEYS = new Set([
+  'enabled',
+  'key_id',
+  'sign_stream_trailers',
+  'expose_public_key_endpoint',
+  'max_signable_bytes',
+]);
+const DECEPTION_KEYS = new Set([
+  'enabled',
+  'mode',
+  'on_injection',
+  'on_loop',
+  'min_injection_score',
+  'sse_token_interval_ms',
+  'sse_max_tokens',
+  'non_stream_delay_ms',
+]);
+const DECEPTION_MODES = new Set(['off', 'tarpit']);
 const BUDGET_ACTIONS = new Set(['block', 'warn']);
 const BUDGET_RESET_TIMEZONES = new Set(['utc', 'local']);
 const RETRY_KEYS = new Set(['enabled', 'max_attempts', 'allow_post_with_idempotency_key']);
@@ -432,6 +452,27 @@ function applyDefaults(config) {
   loopBreaker.max_keys = Number(loopBreaker.max_keys ?? 2048);
   loopBreaker.key_header = String(loopBreaker.key_header || 'x-sentinel-agent-id').toLowerCase();
 
+  normalized.runtime.provenance = normalized.runtime.provenance || {};
+  const provenance = normalized.runtime.provenance;
+  provenance.enabled = provenance.enabled === true;
+  provenance.key_id = String(provenance.key_id || `sentinel-${process.pid}`);
+  provenance.sign_stream_trailers = provenance.sign_stream_trailers !== false;
+  provenance.expose_public_key_endpoint = provenance.expose_public_key_endpoint !== false;
+  provenance.max_signable_bytes = Number(provenance.max_signable_bytes ?? 2097152);
+
+  normalized.runtime.deception = normalized.runtime.deception || {};
+  const deception = normalized.runtime.deception;
+  deception.enabled = deception.enabled === true;
+  deception.mode = DECEPTION_MODES.has(String(deception.mode || '').toLowerCase())
+    ? String(deception.mode).toLowerCase()
+    : 'off';
+  deception.on_injection = deception.on_injection !== false;
+  deception.on_loop = deception.on_loop !== false;
+  deception.min_injection_score = Number(deception.min_injection_score ?? 0.9);
+  deception.sse_token_interval_ms = Number(deception.sse_token_interval_ms ?? 1000);
+  deception.sse_max_tokens = Number(deception.sse_max_tokens ?? 20);
+  deception.non_stream_delay_ms = Number(deception.non_stream_delay_ms ?? 250);
+
   normalized.pii = normalized.pii || {};
   normalized.pii.enabled = normalized.pii.enabled !== false;
   normalized.pii.provider_mode = String(normalized.pii.provider_mode || 'local').toLowerCase();
@@ -737,6 +778,63 @@ function validateConfigShape(config) {
     assertType(
       typeof loopBreaker.key_header === 'string' && loopBreaker.key_header.length > 0,
       '`runtime.loop_breaker.key_header` must be non-empty string',
+      details
+    );
+  }
+
+  const provenance = runtime.provenance || {};
+  if (runtime.provenance !== undefined) {
+    assertNoUnknownKeys(provenance, PROVENANCE_KEYS, 'runtime.provenance', details);
+    assertType(typeof provenance.enabled === 'boolean', '`runtime.provenance.enabled` must be boolean', details);
+    assertType(typeof provenance.key_id === 'string' && provenance.key_id.length > 0, '`runtime.provenance.key_id` must be non-empty string', details);
+    assertType(
+      typeof provenance.sign_stream_trailers === 'boolean',
+      '`runtime.provenance.sign_stream_trailers` must be boolean',
+      details
+    );
+    assertType(
+      typeof provenance.expose_public_key_endpoint === 'boolean',
+      '`runtime.provenance.expose_public_key_endpoint` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(provenance.max_signable_bytes) && provenance.max_signable_bytes > 0,
+      '`runtime.provenance.max_signable_bytes` must be integer > 0',
+      details
+    );
+  }
+
+  const deception = runtime.deception || {};
+  if (runtime.deception !== undefined) {
+    assertNoUnknownKeys(deception, DECEPTION_KEYS, 'runtime.deception', details);
+    assertType(typeof deception.enabled === 'boolean', '`runtime.deception.enabled` must be boolean', details);
+    assertType(
+      DECEPTION_MODES.has(String(deception.mode)),
+      '`runtime.deception.mode` must be off|tarpit',
+      details
+    );
+    assertType(typeof deception.on_injection === 'boolean', '`runtime.deception.on_injection` must be boolean', details);
+    assertType(typeof deception.on_loop === 'boolean', '`runtime.deception.on_loop` must be boolean', details);
+    assertType(
+      Number.isFinite(Number(deception.min_injection_score)) &&
+        Number(deception.min_injection_score) >= 0 &&
+        Number(deception.min_injection_score) <= 1,
+      '`runtime.deception.min_injection_score` must be between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(deception.sse_token_interval_ms) && deception.sse_token_interval_ms >= 0,
+      '`runtime.deception.sse_token_interval_ms` must be integer >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(deception.sse_max_tokens) && deception.sse_max_tokens > 0,
+      '`runtime.deception.sse_max_tokens` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(deception.non_stream_delay_ms) && deception.non_stream_delay_ms >= 0,
+      '`runtime.deception.non_stream_delay_ms` must be integer >= 0',
       details
     );
   }
