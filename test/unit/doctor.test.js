@@ -125,6 +125,17 @@ describe('doctor checks', () => {
     expect(report.checks.some((check) => check.id === 'semantic-cache-embed-timeout' && check.status === 'warn')).toBe(true);
   });
 
+  test('fails when intent throttle enabled but worker pool disabled', () => {
+    const report = runDoctorChecks(configForMode('local', {
+      runtime: {
+        worker_pool: { enabled: false },
+        intent_throttle: { enabled: true },
+      },
+    }), { NODE_ENV: 'production' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((check) => check.id === 'intent-throttle-worker-pool' && check.status === 'fail')).toBe(true);
+  });
+
   test('warns when budget enabled with zero pricing model', () => {
     const report = runDoctorChecks(configForMode('local', {
       runtime: {

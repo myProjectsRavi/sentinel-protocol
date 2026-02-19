@@ -70,6 +70,7 @@ function runDoctorChecks(config, env = process.env) {
   const rapidapi = config?.pii?.rapidapi || {};
   const semantic = config?.pii?.semantic || {};
   const semanticCache = config?.runtime?.semantic_cache || {};
+  const intentThrottle = config?.runtime?.intent_throttle || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
   const upstream = config?.runtime?.upstream || {};
@@ -201,6 +202,41 @@ function runDoctorChecks(config, env = process.env) {
         embedTimeoutMs >= 5000
           ? `Worker embed timeout is ${embedTimeoutMs}ms (cold-start resilient).`
           : `Worker embed timeout is ${embedTimeoutMs}ms. Increase runtime.worker_pool.embed_task_timeout_ms to >=5000ms (recommended 10000ms).`,
+    });
+  }
+
+  if (intentThrottle.enabled === true) {
+    checks.push({
+      id: 'intent-throttle-worker-pool',
+      status: workerPool.enabled === false ? 'fail' : 'pass',
+      message:
+        workerPool.enabled === false
+          ? 'Intent throttle requires runtime.worker_pool.enabled=true for off-main-thread embeddings.'
+          : 'Worker pool enabled for intent throttle embedding tasks.',
+    });
+
+    let hasDependency = true;
+    try {
+      require.resolve('@xenova/transformers');
+    } catch {
+      hasDependency = false;
+    }
+    checks.push({
+      id: 'intent-throttle-dependency',
+      status: hasDependency ? 'pass' : 'fail',
+      message: hasDependency
+        ? 'Intent throttle dependency (@xenova/transformers) is installed.'
+        : 'Intent throttle is enabled but @xenova/transformers is missing.',
+    });
+
+    const embedTimeoutMs = Number(workerPool.embed_task_timeout_ms ?? workerPool.task_timeout_ms ?? 0);
+    checks.push({
+      id: 'intent-throttle-embed-timeout',
+      status: embedTimeoutMs >= 5000 ? 'pass' : 'warn',
+      message:
+        embedTimeoutMs >= 5000
+          ? `Intent throttle embed timeout is ${embedTimeoutMs}ms (cold-start resilient).`
+          : `Intent throttle embed timeout is ${embedTimeoutMs}ms. Increase runtime.worker_pool.embed_task_timeout_ms to >=5000ms (recommended 10000ms).`,
     });
   }
 

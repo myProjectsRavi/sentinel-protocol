@@ -29,6 +29,7 @@ const { DeceptionEngine } = require('./engines/deception-engine');
 const { ProvenanceSigner } = require('./security/provenance-signer');
 const { HoneytokenInjector } = require('./security/honeytoken-injector');
 const { LatencyNormalizer } = require('./runtime/latency-normalizer');
+const { IntentThrottle } = require('./runtime/intent-throttle');
 const { CanaryToolTrap } = require('./engines/canary-tool-trap');
 const { ParallaxValidator } = require('./engines/parallax-validator');
 const {
@@ -202,6 +203,9 @@ class SentinelServer {
       canary_routed: 0,
       loop_detected: 0,
       loop_blocked: 0,
+      intent_throttle_matches: 0,
+      intent_throttle_blocked: 0,
+      intent_throttle_errors: 0,
       deception_engaged: 0,
       deception_streamed: 0,
       honeytoken_injected: 0,
@@ -261,6 +265,20 @@ class SentinelServer {
     this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
     this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
     this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
+    this.intentThrottle = new IntentThrottle(this.config.runtime?.intent_throttle || {}, {
+      embedText: async (text, options = {}) => {
+        if (!this.scanWorkerPool?.enabled) {
+          throw new Error('embedder_unavailable');
+        }
+        const result = await this.scanWorkerPool.embed({
+          text,
+          modelId: options.modelId,
+          cacheDir: options.cacheDir,
+          maxPromptChars: options.maxPromptChars,
+        });
+        return Array.isArray(result?.vector) ? result.vector : [];
+      },
+    });
     this.canaryToolTrap = new CanaryToolTrap(this.config.runtime?.canary_tools || {});
     this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
       upstreamClient: this.upstreamClient,
@@ -270,6 +288,12 @@ class SentinelServer {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
         worker_pool_enabled: this.scanWorkerPool?.enabled === true,
+      });
+    }
+    if (this.config.runtime?.intent_throttle?.enabled === true && this.scanWorkerPool?.enabled !== true) {
+      logger.warn('Intent throttle is enabled but worker pool is unavailable; throttle will remain in monitor-only fallback', {
+        intent_throttle_enabled: true,
+        worker_pool_enabled: false,
       });
     }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
@@ -307,6 +331,8 @@ class SentinelServer {
       provenance_enabled: this.provenanceSigner.isEnabled(),
       honeytoken_enabled: this.honeytokenInjector.isEnabled(),
       latency_normalization_enabled: this.latencyNormalizer.isEnabled(),
+      intent_throttle_enabled: this.intentThrottle.isEnabled(),
+      intent_throttle_mode: this.intentThrottle.mode,
       canary_tools_enabled: this.canaryToolTrap.isEnabled(),
       parallax_enabled: this.parallaxValidator.isEnabled(),
       vcr_mode: this.config.runtime?.vcr?.mode || 'off',
@@ -1028,6 +1054,108 @@ class SentinelServer {
         warnings.push(`loop_detected:${loopDecision.streak}`);
         res.setHeader('x-sentinel-loop-breaker', 'warn');
         this.stats.warnings_total += 1;
+      }
+
+      let intentThrottleDecision = null;
+      if (this.intentThrottle.isEnabled()) {
+        try {
+          intentThrottleDecision = await this.intentThrottle.evaluate({
+            headers: req.headers || {},
+            bodyJson,
+            bodyText,
+          });
+        } catch (error) {
+          intentThrottleDecision = {
+            enabled: true,
+            matched: false,
+            shouldBlock: false,
+            reason: 'embedding_error',
+            error: String(error.message || error),
+          };
+        }
+
+        if (intentThrottleDecision?.matched) {
+          this.stats.intent_throttle_matches += 1;
+          res.setHeader('x-sentinel-intent-throttle', String(intentThrottleDecision.reason || 'intent_match'));
+          if (intentThrottleDecision.cluster) {
+            res.setHeader('x-sentinel-intent-cluster', String(intentThrottleDecision.cluster).slice(0, 64));
+          }
+          if (Number.isFinite(Number(intentThrottleDecision.similarity))) {
+            res.setHeader('x-sentinel-intent-similarity', String(intentThrottleDecision.similarity));
+          }
+
+          if (effectiveMode === 'enforce' && intentThrottleDecision.shouldBlock) {
+            this.stats.blocked_total += 1;
+            this.stats.intent_throttle_blocked += 1;
+
+            const diagnostics = {
+              errorSource: 'sentinel',
+              upstreamError: false,
+              provider,
+              retryCount: 0,
+              circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+              correlationId,
+            };
+            responseHeaderDiagnostics(res, diagnostics);
+            await this.maybeNormalizeBlockedLatency({
+              res,
+              statusCode: 429,
+              requestStart,
+            });
+            this.auditLogger.write({
+              timestamp: new Date().toISOString(),
+              correlation_id: correlationId,
+              config_version: this.config.version,
+              mode: effectiveMode,
+              decision: 'blocked_intent_throttle',
+              reasons: [String(intentThrottleDecision.reason || 'intent_velocity_exceeded')],
+              pii_types: [],
+              redactions: 0,
+              duration_ms: Date.now() - requestStart,
+              request_bytes: rawBody.length,
+              response_status: 429,
+              response_bytes: 0,
+              provider,
+              intent_cluster: intentThrottleDecision.cluster,
+              intent_similarity: intentThrottleDecision.similarity,
+              intent_threshold: intentThrottleDecision.threshold,
+              intent_count: intentThrottleDecision.count,
+              intent_max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
+              intent_window_ms: intentThrottleDecision.windowMs,
+              intent_cooldown_ms: intentThrottleDecision.cooldownMs,
+              intent_blocked_until: intentThrottleDecision.blockedUntil,
+            });
+            this.writeStatus();
+            finalizeRequestTelemetry({
+              decision: 'blocked_policy',
+              status: 429,
+              providerName: provider,
+            });
+            return res.status(429).json({
+              error: 'INTENT_THROTTLED',
+              reason: intentThrottleDecision.reason,
+              cluster: intentThrottleDecision.cluster,
+              similarity: intentThrottleDecision.similarity,
+              count: intentThrottleDecision.count,
+              threshold: intentThrottleDecision.threshold,
+              max_events_per_window: intentThrottleDecision.maxEventsPerWindow,
+              window_ms: intentThrottleDecision.windowMs,
+              cooldown_ms: intentThrottleDecision.cooldownMs,
+              blocked_until: intentThrottleDecision.blockedUntil || 0,
+              correlation_id: correlationId,
+            });
+          }
+
+          warnings.push(`intent_throttle:${intentThrottleDecision.cluster || intentThrottleDecision.reason}`);
+          this.stats.warnings_total += 1;
+        } else if (
+          intentThrottleDecision?.reason === 'embedding_error' ||
+          intentThrottleDecision?.reason === 'embedder_unavailable'
+        ) {
+          this.stats.intent_throttle_errors += 1;
+          warnings.push(`intent_throttle:${intentThrottleDecision.reason}`);
+          this.stats.warnings_total += 1;
+        }
       }
 
       if (this.config.pii.enabled) {

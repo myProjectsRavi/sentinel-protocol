@@ -14,6 +14,7 @@ const RUNTIME_KEYS = new Set([
   'worker_pool',
   'vcr',
   'semantic_cache',
+  'intent_throttle',
   'dashboard',
   'budget',
   'loop_breaker',
@@ -49,6 +50,22 @@ const SEMANTIC_CACHE_KEYS = new Set([
   'max_consecutive_errors',
   'failure_cooldown_ms',
 ]);
+const INTENT_THROTTLE_KEYS = new Set([
+  'enabled',
+  'mode',
+  'key_header',
+  'window_ms',
+  'cooldown_ms',
+  'max_events_per_window',
+  'min_similarity',
+  'max_prompt_chars',
+  'max_sessions',
+  'model_id',
+  'cache_dir',
+  'clusters',
+]);
+const INTENT_THROTTLE_MODES = new Set(['monitor', 'block']);
+const INTENT_THROTTLE_CLUSTER_KEYS = new Set(['name', 'phrases', 'min_similarity']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
 const BUDGET_KEYS = new Set([
   'enabled',
@@ -461,6 +478,36 @@ function applyDefaults(config) {
   semanticCache.max_consecutive_errors = Number(semanticCache.max_consecutive_errors ?? 3);
   semanticCache.failure_cooldown_ms = Number(semanticCache.failure_cooldown_ms ?? 30000);
 
+  normalized.runtime.intent_throttle = normalized.runtime.intent_throttle || {};
+  const intentThrottle = normalized.runtime.intent_throttle;
+  intentThrottle.enabled = intentThrottle.enabled === true;
+  intentThrottle.mode = INTENT_THROTTLE_MODES.has(String(intentThrottle.mode || '').toLowerCase())
+    ? String(intentThrottle.mode).toLowerCase()
+    : 'monitor';
+  intentThrottle.key_header = String(intentThrottle.key_header || 'x-sentinel-agent-id').toLowerCase();
+  intentThrottle.window_ms = Number(intentThrottle.window_ms ?? 3600000);
+  intentThrottle.cooldown_ms = Number(intentThrottle.cooldown_ms ?? 900000);
+  intentThrottle.max_events_per_window = Number(intentThrottle.max_events_per_window ?? 3);
+  intentThrottle.min_similarity = Number(intentThrottle.min_similarity ?? 0.82);
+  intentThrottle.max_prompt_chars = Number(intentThrottle.max_prompt_chars ?? 2000);
+  intentThrottle.max_sessions = Number(intentThrottle.max_sessions ?? 5000);
+  intentThrottle.model_id = String(intentThrottle.model_id || 'Xenova/all-MiniLM-L6-v2');
+  intentThrottle.cache_dir = String(intentThrottle.cache_dir || '~/.sentinel/models');
+  intentThrottle.clusters = Array.isArray(intentThrottle.clusters)
+    ? intentThrottle.clusters.map((cluster) => {
+        const normalizedCluster =
+          cluster && typeof cluster === 'object' && !Array.isArray(cluster) ? cluster : {};
+        normalizedCluster.name = String(normalizedCluster.name || '').trim().toLowerCase();
+        normalizedCluster.phrases = Array.isArray(normalizedCluster.phrases)
+          ? normalizedCluster.phrases.map((value) => String(value)).filter(Boolean)
+          : [];
+        if (normalizedCluster.min_similarity !== undefined) {
+          normalizedCluster.min_similarity = Number(normalizedCluster.min_similarity);
+        }
+        return normalizedCluster;
+      })
+    : [];
+
   normalized.runtime.dashboard = normalized.runtime.dashboard || {};
   const dashboard = normalized.runtime.dashboard;
   dashboard.enabled = dashboard.enabled === true;
@@ -782,6 +829,111 @@ function validateConfigShape(config) {
       '`runtime.semantic_cache.failure_cooldown_ms` must be integer > 0',
       details
     );
+  }
+
+  const intentThrottle = runtime.intent_throttle || {};
+  if (runtime.intent_throttle !== undefined) {
+    assertNoUnknownKeys(intentThrottle, INTENT_THROTTLE_KEYS, 'runtime.intent_throttle', details);
+    assertType(typeof intentThrottle.enabled === 'boolean', '`runtime.intent_throttle.enabled` must be boolean', details);
+    assertType(
+      INTENT_THROTTLE_MODES.has(String(intentThrottle.mode)),
+      '`runtime.intent_throttle.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof intentThrottle.key_header === 'string' && intentThrottle.key_header.length > 0,
+      '`runtime.intent_throttle.key_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(intentThrottle.window_ms) && intentThrottle.window_ms > 0,
+      '`runtime.intent_throttle.window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentThrottle.cooldown_ms) && intentThrottle.cooldown_ms > 0,
+      '`runtime.intent_throttle.cooldown_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentThrottle.max_events_per_window) && intentThrottle.max_events_per_window > 0,
+      '`runtime.intent_throttle.max_events_per_window` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(intentThrottle.min_similarity)) &&
+        Number(intentThrottle.min_similarity) >= 0 &&
+        Number(intentThrottle.min_similarity) <= 1,
+      '`runtime.intent_throttle.min_similarity` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(intentThrottle.max_prompt_chars) && intentThrottle.max_prompt_chars > 0,
+      '`runtime.intent_throttle.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(intentThrottle.max_sessions) && intentThrottle.max_sessions > 0,
+      '`runtime.intent_throttle.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof intentThrottle.model_id === 'string' && intentThrottle.model_id.length > 0,
+      '`runtime.intent_throttle.model_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof intentThrottle.cache_dir === 'string' && intentThrottle.cache_dir.length > 0,
+      '`runtime.intent_throttle.cache_dir` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(intentThrottle.clusters),
+      '`runtime.intent_throttle.clusters` must be an array',
+      details
+    );
+    if (Array.isArray(intentThrottle.clusters)) {
+      intentThrottle.clusters.forEach((cluster, idx) => {
+        const label = `runtime.intent_throttle.clusters[${idx}]`;
+        assertType(
+          cluster && typeof cluster === 'object' && !Array.isArray(cluster),
+          `${label} must be object`,
+          details
+        );
+        if (!cluster || typeof cluster !== 'object' || Array.isArray(cluster)) {
+          return;
+        }
+        assertNoUnknownKeys(cluster, INTENT_THROTTLE_CLUSTER_KEYS, label, details);
+        assertType(
+          typeof cluster.name === 'string' && cluster.name.length > 0,
+          `${label}.name must be non-empty string`,
+          details
+        );
+        assertType(
+          Array.isArray(cluster.phrases) && cluster.phrases.length > 0,
+          `${label}.phrases must be non-empty array`,
+          details
+        );
+        if (Array.isArray(cluster.phrases)) {
+          cluster.phrases.forEach((phrase, phraseIdx) => {
+            assertType(
+              typeof phrase === 'string' && phrase.length > 0,
+              `${label}.phrases[${phraseIdx}] must be non-empty string`,
+              details
+            );
+          });
+        }
+        if (cluster.min_similarity !== undefined) {
+          assertType(
+            Number.isFinite(Number(cluster.min_similarity)) &&
+              Number(cluster.min_similarity) >= 0 &&
+              Number(cluster.min_similarity) <= 1,
+            `${label}.min_similarity must be number between 0 and 1`,
+            details
+          );
+        }
+      });
+    }
   }
   const dashboard = runtime.dashboard || {};
   if (runtime.dashboard !== undefined) {
