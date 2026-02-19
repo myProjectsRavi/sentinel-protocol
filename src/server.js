@@ -217,6 +217,7 @@ class SentinelServer {
       circuitBreakers: this.circuitBreakers,
       telemetry: this.telemetry,
       authVaultConfig: config.runtime?.upstream?.auth_vault || {},
+      ghostModeConfig: config.runtime?.upstream?.ghost_mode || {},
     });
     this.scanWorkerPool = null;
     try {

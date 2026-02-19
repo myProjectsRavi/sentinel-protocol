@@ -19,7 +19,7 @@ const RUNTIME_KEYS = new Set([
   'loop_breaker',
 ]);
 const TELEMETRY_KEYS = new Set(['enabled']);
-const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault']);
+const UPSTREAM_KEYS = new Set(['retry', 'circuit_breaker', 'custom_targets', 'resilience_mesh', 'canary', 'auth_vault', 'ghost_mode']);
 const WORKER_POOL_KEYS = new Set([
   'enabled',
   'size',
@@ -94,6 +94,7 @@ const RESILIENCE_GROUP_KEYS = new Set(['enabled', 'contract', 'targets']);
 const RESILIENCE_TARGET_KEYS = new Set(['enabled', 'provider', 'contract', 'base_url', 'custom_url', 'headers']);
 const CANARY_KEYS = new Set(['enabled', 'key_header', 'fallback_key_headers', 'splits']);
 const CANARY_SPLIT_KEYS = new Set(['name', 'match_target', 'group_a', 'group_b', 'weight_a', 'weight_b', 'sticky']);
+const GHOST_MODE_KEYS = new Set(['enabled', 'strip_headers', 'override_user_agent', 'user_agent_value']);
 const AUTH_VAULT_KEYS = new Set(['enabled', 'mode', 'dummy_key', 'providers']);
 const AUTH_VAULT_MODES = new Set(['replace_dummy', 'enforce']);
 const AUTH_VAULT_PROVIDERS = new Set(['openai', 'anthropic', 'google']);
@@ -312,6 +313,24 @@ function applyDefaults(config) {
     normalizedSplit.sticky = normalizedSplit.sticky !== false;
     return normalizedSplit;
   });
+
+  normalized.runtime.upstream.ghost_mode = normalized.runtime.upstream.ghost_mode || {};
+  const ghostMode = normalized.runtime.upstream.ghost_mode;
+  ghostMode.enabled = ghostMode.enabled === true;
+  ghostMode.strip_headers = Array.isArray(ghostMode.strip_headers)
+    ? ghostMode.strip_headers.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : [
+        'x-stainless-os',
+        'x-stainless-arch',
+        'x-stainless-runtime',
+        'x-stainless-runtime-version',
+        'x-stainless-package-version',
+        'x-stainless-lang',
+        'x-stainless-helper-method',
+        'user-agent',
+      ];
+  ghostMode.override_user_agent = ghostMode.override_user_agent !== false;
+  ghostMode.user_agent_value = String(ghostMode.user_agent_value || 'Sentinel/1.0 (Privacy Proxy)');
 
   normalized.runtime.upstream.auth_vault = normalized.runtime.upstream.auth_vault || {};
   const authVault = normalized.runtime.upstream.auth_vault;
@@ -945,6 +964,40 @@ function validateConfigShape(config) {
         assertType(typeof split.sticky === 'boolean', `runtime.upstream.canary.splits[${idx}].sticky must be boolean`, details);
       });
     }
+  }
+
+  const ghostMode = runtime.upstream?.ghost_mode;
+  if (ghostMode !== undefined) {
+    assertNoUnknownKeys(ghostMode, GHOST_MODE_KEYS, 'runtime.upstream.ghost_mode', details);
+    assertType(
+      ghostMode.enabled === undefined || typeof ghostMode.enabled === 'boolean',
+      '`runtime.upstream.ghost_mode.enabled` must be boolean',
+      details
+    );
+    assertType(
+      ghostMode.strip_headers === undefined || Array.isArray(ghostMode.strip_headers),
+      '`runtime.upstream.ghost_mode.strip_headers` must be array',
+      details
+    );
+    if (Array.isArray(ghostMode.strip_headers)) {
+      ghostMode.strip_headers.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.upstream.ghost_mode.strip_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      ghostMode.override_user_agent === undefined || typeof ghostMode.override_user_agent === 'boolean',
+      '`runtime.upstream.ghost_mode.override_user_agent` must be boolean',
+      details
+    );
+    assertType(
+      ghostMode.user_agent_value === undefined || (typeof ghostMode.user_agent_value === 'string' && ghostMode.user_agent_value.length > 0),
+      '`runtime.upstream.ghost_mode.user_agent_value` must be non-empty string',
+      details
+    );
   }
 
   const authVault = runtime.upstream?.auth_vault;

@@ -84,6 +84,11 @@ runtime:
     window_ms: 30000
     repeat_threshold: 4
     max_recent: 5
+  upstream:
+    ghost_mode:
+      enabled: false
+      override_user_agent: true
+      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
 ```
 
 ## 5. Configure PII provider mode

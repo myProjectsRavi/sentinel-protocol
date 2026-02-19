@@ -165,4 +165,57 @@ describe('UpstreamClient auth vault handling', () => {
     expect(result.body.error).toBe('VAULT_PROVIDER_KEY_MISSING');
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  test('ghost mode strips telemetry headers and rewrites user-agent', async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+
+    const client = new UpstreamClient({
+      timeoutMs: 2000,
+      retryConfig: {
+        enabled: false,
+        max_attempts: 0,
+        allow_post_with_idempotency_key: false,
+      },
+      circuitBreakers: new FakeCircuitBreakers(),
+      telemetry: null,
+      authVaultConfig: {
+        enabled: false,
+      },
+      ghostModeConfig: {
+        enabled: true,
+        strip_headers: ['x-stainless-os', 'x-stainless-arch', 'user-agent'],
+        override_user_agent: true,
+        user_agent_value: 'Sentinel/1.0 (Privacy Proxy)',
+      },
+    });
+
+    const result = await client.forwardRequest({
+      req: {
+        headers: {
+          authorization: 'Bearer client-key',
+          'x-stainless-os': 'darwin',
+          'x-stainless-arch': 'arm64',
+          'user-agent': 'OpenAI/Node 4.x',
+        },
+      },
+      method: 'POST',
+      pathWithQuery: '/v1/chat/completions',
+      bodyBuffer: Buffer.from(JSON.stringify({ message: 'hello' })),
+      bodyJson: { message: 'hello' },
+      correlationId: 'corr-ghost-1',
+      wantsStream: false,
+      routePlan: buildRoutePlan('openai'),
+    });
+
+    expect(result.ok).toBe(true);
+    const fetchOptions = global.fetch.mock.calls[0][1];
+    expect(fetchOptions.headers['x-stainless-os']).toBeUndefined();
+    expect(fetchOptions.headers['x-stainless-arch']).toBeUndefined();
+    expect(fetchOptions.headers['user-agent']).toBe('Sentinel/1.0 (Privacy Proxy)');
+  });
 });

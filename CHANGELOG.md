@@ -10,6 +10,7 @@
 - Stream budget accounting on both stream completion and stream error paths.
 - Local API key vault (`runtime.upstream.auth_vault`) with dummy-key replacement and enforce mode.
 - Agent loop-breaker (`runtime.loop_breaker`) to detect and stop repeated autonomous request loops.
+- Ghost mode (`runtime.upstream.ghost_mode`) for SDK telemetry/fingerprint header stripping.
 
 ### Changed
 - Docker and compose defaults now preload semantic + neural ONNX models.

@@ -41,6 +41,16 @@ const PROVIDER_AUTH_DEFAULTS = {
     envVar: 'SENTINEL_GOOGLE_API_KEY',
   },
 };
+const DEFAULT_GHOST_STRIP_HEADERS = [
+  'x-stainless-os',
+  'x-stainless-arch',
+  'x-stainless-runtime',
+  'x-stainless-runtime-version',
+  'x-stainless-package-version',
+  'x-stainless-lang',
+  'x-stainless-helper-method',
+  'user-agent',
+];
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -115,6 +125,19 @@ function normalizeAuthVaultConfig(raw = {}) {
     mode: mode === 'enforce' ? 'enforce' : 'replace_dummy',
     dummyKey: String(config.dummy_key || 'sk-sentinel-local'),
     providers: normalizedProviders,
+  };
+}
+
+function normalizeGhostModeConfig(raw = {}) {
+  const config = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const stripHeaders = Array.isArray(config.strip_headers)
+    ? config.strip_headers.map((value) => String(value).toLowerCase()).filter(Boolean)
+    : DEFAULT_GHOST_STRIP_HEADERS;
+  return {
+    enabled: config.enabled === true,
+    stripHeaders: Array.from(new Set(stripHeaders)),
+    overrideUserAgent: config.override_user_agent !== false,
+    userAgentValue: String(config.user_agent_value || 'Sentinel/1.0 (Privacy Proxy)'),
   };
 }
 
@@ -277,6 +300,23 @@ function applyProviderAuthorization({ headers, provider, authVaultConfig }) {
   };
 }
 
+function applyGhostMode(inputHeaders = {}, ghostModeConfig = {}) {
+  const headers = { ...(inputHeaders || {}) };
+  if (!ghostModeConfig.enabled) {
+    return headers;
+  }
+
+  for (const headerName of ghostModeConfig.stripHeaders || []) {
+    deleteHeader(headers, headerName);
+  }
+
+  if (ghostModeConfig.overrideUserAgent) {
+    setHeader(headers, 'user-agent', ghostModeConfig.userAgentValue);
+  }
+
+  return headers;
+}
+
 function parseConnectionHeaderTokens(value) {
   if (!value) {
     return new Set();
@@ -385,6 +425,7 @@ class UpstreamClient {
     this.telemetry = options.telemetry;
     this.dispatchers = new Map();
     this.authVaultConfig = normalizeAuthVaultConfig(options.authVaultConfig || {});
+    this.ghostModeConfig = normalizeGhostModeConfig(options.ghostModeConfig || {});
   }
 
   getPinnedDispatcher({ upstreamHostname, resolvedIp, resolvedFamily }) {
@@ -739,8 +780,9 @@ class UpstreamClient {
       });
     }
 
+    const ghostHeaders = applyGhostMode(authResolution.headers, this.ghostModeConfig);
     const forwardHeaders = buildForwardHeaders(
-      authResolution.headers,
+      ghostHeaders,
       forwardBody.length,
       candidate.upstreamHostHeader
     );

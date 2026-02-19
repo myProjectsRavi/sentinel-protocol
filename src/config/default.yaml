@@ -94,6 +94,19 @@ runtime:
       key_header: x-sentinel-canary-key
       fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
       splits: []
+    ghost_mode:
+      enabled: false
+      strip_headers:
+        - x-stainless-os
+        - x-stainless-arch
+        - x-stainless-runtime
+        - x-stainless-runtime-version
+        - x-stainless-package-version
+        - x-stainless-lang
+        - x-stainless-helper-method
+        - user-agent
+      override_user_agent: true
+      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
     auth_vault:
       enabled: false
       mode: replace_dummy # replace_dummy | enforce

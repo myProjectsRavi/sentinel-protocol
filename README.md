@@ -25,6 +25,7 @@ It provides:
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
 - Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
+- Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
 - Upstream resilience (conservative retry + per-provider circuit breaker)
 - SSE streaming passthrough for `text/event-stream` responses
 - OpenTelemetry hooks for spans and metrics
@@ -132,6 +133,19 @@ runtime:
       key_header: x-sentinel-canary-key
       fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
       splits: []
+    ghost_mode:
+      enabled: false
+      strip_headers:
+        - x-stainless-os
+        - x-stainless-arch
+        - x-stainless-runtime
+        - x-stainless-runtime-version
+        - x-stainless-package-version
+        - x-stainless-lang
+        - x-stainless-helper-method
+        - user-agent
+      override_user_agent: true
+      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
     auth_vault:
       enabled: false
       mode: replace_dummy # replace_dummy | enforce
@@ -206,6 +220,31 @@ Sentinel can detect repeated autonomous-loop requests and stop them before they 
 - If the same payload repeats `repeat_threshold` times inside `window_ms`, Sentinel marks it as a loop.
 - In `enforce` mode with `action: block`, Sentinel returns `429 AGENT_LOOP_DETECTED`.
 - In `monitor/warn`, Sentinel records a warning header: `x-sentinel-loop-breaker: warn`.
+
+## Ghost Mode (Zero-Knowledge Telemetry Stripping)
+
+Ghost Mode strips SDK telemetry/fingerprint headers before forwarding upstream.
+
+- Removes configurable headers such as `x-stainless-*` and `user-agent`.
+- Optionally rewrites `user-agent` to a neutral value.
+
+```yaml
+runtime:
+  upstream:
+    ghost_mode:
+      enabled: true
+      strip_headers:
+        - x-stainless-os
+        - x-stainless-arch
+        - x-stainless-runtime
+        - x-stainless-runtime-version
+        - x-stainless-package-version
+        - x-stainless-lang
+        - x-stainless-helper-method
+        - user-agent
+      override_user_agent: true
+      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
+```
 
 Mesh/canary routing controls:
 - Request: `x-sentinel-target-group`, `x-sentinel-contract`, `x-sentinel-canary-key`
