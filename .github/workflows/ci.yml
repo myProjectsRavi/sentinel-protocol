@@ -60,7 +60,7 @@ jobs:
       - name: Docker quickstart smoke
         run: |
           set -euo pipefail
-          docker run -d --rm --name sentinel-ci-smoke -p 8787:8787 sentinel-protocol:ci start --config /etc/sentinel/sentinel.yaml --port 8787 --skip-doctor
+          docker run -d --rm --name sentinel-ci-smoke -p 8787:8787 sentinel-protocol:ci start --config /etc/sentinel/sentinel.yaml --host 0.0.0.0 --port 8787 --skip-doctor
           trap 'docker rm -f sentinel-ci-smoke >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8787/_sentinel/health >/dev/null; then

@@ -8,7 +8,7 @@ services:
         PRELOAD_NEURAL_MODEL: ${PRELOAD_NEURAL_MODEL:-true}
     image: sentinel-protocol:latest
     container_name: sentinel-protocol
-    command: ["start", "--config", "/etc/sentinel/sentinel.yaml", "--port", "8787"]
+    command: ["start", "--config", "/etc/sentinel/sentinel.yaml", "--host", "0.0.0.0", "--port", "8787"]
     ports:
       - "8787:8787"
     environment:

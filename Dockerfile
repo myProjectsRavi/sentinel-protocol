@@ -65,4 +65,4 @@ RUN if [ "$PRELOAD_SEMANTIC_MODEL" = "true" ]; then \
 EXPOSE 8787
 
 ENTRYPOINT ["node", "./cli/sentinel.js"]
-CMD ["start", "--config", "/etc/sentinel/sentinel.yaml", "--port", "8787"]
+CMD ["start", "--config", "/etc/sentinel/sentinel.yaml", "--host", "0.0.0.0", "--port", "8787"]
