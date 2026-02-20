@@ -655,7 +655,7 @@ function runDoctorChecks(config, env = process.env) {
   }
 
   if (authVault.enabled === true) {
-    const mode = String(authVault.mode || 'replace_dummy').toLowerCase();
+    const vaultMode = String(authVault.mode || 'replace_dummy').toLowerCase();
     const dummyKey = String(authVault.dummy_key || '');
     const providers =
       authVault.providers && typeof authVault.providers === 'object' && !Array.isArray(authVault.providers)
@@ -664,11 +664,11 @@ function runDoctorChecks(config, env = process.env) {
 
     checks.push({
       id: 'auth-vault-mode',
-      status: ['replace_dummy', 'enforce'].includes(mode) ? 'pass' : 'fail',
+      status: ['replace_dummy', 'enforce'].includes(vaultMode) ? 'pass' : 'fail',
       message:
-        ['replace_dummy', 'enforce'].includes(mode)
-          ? `Auth vault enabled in '${mode}' mode.`
-          : `Auth vault mode '${mode}' is invalid.`,
+        ['replace_dummy', 'enforce'].includes(vaultMode)
+          ? `Auth vault enabled in '${vaultMode}' mode.`
+          : `Auth vault mode '${vaultMode}' is invalid.`,
     });
 
     checks.push({
@@ -709,9 +709,9 @@ function runDoctorChecks(config, env = process.env) {
       } else {
         checks.push({
           id: `auth-vault-key-${providerName}`,
-          status: mode === 'enforce' ? 'fail' : 'warn',
+          status: vaultMode === 'enforce' ? 'fail' : 'warn',
           message:
-            mode === 'enforce'
+            vaultMode === 'enforce'
               ? `Auth vault enforce mode requires a key for '${providerName}'.`
               : `No vault key found for '${providerName}'. Dummy-key replacement for this provider will fail.`,
         });

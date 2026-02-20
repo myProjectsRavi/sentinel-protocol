@@ -89,8 +89,18 @@ async function startUpstream(handler) {
   app.use(express.raw({ type: '*/*' }));
   app.all('*', handler);
 
-  const server = await new Promise((resolve) => {
-    const instance = app.listen(0, '127.0.0.1', () => resolve(instance));
+  const server = await new Promise((resolve, reject) => {
+    const instance = app.listen(0, '127.0.0.1');
+    const onListening = () => {
+      instance.off('error', onError);
+      resolve(instance);
+    };
+    const onError = (error) => {
+      instance.off('listening', onListening);
+      reject(error);
+    };
+    instance.once('listening', onListening);
+    instance.once('error', onError);
   });
 
   const port = server.address().port;
@@ -377,6 +387,56 @@ describe('sentinel integration', () => {
     expect(response.body.injection_score).toBeGreaterThanOrEqual(0.8);
   });
 
+  test('returns 429 when policy rate limit is exceeded', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(
+      createBaseConfig({
+        mode: 'enforce',
+        runtime: {
+          rate_limiter: {
+            default_window_ms: 60000,
+            default_limit: 1,
+            default_burst: 1,
+          },
+        },
+        rules: [
+          {
+            name: 'agent-rate-limit',
+            match: {
+              method: 'POST',
+              requests_per_minute: 1,
+              rate_limit_window_ms: 60000,
+              rate_limit_burst: 1,
+            },
+            action: 'block',
+            message: 'Rate limit exceeded',
+          },
+        ],
+      })
+    );
+    const server = sentinel.start();
+
+    const send = () =>
+      request(server)
+        .post('/v1/chat/completions')
+        .set('content-type', 'application/json')
+        .set('x-sentinel-target', 'custom')
+        .set('x-sentinel-custom-url', upstream.url)
+        .set('x-sentinel-agent-id', 'agent-rate-limit-1')
+        .send({ text: 'safe request' });
+
+    const first = await send();
+    const second = await send();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toBe('RATE_LIMIT_EXCEEDED');
+    expect(second.headers['x-sentinel-rate-limit-limit']).toBe('1');
+    expect(second.headers['x-sentinel-rate-limit-remaining']).toBe('0');
+    expect(second.headers['x-sentinel-rate-limit-window-ms']).toBe('60000');
+    expect(second.headers['retry-after']).toBeDefined();
+  });
+
   test('returns generic invalid JSON error without echoing payload', async () => {
     upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
     sentinel = new SentinelServer(createBaseConfig({ mode: 'monitor' }));
@@ -393,6 +453,39 @@ describe('sentinel integration', () => {
     expect(response.body.error).toBe('INVALID_JSON_BODY');
     expect(response.body.message).toBe('Request body is not valid JSON.');
     expect(JSON.stringify(response.body)).not.toContain('123-45-6789');
+  });
+
+  test('plugin can block at stage:upstream_forward:before checkpoint', async () => {
+    upstream = await startUpstream((req, res) => res.status(200).json({ ok: true }));
+    sentinel = new SentinelServer(
+      createBaseConfig({ mode: 'monitor' }),
+      {
+        plugin: {
+          name: 'upstream-stage-blocker',
+          hooks: {
+            'stage:upstream_forward:before': async (ctx) => {
+              ctx.block({
+                statusCode: 418,
+                body: { error: 'PLUGIN_STAGE_BLOCKED' },
+                reason: 'stage_upstream_forward_block',
+              });
+            },
+          },
+        },
+      }
+    );
+    const server = sentinel.start();
+
+    const response = await request(server)
+      .post('/v1/chat/completions')
+      .set('content-type', 'application/json')
+      .set('x-sentinel-target', 'custom')
+      .set('x-sentinel-custom-url', upstream.url)
+      .send({ text: 'safe request' });
+
+    expect(response.status).toBe(418);
+    expect(response.body.error).toBe('PLUGIN_STAGE_BLOCKED');
+    expect(response.headers['x-sentinel-plugin-block']).toBe('stage_upstream_forward_block');
   });
 
   test('rapidapi mode falls back to local scanner when key is missing', async () => {

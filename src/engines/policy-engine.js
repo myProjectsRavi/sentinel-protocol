@@ -1,10 +1,99 @@
 const { InjectionScanner } = require('./injection-scanner');
 
+const DEFAULT_RATE_LIMIT_KEY_HEADERS = ['x-sentinel-agent-id', 'x-sentinel-session-id'];
+const DEFAULT_RATE_LIMIT_FALLBACK_HEADERS = [
+  'x-forwarded-for',
+  'x-real-ip',
+  'cf-connecting-ip',
+  'x-client-ip',
+  'user-agent',
+];
+const IP_HEADER_HINTS = new Set([
+  'x-forwarded-for',
+  'x-real-ip',
+  'cf-connecting-ip',
+  'x-client-ip',
+  'forwarded',
+]);
+
+function normalizeHeaderName(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized;
+}
+
+function normalizeHeaderList(value, fallback = []) {
+  const source = Array.isArray(value) ? value : fallback;
+  const out = [];
+  const seen = new Set();
+  for (const item of source) {
+    const normalized = normalizeHeaderName(item);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function buildHeaderLookup(headers) {
+  const lookup = new Map();
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+    return lookup;
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    const headerName = normalizeHeaderName(name);
+    if (!headerName) {
+      continue;
+    }
+    const normalizedValue = Array.isArray(value) ? value[0] : value;
+    if (normalizedValue === undefined || normalizedValue === null) {
+      continue;
+    }
+    const asText = String(normalizedValue).trim();
+    if (!asText) {
+      continue;
+    }
+    lookup.set(headerName, asText);
+  }
+  return lookup;
+}
+
+function extractFirstForwardedIp(value) {
+  const first = String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)[0];
+  return first || '';
+}
+
+function normalizeRateLimitIdentity(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.length > 512 ? normalized.slice(0, 512) : normalized;
+}
+
 class PolicyEngine {
   constructor(config, rateLimiter) {
     this.rules = Array.isArray(config.rules) ? config.rules : [];
     this.whitelistDomains = Array.isArray(config.whitelist?.domains) ? config.whitelist.domains : [];
     this.rateLimiter = rateLimiter;
+    this.rateLimiterConfig =
+      config.runtime?.rate_limiter && typeof config.runtime.rate_limiter === 'object'
+        ? config.runtime.rate_limiter
+        : {};
+    this.rateLimiterKeyHeaders = normalizeHeaderList(
+      this.rateLimiterConfig.key_headers,
+      DEFAULT_RATE_LIMIT_KEY_HEADERS
+    );
+    this.rateLimiterFallbackHeaders = normalizeHeaderList(
+      this.rateLimiterConfig.fallback_key_headers,
+      DEFAULT_RATE_LIMIT_FALLBACK_HEADERS
+    );
+    this.rateLimiterIpHeader =
+      normalizeHeaderName(this.rateLimiterConfig.ip_header) || DEFAULT_RATE_LIMIT_FALLBACK_HEADERS[0];
     this.injectionConfig = config.injection || {};
     this.injectionScanner = new InjectionScanner({
       maxScanBytes: this.injectionConfig.max_scan_bytes,
@@ -54,6 +143,71 @@ class PolicyEngine {
         });
   }
 
+  headerIdentityValue(headerLookup, headerName) {
+    const normalizedName = normalizeHeaderName(headerName);
+    if (!normalizedName || !headerLookup.has(normalizedName)) {
+      return '';
+    }
+    const raw = headerLookup.get(normalizedName);
+    const value = IP_HEADER_HINTS.has(normalizedName) ? extractFirstForwardedIp(raw) : raw;
+    return normalizeRateLimitIdentity(value);
+  }
+
+  resolveRateLimitIdentity({ rateLimitKey, headers, clientIp }) {
+    const explicit = normalizeRateLimitIdentity(rateLimitKey);
+    if (explicit) {
+      return {
+        key: explicit,
+        source: 'explicit',
+      };
+    }
+
+    const headerLookup = buildHeaderLookup(headers);
+    for (const headerName of this.rateLimiterKeyHeaders) {
+      const candidate = this.headerIdentityValue(headerLookup, headerName);
+      if (candidate) {
+        return {
+          key: `${headerName}:${candidate}`,
+          source: `header:${headerName}`,
+        };
+      }
+    }
+
+    const ipCandidate = this.headerIdentityValue(headerLookup, this.rateLimiterIpHeader);
+    if (ipCandidate) {
+      return {
+        key: `ip:${ipCandidate}`,
+        source: `header:${this.rateLimiterIpHeader}`,
+      };
+    }
+
+    for (const headerName of this.rateLimiterFallbackHeaders) {
+      if (headerName === this.rateLimiterIpHeader) {
+        continue;
+      }
+      const candidate = this.headerIdentityValue(headerLookup, headerName);
+      if (candidate) {
+        return {
+          key: `${headerName}:${candidate}`,
+          source: `header:${headerName}`,
+        };
+      }
+    }
+
+    const clientIpIdentity = normalizeRateLimitIdentity(extractFirstForwardedIp(clientIp));
+    if (clientIpIdentity) {
+      return {
+        key: `ip:${clientIpIdentity}`,
+        source: 'client_ip',
+      };
+    }
+
+    return {
+      key: 'anonymous',
+      source: 'anonymous',
+    };
+  }
+
   check(context) {
     const {
       method,
@@ -65,6 +219,7 @@ class PolicyEngine {
       headers,
       provider,
       rateLimitKey,
+      clientIp,
       injectionResult: providedInjectionResult,
     } = context;
 
@@ -77,6 +232,7 @@ class PolicyEngine {
         allowed: true,
         reason: 'whitelisted',
         injection: injectionResult,
+        rateLimit: null,
       };
     }
 
@@ -106,14 +262,34 @@ class PolicyEngine {
       }
 
       if (match.requests_per_minute && this.rateLimiter) {
-        const allowed = this.rateLimiter.consume({
-          key: rateLimitKey || headers['x-sentinel-agent-id'] || 'default',
+        const resolvedIdentity = this.resolveRateLimitIdentity({
+          rateLimitKey,
+          headers,
+          clientIp,
+        });
+        const rateLimit = this.rateLimiter.consume({
+          key: resolvedIdentity.key,
+          keySource: resolvedIdentity.source,
+          scope: rule.name || 'policy-rate-limit',
           limit: Number(match.requests_per_minute),
           provider,
+          windowMs: match.rate_limit_window_ms,
+          burst: match.rate_limit_burst,
         });
-        if (allowed) {
+        if (rateLimit.allowed) {
           continue;
         }
+        const action = rule.action || 'block';
+        return {
+          matched: true,
+          action,
+          allowed: action !== 'block',
+          reason: 'rate_limit_exceeded',
+          rule: rule.name,
+          message: rule.message || `Rate limit exceeded for rule: ${rule.name}`,
+          injection: injectionResult,
+          rateLimit,
+        };
       }
 
       const action = rule.action || 'allow';
@@ -131,6 +307,7 @@ class PolicyEngine {
         rule: rule.name,
         message: rule.message || `Policy rule matched: ${rule.name}`,
         injection: injectionResult,
+        rateLimit: null,
       };
     }
 
@@ -140,6 +317,7 @@ class PolicyEngine {
       allowed: true,
       reason: 'no_matching_rule',
       injection: injectionResult,
+      rateLimit: null,
     };
   }
 }

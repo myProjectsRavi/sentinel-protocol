@@ -18,7 +18,6 @@ const { MiddlewarePipeline } = require('./core/middleware-pipeline');
 const { PluginRegistry } = require('./core/plugin-registry');
 const { PIIProviderEngine } = require('./pii/provider-engine');
 const { TwoWayPIIVault } = require('./pii/two-way-vault');
-const { scanBufferedResponse } = require('./egress/response-scanner');
 const { ScanWorkerPool } = require('./workers/scan-pool');
 const { VCRStore } = require('./runtime/vcr-store');
 const { SemanticCache } = require('./cache/semantic-cache');
@@ -64,13 +63,13 @@ const {
   runInjectionAndPolicyStage,
   runPiiStage,
 } = require('./stages/policy/pii-injection-stage');
-const { runParallaxStage } = require('./stages/policy/parallax-stage');
 const {
   applyForwardingHeaders,
   applyUpstreamResponseHeaders,
   handleUpstreamErrorResponse,
 } = require('./stages/egress-stage');
 const { runStreamEgressStage } = require('./stages/egress/stream-egress-stage');
+const { runBufferedEgressAndFinalizeStage } = require('./stages/egress/buffered-egress-stage');
 const { writeAuditAndStatus } = require('./stages/audit-stage');
 const {
   responseHeaderDiagnostics,
@@ -179,7 +178,7 @@ class SentinelServer {
       parallax_vetoed: 0,
     };
 
-    this.rateLimiter = new InMemoryRateLimiter();
+    this.rateLimiter = new InMemoryRateLimiter(config.runtime?.rate_limiter || {});
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
     this.piiScanner = new PIIScanner({
       maxScanBytes: config.pii.max_scan_bytes,
@@ -288,6 +287,7 @@ class SentinelServer {
       });
     }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
+    this.lastStatusWriteError = null;
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
     this.pluginRegistry.registerAll(this.options.plugins || []);
@@ -401,7 +401,19 @@ class SentinelServer {
   }
 
   writeStatus() {
-    this.statusStore.write(this.currentStatusPayload());
+    try {
+      this.statusStore.write(this.currentStatusPayload());
+      this.lastStatusWriteError = null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.lastStatusWriteError !== message) {
+        logger.warn('Sentinel status persistence unavailable; continuing without status file updates', {
+          status_file: STATUS_FILE_PATH,
+          error: message,
+        });
+        this.lastStatusWriteError = message;
+      }
+    }
   }
 
   recordSwarmObservation(decision = {}) {
@@ -845,10 +857,6 @@ class SentinelServer {
       let routePlan;
       let provider;
       let baseUrl;
-      let resolvedIp = null;
-      let resolvedFamily = null;
-      let upstreamHostname = null;
-      let upstreamHostHeader = null;
       let breakerKey = null;
       let cacheProviderKey = null;
       const routingResult = await resolveRouting({
@@ -865,10 +873,6 @@ class SentinelServer {
       provider = routingResult.routing.provider;
       providerRef.value = provider;
       baseUrl = routingResult.routing.baseUrl;
-      resolvedIp = routingResult.routing.resolvedIp;
-      resolvedFamily = routingResult.routing.resolvedFamily;
-      upstreamHostname = routingResult.routing.upstreamHostname;
-      upstreamHostHeader = routingResult.routing.upstreamHostHeader;
       breakerKey = routingResult.routing.breakerKey;
       cacheProviderKey = routingResult.routing.cacheProviderKey;
 
@@ -912,94 +916,151 @@ class SentinelServer {
       let precomputedLocalScan = null;
       let precomputedInjection = null;
       let omniShieldDecision = null;
-      let omniShieldSanitizeDecision = null;
       let sandboxDecision = null;
-      let shadowDecision = null;
+      const runOrchestratedStage = async (stageName, execute, stageProvider = provider) => {
+        pipelineContext.set('stage_name', stageName);
+        if (await runPipelineOrRespond({
+          server: this,
+          stageName: `stage:${stageName}:before`,
+          pipelineContext,
+          res,
+          provider: stageProvider || 'unknown',
+          finalizeRequestTelemetry,
+        })) {
+          return {
+            handled: true,
+            result: null,
+          };
+        }
 
-      const autoImmuneResult = await runAutoImmuneStage({
-        server: this,
-        res,
-        bodyText,
-        effectiveMode,
-        provider,
-        breakerKey,
-        correlationId,
-        requestStart,
-        rawBody,
-        warnings,
-        finalizeRequestTelemetry,
-      });
+        const result = await execute();
+        pipelineContext.set(`stage:${stageName}:result`, result);
+
+        if (await runPipelineOrRespond({
+          server: this,
+          stageName: `stage:${stageName}:after`,
+          pipelineContext,
+          res,
+          provider: stageProvider || 'unknown',
+          finalizeRequestTelemetry,
+        })) {
+          return {
+            handled: true,
+            result,
+          };
+        }
+        return {
+          handled: false,
+          result,
+        };
+      };
+
+      const autoImmuneExecution = await runOrchestratedStage('auto_immune', async () =>
+        runAutoImmuneStage({
+          server: this,
+          res,
+          bodyText,
+          effectiveMode,
+          provider,
+          breakerKey,
+          correlationId,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (autoImmuneExecution.handled) {
+        return;
+      }
+      const autoImmuneResult = autoImmuneExecution.result;
       if (autoImmuneResult.handled) {
         return;
       }
 
-      const swarmStageResult = await runSwarmStage({
-        server: this,
-        req,
-        res,
-        method,
-        pathWithQuery,
-        rawBody,
-        effectiveMode,
-        provider,
-        breakerKey,
-        correlationId,
-        requestStart,
-        warnings,
-        finalizeRequestTelemetry,
-      });
+      const swarmStageExecution = await runOrchestratedStage('swarm', async () =>
+        runSwarmStage({
+          server: this,
+          req,
+          res,
+          method,
+          pathWithQuery,
+          rawBody,
+          effectiveMode,
+          provider,
+          breakerKey,
+          correlationId,
+          requestStart,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (swarmStageExecution.handled) {
+        return;
+      }
+      const swarmStageResult = swarmStageExecution.result;
       if (swarmStageResult.handled) {
         return;
       }
 
-      const omniShieldStageResult = await runOmniShieldStage({
-        server: this,
-        res,
-        bodyJson,
-        bodyText,
-        effectiveMode,
-        provider,
-        breakerKey,
-        correlationId,
-        requestStart,
-        rawBody,
-        warnings,
-        finalizeRequestTelemetry,
-      });
+      const omniShieldStageExecution = await runOrchestratedStage('omni_shield', async () =>
+        runOmniShieldStage({
+          server: this,
+          res,
+          bodyJson,
+          bodyText,
+          effectiveMode,
+          provider,
+          breakerKey,
+          correlationId,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (omniShieldStageExecution.handled) {
+        return;
+      }
+      const omniShieldStageResult = omniShieldStageExecution.result;
       bodyJson = omniShieldStageResult.bodyJson;
       bodyText = omniShieldStageResult.bodyText;
       omniShieldDecision = omniShieldStageResult.omniShieldDecision;
-      omniShieldSanitizeDecision = omniShieldStageResult.omniShieldSanitizeDecision;
       if (omniShieldStageResult.handled) {
         return;
       }
 
-      const injectionPolicyResult = await runInjectionAndPolicyStage({
-        server: this,
-        req,
-        res,
-        method,
-        parsedPath,
-        baseUrl,
-        rawBody,
-        bodyText,
-        bodyJson,
-        provider,
-        breakerKey,
-        correlationId,
-        effectiveMode,
-        requestStart,
-        wantsStream,
-        routePlan,
-        warnings,
-        finalizeRequestTelemetry,
-        precomputedLocalScan,
-        precomputedInjection,
-      });
+      const injectionPolicyExecution = await runOrchestratedStage('injection_policy', async () =>
+        runInjectionAndPolicyStage({
+          server: this,
+          req,
+          res,
+          method,
+          parsedPath,
+          baseUrl,
+          rawBody,
+          bodyText,
+          bodyJson,
+          provider,
+          breakerKey,
+          correlationId,
+          effectiveMode,
+          requestStart,
+          wantsStream,
+          routePlan,
+          warnings,
+          finalizeRequestTelemetry,
+          precomputedLocalScan,
+          precomputedInjection,
+        })
+      );
+      if (injectionPolicyExecution.handled) {
+        return;
+      }
+      const injectionPolicyResult = injectionPolicyExecution.result;
       bodyText = injectionPolicyResult.bodyText;
       bodyJson = injectionPolicyResult.bodyJson;
       precomputedLocalScan = injectionPolicyResult.precomputedLocalScan;
-      shadowDecision = injectionPolicyResult.shadowDecision;
       const injectionScore = Number(injectionPolicyResult.injectionScore || 0);
       if (injectionPolicyResult.handled) {
         return;
@@ -1009,48 +1070,60 @@ class SentinelServer {
       let piiTypes = [];
       let piiProviderUsed = 'local';
       const egressConfig = this.getEgressConfig();
-      const loopStageResult = await runLoopStage({
-        server: this,
-        req,
-        res,
-        provider,
-        method,
-        parsedPath,
-        bodyText,
-        bodyJson,
-        effectiveMode,
-        wantsStream,
-        injectionScore,
-        correlationId,
-        requestStart,
-        rawBody,
-        piiTypes,
-        redactedCount,
-        warnings,
-        routePlan,
-        breakerKey,
-        finalizeRequestTelemetry,
-      });
+      const loopStageExecution = await runOrchestratedStage('loop', async () =>
+        runLoopStage({
+          server: this,
+          req,
+          res,
+          provider,
+          method,
+          parsedPath,
+          bodyText,
+          bodyJson,
+          effectiveMode,
+          wantsStream,
+          injectionScore,
+          correlationId,
+          requestStart,
+          rawBody,
+          piiTypes,
+          redactedCount,
+          warnings,
+          routePlan,
+          breakerKey,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (loopStageExecution.handled) {
+        return;
+      }
+      const loopStageResult = loopStageExecution.result;
       if (loopStageResult.handled) {
         return;
       }
 
       let intentDriftDecision = null;
-      const intentStageResult = await runIntentStage({
-        server: this,
-        req,
-        res,
-        bodyJson,
-        bodyText,
-        provider,
-        breakerKey,
-        effectiveMode,
-        correlationId,
-        requestStart,
-        rawBody,
-        warnings,
-        finalizeRequestTelemetry,
-      });
+      const intentStageExecution = await runOrchestratedStage('intent', async () =>
+        runIntentStage({
+          server: this,
+          req,
+          res,
+          bodyJson,
+          bodyText,
+          provider,
+          breakerKey,
+          effectiveMode,
+          correlationId,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (intentStageExecution.handled) {
+        return;
+      }
+      const intentStageResult = intentStageExecution.result;
       bodyJson = intentStageResult.bodyJson;
       bodyText = intentStageResult.bodyText;
       intentDriftDecision = intentStageResult.intentDriftDecision;
@@ -1058,44 +1131,56 @@ class SentinelServer {
         return;
       }
 
-      const sandboxStageResult = await runSandboxStage({
-        server: this,
-        res,
-        bodyJson,
-        effectiveMode,
-        provider,
-        breakerKey,
-        correlationId,
-        requestStart,
-        rawBody,
-        warnings,
-        finalizeRequestTelemetry,
-      });
+      const sandboxStageExecution = await runOrchestratedStage('sandbox', async () =>
+        runSandboxStage({
+          server: this,
+          res,
+          bodyJson,
+          effectiveMode,
+          provider,
+          breakerKey,
+          correlationId,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (sandboxStageExecution.handled) {
+        return;
+      }
+      const sandboxStageResult = sandboxStageExecution.result;
       sandboxDecision = sandboxStageResult.sandboxDecision;
       if (sandboxStageResult.handled) {
         return;
       }
 
-      const piiStageResult = await runPiiStage({
-        server: this,
-        req,
-        res,
-        bodyText,
-        bodyJson,
-        precomputedLocalScan,
-        piiVaultSessionKey,
-        provider,
-        breakerKey,
-        correlationId,
-        effectiveMode,
-        requestStart,
-        rawBody,
-        warnings,
-        finalizeRequestTelemetry,
-        piiTypes,
-        redactedCount,
-        piiProviderUsed,
-      });
+      const piiStageExecution = await runOrchestratedStage('pii', async () =>
+        runPiiStage({
+          server: this,
+          req,
+          res,
+          bodyText,
+          bodyJson,
+          precomputedLocalScan,
+          piiVaultSessionKey,
+          provider,
+          breakerKey,
+          correlationId,
+          effectiveMode,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+          piiTypes,
+          redactedCount,
+          piiProviderUsed,
+        })
+      );
+      if (piiStageExecution.handled) {
+        return;
+      }
+      const piiStageResult = piiStageExecution.result;
       bodyText = piiStageResult.bodyText;
       bodyJson = piiStageResult.bodyJson;
       piiTypes = piiStageResult.piiTypes;
@@ -1105,78 +1190,139 @@ class SentinelServer {
         return;
       }
 
-      if (req.headers['x-sentinel-optimize'] === 'true' && bodyJson && Array.isArray(bodyJson.messages)) {
-        try {
-          const result = this.optimizerPlugin.optimize(bodyJson.messages, {
-            provider,
-            profile: req.headers['x-sentinel-optimizer-profile'] || 'default',
-          });
-          if (result && result.improved && Array.isArray(result.messages)) {
-            bodyJson.messages = result.messages;
-            bodyText = JSON.stringify(bodyJson);
+      const optimizerStageExecution = await runOrchestratedStage('optimizer', async () => {
+        let optimizedBodyJson = bodyJson;
+        let optimizedBodyText = bodyText;
+        if (req.headers['x-sentinel-optimize'] === 'true' && optimizedBodyJson && Array.isArray(optimizedBodyJson.messages)) {
+          try {
+            const result = this.optimizerPlugin.optimize(optimizedBodyJson.messages, {
+              provider,
+              profile: req.headers['x-sentinel-optimizer-profile'] || 'default',
+            });
+            if (result && result.improved && Array.isArray(result.messages)) {
+              optimizedBodyJson.messages = result.messages;
+              optimizedBodyText = JSON.stringify(optimizedBodyJson);
+            }
+          } catch (error) {
+            logger.warn('Optimizer plugin failed', { error: error.message, correlationId });
+            warnings.push('optimizer:plugin_error');
           }
-        } catch (error) {
-          logger.warn('Optimizer plugin failed', { error: error.message, correlationId });
-          warnings.push('optimizer:plugin_error');
         }
+        return {
+          bodyJson: optimizedBodyJson,
+          bodyText: optimizedBodyText,
+        };
+      });
+      if (optimizerStageExecution.handled) {
+        return;
       }
+      const optimizerStageResult = optimizerStageExecution.result;
+      bodyJson = optimizerStageResult.bodyJson;
+      bodyText = optimizerStageResult.bodyText;
 
-      let polymorphDecision = null;
-      if (this.polymorphicPrompt.isEnabled()) {
-        polymorphDecision = this.polymorphicPrompt.mutate({
-          bodyJson,
-          headers: req.headers || {},
-        });
-        if (polymorphDecision.applied) {
-          bodyJson = polymorphDecision.bodyJson;
-          bodyText = polymorphDecision.bodyText;
-          this.stats.polymorph_applied += 1;
-          if (this.polymorphicPrompt.observability) {
-            res.setHeader('x-sentinel-polymorph', 'applied');
-            res.setHeader('x-sentinel-polymorph-epoch', String(polymorphDecision.meta?.epoch || 0));
-            res.setHeader('x-sentinel-polymorph-replacements', String(polymorphDecision.meta?.replacements || 0));
+      const polymorphStageExecution = await runOrchestratedStage('polymorphic_prompt', async () => {
+        let polymorphDecision = null;
+        let polymorphBodyJson = bodyJson;
+        let polymorphBodyText = bodyText;
+        if (this.polymorphicPrompt.isEnabled()) {
+          polymorphDecision = this.polymorphicPrompt.mutate({
+            bodyJson: polymorphBodyJson,
+            headers: req.headers || {},
+          });
+          if (polymorphDecision.applied) {
+            polymorphBodyJson = polymorphDecision.bodyJson;
+            polymorphBodyText = polymorphDecision.bodyText;
+            this.stats.polymorph_applied += 1;
+            if (this.polymorphicPrompt.observability) {
+              res.setHeader('x-sentinel-polymorph', 'applied');
+              res.setHeader('x-sentinel-polymorph-epoch', String(polymorphDecision.meta?.epoch || 0));
+              res.setHeader('x-sentinel-polymorph-replacements', String(polymorphDecision.meta?.replacements || 0));
+            }
+          } else if (this.polymorphicPrompt.observability) {
+            res.setHeader('x-sentinel-polymorph', String(polymorphDecision.reason || 'bypass'));
           }
-        } else if (this.polymorphicPrompt.observability) {
-          res.setHeader('x-sentinel-polymorph', String(polymorphDecision.reason || 'bypass'));
         }
+        return {
+          bodyJson: polymorphBodyJson,
+          bodyText: polymorphBodyText,
+          polymorphDecision,
+        };
+      });
+      if (polymorphStageExecution.handled) {
+        return;
       }
+      const polymorphStageResult = polymorphStageExecution.result;
+      bodyJson = polymorphStageResult.bodyJson;
+      bodyText = polymorphStageResult.bodyText;
 
       const parallaxInputBodyJson =
         bodyJson && typeof bodyJson === 'object'
           ? JSON.parse(JSON.stringify(bodyJson))
           : null;
 
-      let honeytokenDecision = null;
-      if (this.honeytokenInjector.isEnabled()) {
-        const injected = this.honeytokenInjector.inject({
-          bodyJson,
-          bodyText,
-          provider,
-          path: parsedPath.pathname,
-        });
-        if (injected.applied) {
-          bodyJson = injected.bodyJson;
-          bodyText = injected.bodyText;
-          honeytokenDecision = injected.meta;
-          this.stats.honeytoken_injected += 1;
-          res.setHeader('x-sentinel-honeytoken', 'injected');
-          res.setHeader('x-sentinel-honeytoken-mode', injected.meta.mode);
-          res.setHeader('x-sentinel-honeytoken-id', String(injected.meta.token_hash).slice(0, 16));
+      const honeytokenStageExecution = await runOrchestratedStage('honeytoken_inject', async () => {
+        let honeytokenDecision = null;
+        let honeytokenBodyJson = bodyJson;
+        let honeytokenBodyText = bodyText;
+        if (this.honeytokenInjector.isEnabled()) {
+          const injected = this.honeytokenInjector.inject({
+            bodyJson: honeytokenBodyJson,
+            bodyText: honeytokenBodyText,
+            provider,
+            path: parsedPath.pathname,
+          });
+          if (injected.applied) {
+            honeytokenBodyJson = injected.bodyJson;
+            honeytokenBodyText = injected.bodyText;
+            honeytokenDecision = injected.meta;
+            this.stats.honeytoken_injected += 1;
+            res.setHeader('x-sentinel-honeytoken', 'injected');
+            res.setHeader('x-sentinel-honeytoken-mode', injected.meta.mode);
+            res.setHeader('x-sentinel-honeytoken-id', String(injected.meta.token_hash).slice(0, 16));
+          }
         }
+        return {
+          bodyJson: honeytokenBodyJson,
+          bodyText: honeytokenBodyText,
+          honeytokenDecision,
+        };
+      });
+      if (honeytokenStageExecution.handled) {
+        return;
       }
+      const honeytokenStageResult = honeytokenStageExecution.result;
+      bodyJson = honeytokenStageResult.bodyJson;
+      bodyText = honeytokenStageResult.bodyText;
+      let honeytokenDecision = honeytokenStageResult.honeytokenDecision;
 
-      let canaryToolDecision = null;
-      if (this.canaryToolTrap.isEnabled()) {
-        const canaryInjected = this.canaryToolTrap.inject(bodyJson, { provider });
-        if (canaryInjected.applied) {
-          bodyJson = canaryInjected.bodyJson;
-          bodyText = canaryInjected.bodyText;
-          canaryToolDecision = canaryInjected.meta;
-          this.stats.canary_tool_injected += 1;
-          res.setHeader('x-sentinel-canary-tool', 'injected');
-          res.setHeader('x-sentinel-canary-tool-name', canaryInjected.meta.tool_name);
+      const canaryInjectStageExecution = await runOrchestratedStage('canary_tool_inject', async () => {
+        let canaryToolDecision = null;
+        let canaryBodyJson = bodyJson;
+        let canaryBodyText = bodyText;
+        if (this.canaryToolTrap.isEnabled()) {
+          const canaryInjected = this.canaryToolTrap.inject(canaryBodyJson, { provider });
+          if (canaryInjected.applied) {
+            canaryBodyJson = canaryInjected.bodyJson;
+            canaryBodyText = canaryInjected.bodyText;
+            canaryToolDecision = canaryInjected.meta;
+            this.stats.canary_tool_injected += 1;
+            res.setHeader('x-sentinel-canary-tool', 'injected');
+            res.setHeader('x-sentinel-canary-tool-name', canaryInjected.meta.tool_name);
+          }
         }
+        return {
+          bodyJson: canaryBodyJson,
+          bodyText: canaryBodyText,
+          canaryToolDecision,
+        };
+      });
+      if (canaryInjectStageExecution.handled) {
+        return;
       }
+      const canaryInjectStageResult = canaryInjectStageExecution.result;
+      bodyJson = canaryInjectStageResult.bodyJson;
+      bodyText = canaryInjectStageResult.bodyText;
+      let canaryToolDecision = canaryInjectStageResult.canaryToolDecision;
       let canaryTriggered = null;
       let parallaxDecision = null;
       let cognitiveRollbackDecision = null;
@@ -1207,11 +1353,17 @@ class SentinelServer {
       const pluginWarnings = pipelineContext.get('warnings', []);
       mergePipelineWarnings({ warnings, pluginWarnings, stats: this.stats });
 
-      const budgetEstimate = this.budgetStore.estimateRequest({
-        provider,
-        method,
-        requestBodyBuffer: effectiveBodyBuffer,
-      });
+      const budgetEstimateStageExecution = await runOrchestratedStage('budget_estimate', async () =>
+        this.budgetStore.estimateRequest({
+          provider,
+          method,
+          requestBodyBuffer: effectiveBodyBuffer,
+        }),
+      provider);
+      if (budgetEstimateStageExecution.handled) {
+        return;
+      }
+      const budgetEstimate = budgetEstimateStageExecution.result;
       if (budgetEstimate.enabled === true) {
         setBudgetHeaders(res, budgetEstimate);
         if (budgetEstimate.applies) {
@@ -1292,8 +1444,14 @@ class SentinelServer {
       };
       let vcrLookup;
       try {
-        vcrLookup = await this.vcrStore.lookup(vcrRequestMeta);
-      } catch (error) {
+        const vcrLookupStageExecution = await runOrchestratedStage('vcr_lookup', async () =>
+          this.vcrStore.lookup(vcrRequestMeta),
+        provider);
+        if (vcrLookupStageExecution.handled) {
+          return;
+        }
+        vcrLookup = vcrLookupStageExecution.result;
+      } catch {
         vcrLookup = {
           hit: false,
           strictReplay: false,
@@ -1355,14 +1513,20 @@ class SentinelServer {
 
         if (this.semanticCache.isEnabled()) {
           try {
-            const cacheLookup = await this.semanticCache.lookup({
-              provider: cacheProviderKey,
-              method,
-              pathWithQuery,
-              wantsStream,
-              bodyJson,
-              bodyText,
-            });
+            const semanticLookupStageExecution = await runOrchestratedStage('semantic_cache_lookup', async () =>
+              this.semanticCache.lookup({
+                provider: cacheProviderKey,
+                method,
+                pathWithQuery,
+                wantsStream,
+                bodyJson,
+                bodyText,
+              }),
+            provider);
+            if (semanticLookupStageExecution.handled) {
+              return;
+            }
+            const cacheLookup = semanticLookupStageExecution.result;
             if (cacheLookup.hit) {
               replayedFromSemanticCache = true;
               semanticCacheHeader = 'hit';
@@ -1390,24 +1554,30 @@ class SentinelServer {
             } else {
               semanticCacheHeader = 'bypass';
             }
-          } catch (error) {
+          } catch {
             warnings.push('semantic_cache_error');
             this.stats.warnings_total += 1;
           }
         }
 
         if (!replayedFromSemanticCache) {
-          upstream = await this.upstreamClient.forwardRequest({
-            routePlan,
-            req,
-            pathWithQuery,
-            method,
-            bodyBuffer: effectiveBodyBuffer,
-            bodyJson,
-            correlationId,
-            wantsStream,
-            forwardHeaders: effectiveForwardHeaders,
-          });
+          const upstreamForwardStageExecution = await runOrchestratedStage('upstream_forward', async () =>
+            this.upstreamClient.forwardRequest({
+              routePlan,
+              req,
+              pathWithQuery,
+              method,
+              bodyBuffer: effectiveBodyBuffer,
+              bodyJson,
+              correlationId,
+              wantsStream,
+              forwardHeaders: effectiveForwardHeaders,
+            }),
+          provider);
+          if (upstreamForwardStageExecution.handled) {
+            return;
+          }
+          upstream = upstreamForwardStageExecution.result;
         }
       }
 
@@ -1496,22 +1666,76 @@ class SentinelServer {
 
       applyUpstreamResponseHeaders(res, upstream.responseHeaders || {});
 
-      const streamStageResult = await runStreamEgressStage({
+      const streamStageExecution = await runOrchestratedStage('stream_egress', async () =>
+        runStreamEgressStage({
+          server: this,
+          res,
+          upstream,
+          egressConfig,
+          effectiveMode,
+          correlationId,
+          routedProvider,
+          piiVaultSessionKey,
+          warnings,
+          bodyBuffer,
+          requestStart,
+          start,
+          replayedFromVcr,
+          replayedFromSemanticCache,
+          routePlan,
+          honeytokenDecision,
+          canaryToolDecision,
+          canaryTriggered,
+          parallaxDecision,
+          cognitiveRollbackDecision,
+          omniShieldDecision,
+          intentDriftDecision,
+          sandboxDecision,
+          redactedCount,
+          piiTypes,
+          routedTarget,
+          finalizeRequestTelemetry,
+        }),
+      routedProvider);
+      if (streamStageExecution.handled) {
+        return;
+      }
+      const streamStageResult = streamStageExecution.result;
+      if (streamStageResult.handled) {
+        return;
+      }
+
+      const bufferedEgressStageExecution = await runBufferedEgressAndFinalizeStage({
         server: this,
+        req,
         res,
         upstream,
         egressConfig,
         effectiveMode,
         correlationId,
         routedProvider,
-        piiVaultSessionKey,
+        routedTarget,
+        routedBreakerKey,
+        routePlan,
         warnings,
         bodyBuffer,
         requestStart,
-        start,
+        durationMs,
+        runOrchestratedStage,
         replayedFromVcr,
         replayedFromSemanticCache,
-        routePlan,
+        vcrRequestMeta,
+        piiVaultSessionKey,
+        parallaxInputBodyJson,
+        bodyJson,
+        method,
+        pathWithQuery,
+        wantsStream,
+        bodyText,
+        cacheProviderKey,
+        injectionScore,
+        piiTypes,
+        redactedCount,
         honeytokenDecision,
         canaryToolDecision,
         canaryTriggered,
@@ -1520,492 +1744,11 @@ class SentinelServer {
         omniShieldDecision,
         intentDriftDecision,
         sandboxDecision,
-        redactedCount,
-        piiTypes,
-        routedTarget,
         finalizeRequestTelemetry,
       });
-      if (streamStageResult.handled) {
+      if (bufferedEgressStageExecution.handled) {
         return;
       }
-
-      let outboundBody = upstream.body;
-      if (!replayedFromVcr && this.vcrStore.enabled && this.vcrStore.mode === 'record' && Buffer.isBuffer(upstream.body)) {
-        this.vcrStore.record(vcrRequestMeta, {
-          status: upstream.status,
-          headers: upstream.responseHeaders || {},
-          bodyBuffer: upstream.body,
-        });
-        this.stats.vcr_records += 1;
-        res.setHeader('x-sentinel-vcr', 'recorded');
-      }
-      if (egressConfig.enabled) {
-        const egressResult = scanBufferedResponse({
-          bodyBuffer: outboundBody,
-          contentType: upstream.responseHeaders?.['content-type'],
-          scanner: this.piiScanner,
-          maxScanBytes: egressConfig.maxScanBytes,
-          severityActions: this.config.pii?.severity_actions || {},
-          effectiveMode,
-          entropyConfig: egressConfig.entropy,
-        });
-
-        if (egressResult.detected) {
-          this.stats.egress_detected += 1;
-          warnings.push(`egress_pii:${egressResult.severity}`);
-          if (egressResult.redacted) {
-            this.stats.egress_redacted += 1;
-            outboundBody = egressResult.bodyBuffer;
-            res.setHeader('x-sentinel-egress-action', 'redact');
-          }
-          if (egressResult.redactionSkipped) {
-            warnings.push('egress_redaction_skipped_truncated');
-            this.stats.warnings_total += 1;
-          }
-
-          if (egressResult.blocked) {
-            this.stats.blocked_total += 1;
-            this.stats.egress_blocked += 1;
-            const diagnostics = {
-              errorSource: 'sentinel',
-              upstreamError: false,
-              provider: routedProvider,
-              retryCount: upstream.diagnostics.retryCount || 0,
-              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
-              correlationId,
-            };
-            responseHeaderDiagnostics(res, diagnostics);
-            res.setHeader('x-sentinel-egress-action', 'block');
-            await this.maybeNormalizeBlockedLatency({
-              res,
-              statusCode: 403,
-              requestStart,
-            });
-            this.auditLogger.write({
-              timestamp: new Date().toISOString(),
-              correlation_id: correlationId,
-              config_version: this.config.version,
-              mode: effectiveMode,
-              decision: 'blocked_egress',
-              reasons: ['egress_pii_detected'],
-              pii_types: egressResult.piiTypes,
-              redactions: 0,
-              duration_ms: durationMs,
-              request_bytes: bodyBuffer.length,
-              response_status: 403,
-              response_bytes: 0,
-              provider: routedProvider,
-              upstream_target: routedTarget,
-              failover_used: upstream.route?.failoverUsed === true,
-              route_source: routePlan.routeSource,
-              route_group: routePlan.selectedGroup || undefined,
-              route_contract: routePlan.desiredContract,
-              requested_target: routePlan.requestedTarget,
-            });
-            this.writeStatus();
-            finalizeRequestTelemetry({
-              decision: 'blocked_egress',
-              status: 403,
-              providerName: routedProvider,
-            });
-            return res.status(403).json({
-              error: 'EGRESS_PII_DETECTED',
-              reason: 'egress_pii_detected',
-              pii_types: egressResult.piiTypes,
-              correlation_id: correlationId,
-            });
-          }
-        }
-
-        if (egressResult.entropy?.detected) {
-          this.stats.egress_entropy_detected += 1;
-          warnings.push(`egress_entropy:${egressResult.entropy.action}`);
-          const entropyFindings = Array.isArray(egressResult.entropy.findings)
-            ? egressResult.entropy.findings
-            : [];
-          res.setHeader('x-sentinel-egress-entropy', egressResult.entropy.action || 'monitor');
-          res.setHeader('x-sentinel-egress-entropy-findings', String(entropyFindings.length));
-          if (egressResult.entropy.truncated) {
-            warnings.push('egress_entropy_scan_truncated');
-            this.stats.warnings_total += 1;
-          }
-          if (egressResult.entropy.blocked) {
-            this.stats.blocked_total += 1;
-            this.stats.egress_entropy_blocked += 1;
-            const diagnostics = {
-              errorSource: 'sentinel',
-              upstreamError: false,
-              provider: routedProvider,
-              retryCount: upstream.diagnostics.retryCount || 0,
-              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
-              correlationId,
-            };
-            responseHeaderDiagnostics(res, diagnostics);
-            await this.maybeNormalizeBlockedLatency({
-              res,
-              statusCode: 403,
-              requestStart,
-            });
-            this.auditLogger.write({
-              timestamp: new Date().toISOString(),
-              correlation_id: correlationId,
-              config_version: this.config.version,
-              mode: effectiveMode,
-              decision: 'blocked_egress_entropy',
-              reasons: ['egress_entropy_detected'],
-              pii_types: piiTypes,
-              egress_entropy_findings: entropyFindings,
-              redactions: 0,
-              duration_ms: durationMs,
-              request_bytes: bodyBuffer.length,
-              response_status: 403,
-              response_bytes: 0,
-              provider: routedProvider,
-              upstream_target: routedTarget,
-              failover_used: upstream.route?.failoverUsed === true,
-              route_source: routePlan.routeSource,
-              route_group: routePlan.selectedGroup || undefined,
-              route_contract: routePlan.desiredContract,
-              requested_target: routePlan.requestedTarget,
-            });
-            this.writeStatus();
-            finalizeRequestTelemetry({
-              decision: 'blocked_egress',
-              status: 403,
-              providerName: routedProvider,
-            });
-            return res.status(403).json({
-              error: 'EGRESS_ENTROPY_DETECTED',
-              reason: 'egress_entropy_detected',
-              findings: entropyFindings.map((item) => ({
-                kind: item.kind,
-                entropy: item.entropy,
-                token_hash: item.token_hash,
-                length: item.length,
-              })),
-              correlation_id: correlationId,
-            });
-          }
-        }
-      }
-
-      canaryTriggered = null;
-      if (this.canaryToolTrap.isEnabled()) {
-        canaryTriggered = this.canaryToolTrap.detectTriggered(
-          outboundBody,
-          upstream.responseHeaders?.['content-type']
-        );
-        if (canaryTriggered.triggered) {
-          this.stats.canary_tool_triggered += 1;
-          warnings.push('canary_tool_triggered');
-          this.stats.warnings_total += 1;
-          res.setHeader('x-sentinel-canary-tool-triggered', 'true');
-          res.setHeader('x-sentinel-canary-tool-name', canaryTriggered.toolName);
-
-          const rollbackCandidate = this.cognitiveRollback.suggest({
-            bodyJson: parallaxInputBodyJson || bodyJson,
-            trigger: 'canary_tool_triggered',
-          });
-          if (rollbackCandidate.applicable) {
-            cognitiveRollbackDecision = rollbackCandidate;
-            this.stats.cognitive_rollback_suggested += 1;
-            warnings.push('cognitive_rollback_suggested');
-            this.stats.warnings_total += 1;
-            if (this.cognitiveRollback.observability) {
-              res.setHeader(
-                'x-sentinel-cognitive-rollback',
-                this.cognitiveRollback.shouldAuto() ? 'auto' : 'suggested'
-              );
-              res.setHeader('x-sentinel-cognitive-rollback-trigger', 'canary_tool_triggered');
-              res.setHeader(
-                'x-sentinel-cognitive-rollback-dropped',
-                String(rollbackCandidate.droppedMessages || 0)
-              );
-            }
-          }
-
-          if (effectiveMode === 'enforce' && this.canaryToolTrap.mode === 'block') {
-            if (rollbackCandidate.applicable && this.cognitiveRollback.shouldAuto()) {
-              this.stats.cognitive_rollback_auto += 1;
-              const diagnostics = {
-                errorSource: 'sentinel',
-                upstreamError: false,
-                provider: routedProvider,
-                retryCount: upstream.diagnostics.retryCount || 0,
-                circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
-                correlationId,
-              };
-              responseHeaderDiagnostics(res, diagnostics);
-              this.auditLogger.write({
-                timestamp: new Date().toISOString(),
-                correlation_id: correlationId,
-                config_version: this.config.version,
-                mode: effectiveMode,
-                decision: 'cognitive_rollback_required',
-                reasons: ['canary_tool_triggered'],
-                pii_types: piiTypes,
-                redactions: redactedCount,
-                duration_ms: durationMs,
-                request_bytes: bodyBuffer.length,
-                response_status: 409,
-                response_bytes: 0,
-                provider: routedProvider,
-                upstream_target: routedTarget,
-                canary_tool_name: canaryTriggered.toolName,
-                cognitive_rollback_trigger: 'canary_tool_triggered',
-                cognitive_rollback_dropped_messages: rollbackCandidate.droppedMessages,
-                route_source: routePlan.routeSource,
-                route_group: routePlan.selectedGroup || undefined,
-                route_contract: routePlan.desiredContract,
-                requested_target: routePlan.requestedTarget,
-              });
-              this.writeStatus();
-              finalizeRequestTelemetry({
-                decision: 'blocked_policy',
-                status: 409,
-                providerName: routedProvider,
-              });
-              return res.status(409).json({
-                error: 'COGNITIVE_ROLLBACK_REQUIRED',
-                reason: 'canary_tool_triggered',
-                rollback: {
-                  mode: this.cognitiveRollback.mode,
-                  trigger: 'canary_tool_triggered',
-                  dropped_messages: rollbackCandidate.droppedMessages,
-                  messages: rollbackCandidate.bodyJson.messages,
-                },
-                correlation_id: correlationId,
-              });
-            }
-
-            this.stats.blocked_total += 1;
-            const diagnostics = {
-              errorSource: 'sentinel',
-              upstreamError: false,
-              provider: routedProvider,
-              retryCount: upstream.diagnostics.retryCount || 0,
-              circuitState: this.circuitBreakers.getProviderState(routedBreakerKey).state,
-              correlationId,
-            };
-            responseHeaderDiagnostics(res, diagnostics);
-            await this.maybeNormalizeBlockedLatency({
-              res,
-              statusCode: 403,
-              requestStart,
-            });
-            this.auditLogger.write({
-              timestamp: new Date().toISOString(),
-              correlation_id: correlationId,
-              config_version: this.config.version,
-              mode: effectiveMode,
-              decision: 'blocked_canary_tool',
-              reasons: ['canary_tool_triggered'],
-              pii_types: piiTypes,
-              redactions: redactedCount,
-              duration_ms: durationMs,
-              request_bytes: bodyBuffer.length,
-              response_status: 403,
-              response_bytes: 0,
-              provider: routedProvider,
-              upstream_target: routedTarget,
-              canary_tool_name: canaryTriggered.toolName,
-              route_source: routePlan.routeSource,
-              route_group: routePlan.selectedGroup || undefined,
-              route_contract: routePlan.desiredContract,
-              requested_target: routePlan.requestedTarget,
-            });
-            this.writeStatus();
-            finalizeRequestTelemetry({
-              decision: 'blocked_policy',
-              status: 403,
-              providerName: routedProvider,
-            });
-            return res.status(403).json({
-              error: 'CANARY_TOOL_TRIGGERED',
-              reason: 'canary_tool_triggered',
-              tool_name: canaryTriggered.toolName,
-              correlation_id: correlationId,
-            });
-          }
-        }
-      }
-
-      const parallaxStageResult = await runParallaxStage({
-        server: this,
-        req,
-        res,
-        effectiveMode,
-        correlationId,
-        parallaxInputBodyJson,
-        bodyJson,
-        outboundBody,
-        upstream,
-        warnings,
-        requestStart,
-        durationMs,
-        bodyBuffer,
-        routePlan,
-        routedProvider,
-        routedTarget,
-        routedBreakerKey,
-        piiTypes,
-        redactedCount,
-        finalizeRequestTelemetry,
-        cognitiveRollbackDecision,
-      });
-      parallaxDecision = parallaxStageResult.parallaxDecision;
-      cognitiveRollbackDecision = parallaxStageResult.cognitiveRollbackDecision;
-      if (parallaxStageResult.handled) {
-        return;
-      }
-
-      if (warnings.length > 0) {
-        res.setHeader('x-sentinel-warning', warnings.join(','));
-      }
-
-      if (!replayedFromVcr && !replayedFromSemanticCache && this.semanticCache.isEnabled()) {
-        const cacheSafeForStore =
-          upstream.status >= 200 &&
-          upstream.status < 300 &&
-          injectionScore === 0 &&
-          piiTypes.length === 0 &&
-          redactedCount === 0 &&
-          !warnings.some((item) => {
-            const warning = String(item);
-            return (
-              warning.startsWith('policy:') ||
-              warning.startsWith('pii:') ||
-              warning.startsWith('injection:') ||
-              warning.startsWith('egress_pii:') ||
-              warning.includes('fallback') ||
-              warning.includes('error')
-            );
-          });
-        if (cacheSafeForStore) {
-          try {
-            const stored = await this.semanticCache.store({
-              provider: cacheProviderKey,
-              method,
-              pathWithQuery,
-              wantsStream,
-              bodyJson,
-              bodyText,
-              responseStatus: upstream.status,
-              responseHeaders: upstream.responseHeaders || {},
-              responseBodyBuffer: outboundBody,
-            });
-            if (stored.stored) {
-              this.stats.semantic_cache_stores += 1;
-              res.setHeader('x-sentinel-semantic-cache', 'store');
-            }
-          } catch {
-            warnings.push('semantic_cache_store_error');
-            this.stats.warnings_total += 1;
-          }
-        }
-      }
-
-      let responseBodyForClient = outboundBody;
-      const vaultEgress = this.piiVault.applyEgressBuffer({
-        bodyBuffer: outboundBody,
-        contentType: upstream.responseHeaders?.['content-type'],
-        sessionKey: piiVaultSessionKey,
-      });
-      if (vaultEgress.changed) {
-        responseBodyForClient = vaultEgress.bodyBuffer;
-        this.stats.pii_vault_detokenized += Number(vaultEgress.replacements || 0);
-        warnings.push(`pii_vault:detokenized:${vaultEgress.replacements || 0}`);
-        this.stats.warnings_total += 1;
-        if (this.piiVault.observability) {
-          res.setHeader('x-sentinel-pii-vault-egress', 'detokenize');
-          res.setHeader('x-sentinel-pii-vault-egress-replacements', String(vaultEgress.replacements || 0));
-        }
-      }
-
-      let budgetCharge = null;
-      try {
-        budgetCharge = await this.budgetStore.recordBuffered({
-          provider: routedProvider,
-          requestBodyBuffer: bodyBuffer,
-          responseBodyBuffer: responseBodyForClient,
-          replayedFromVcr,
-          replayedFromSemanticCache,
-          correlationId,
-        });
-        if (budgetCharge.charged) {
-          this.stats.budget_charged_usd = Number(
-            (this.stats.budget_charged_usd + Number(budgetCharge.chargedUsd || 0)).toFixed(6)
-          );
-          res.setHeader('x-sentinel-budget-charged-usd', formatBudgetUsd(budgetCharge.chargedUsd));
-        }
-        if (budgetCharge.enabled === true) {
-          setBudgetHeaders(res, budgetCharge);
-        }
-      } catch {
-        warnings.push('budget_record_error');
-        this.stats.warnings_total += 1;
-      }
-
-      this.auditLogger.write({
-        timestamp: new Date().toISOString(),
-        correlation_id: correlationId,
-        config_version: this.config.version,
-        mode: effectiveMode,
-        decision: 'forwarded',
-        reasons: warnings,
-        pii_types: piiTypes,
-        redactions: redactedCount,
-        duration_ms: durationMs,
-        request_bytes: bodyBuffer.length,
-        response_status: upstream.status,
-        response_bytes: responseBodyForClient.length,
-        provider: routedProvider,
-        upstream_target: routedTarget,
-        failover_used: upstream.route?.failoverUsed === true,
-        budget_charged_usd: budgetCharge?.chargedUsd,
-        budget_spent_usd: budgetCharge?.spentUsd,
-        budget_remaining_usd: budgetCharge?.remainingUsd,
-        route_source: routePlan.routeSource,
-        route_group: routePlan.selectedGroup || undefined,
-        route_contract: routePlan.desiredContract,
-        requested_target: routePlan.requestedTarget,
-        honeytoken_applied: Boolean(honeytokenDecision),
-        honeytoken_mode: honeytokenDecision?.mode,
-        honeytoken_token_hash: honeytokenDecision?.token_hash,
-        canary_tool_injected: Boolean(canaryToolDecision),
-        canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
-        canary_tool_triggered: Boolean(canaryTriggered?.triggered),
-        parallax_evaluated: Boolean(parallaxDecision?.evaluated),
-        parallax_veto: Boolean(parallaxDecision?.veto),
-        parallax_risk: parallaxDecision?.risk,
-        parallax_secondary_provider: parallaxDecision?.secondaryProvider,
-        parallax_high_risk_tools: parallaxDecision?.highRiskTools,
-        cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
-        cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
-        cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
-        cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
-        omni_shield_detected: Boolean(omniShieldDecision?.detected),
-        omni_shield_findings: omniShieldDecision?.findings,
-        intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
-        intent_drift_reason: intentDriftDecision?.reason,
-        intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
-        intent_drift_distance: intentDriftDecision?.distance,
-        intent_drift_threshold: intentDriftDecision?.threshold,
-        intent_drift_turn_count: intentDriftDecision?.turnCount,
-        sandbox_detected: Boolean(sandboxDecision?.detected),
-        sandbox_findings: sandboxDecision?.findings,
-        pii_vault_detokenized: vaultEgress.replacements || 0,
-      });
-
-      if (upstream.status < 400) {
-        this.latencyNormalizer.recordSuccess(Date.now() - requestStart);
-      }
-      finalizeRequestTelemetry({
-        decision: 'forwarded',
-        status: upstream.status,
-        providerName: routedProvider,
-      });
-      res.status(upstream.status).send(responseBodyForClient);
     });
   }
 

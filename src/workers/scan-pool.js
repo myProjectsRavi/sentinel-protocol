@@ -64,7 +64,20 @@ class ScanWorkerPool {
       }
     });
 
+    this.syncWorkerRefState(info);
     return info;
+  }
+
+  syncWorkerRefState(info) {
+    if (!info?.worker) {
+      return;
+    }
+    if (info.inflight > 0) {
+      info.worker.ref?.();
+      return;
+    }
+    // Keep idle workers from pinning process shutdown in embedded/test flows.
+    info.worker.unref?.();
   }
 
   onWorkerMessage(info, message) {
@@ -75,6 +88,7 @@ class ScanWorkerPool {
     this.pending.delete(message.id);
     clearTimeout(pending.timeout);
     pending.info.inflight = Math.max(0, pending.info.inflight - 1);
+    this.syncWorkerRefState(pending.info);
     this.queueDepth = Math.max(0, this.queueDepth - 1);
 
     if (message.ok) {
@@ -95,6 +109,7 @@ class ScanWorkerPool {
       this.queueDepth = Math.max(0, this.queueDepth - 1);
       pending.reject(error);
     }
+    this.syncWorkerRefState(info);
   }
 
   onWorkerFailure(info, error) {
@@ -137,11 +152,13 @@ class ScanWorkerPool {
     const taskId = this.nextTaskId++;
     this.queueDepth += 1;
     info.inflight += 1;
+    this.syncWorkerRefState(info);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(taskId);
         info.inflight = Math.max(0, info.inflight - 1);
+        this.syncWorkerRefState(info);
         this.queueDepth = Math.max(0, this.queueDepth - 1);
         reject(new Error(`scan worker timeout after ${timeoutMs}ms`));
       }, timeoutMs);

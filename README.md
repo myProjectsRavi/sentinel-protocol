@@ -8,6 +8,7 @@ Sentinel is the only Open Source AI Firewall that runs PII detection in Worker T
 
 It provides:
 - Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
+- Configurable token-bucket rate limiting for policy rules (`runtime.rate_limiter.*` + `requests_per_minute`)
 - PII/secret detection with severity actions (`block`, `redact`, `log`)
 - Format-preserving masking mode for test-safe pseudonyms (`pii.redaction.mode: format_preserving`)
 - Bi-directional protection: ingress request scanning + egress response scanning/redaction

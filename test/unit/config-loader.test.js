@@ -302,4 +302,75 @@ describe('config loader and migration', () => {
     expect(loaded.config.pii.egress.entropy.mode).toBe('block');
     expect(loaded.config.pii.egress.entropy.threshold).toBe(4.6);
   });
+
+  test('accepts runtime rate limiter and policy burst window settings', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.rate_limiter = {
+      default_window_ms: 45000,
+      default_limit: 80,
+      default_burst: 120,
+      max_buckets: 50000,
+      prune_interval: 128,
+      stale_bucket_ttl_ms: 240000,
+      max_key_length: 512,
+      key_headers: ['x-agent-id', 'x-session-id'],
+      fallback_key_headers: ['x-forwarded-for', 'user-agent'],
+      ip_header: 'x-real-ip',
+    };
+    base.rules = [
+      {
+        name: 'agent-rpm',
+        match: {
+          method: 'POST',
+          requests_per_minute: 30,
+          rate_limit_window_ms: 45000,
+          rate_limit_burst: 45,
+        },
+        action: 'block',
+        message: 'rate limited',
+      },
+    ];
+    writeYamlConfig(configPath, base);
+
+    const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    expect(loaded.config.runtime.rate_limiter.default_window_ms).toBe(45000);
+    expect(loaded.config.runtime.rate_limiter.default_limit).toBe(80);
+    expect(loaded.config.runtime.rate_limiter.default_burst).toBe(120);
+    expect(loaded.config.runtime.rate_limiter.stale_bucket_ttl_ms).toBe(240000);
+    expect(loaded.config.runtime.rate_limiter.max_key_length).toBe(512);
+    expect(loaded.config.runtime.rate_limiter.key_headers).toEqual(['x-agent-id', 'x-session-id']);
+    expect(loaded.config.runtime.rate_limiter.fallback_key_headers).toEqual(['x-forwarded-for', 'user-agent']);
+    expect(loaded.config.runtime.rate_limiter.ip_header).toBe('x-real-ip');
+    expect(loaded.config.rules[0].match.rate_limit_window_ms).toBe(45000);
+    expect(loaded.config.rules[0].match.rate_limit_burst).toBe(45);
+  });
+
+  test('rejects invalid runtime rate limiter identity header config', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.rate_limiter = {
+      default_window_ms: 45000,
+      default_limit: 80,
+      default_burst: 120,
+      max_buckets: 50000,
+      prune_interval: 128,
+      stale_bucket_ttl_ms: 240000,
+      max_key_length: 512,
+      key_headers: ['x-agent-id'],
+      fallback_key_headers: ['x-forwarded-for'],
+      ip_header: '',
+    };
+    writeYamlConfig(configPath, base);
+
+    expect(() =>
+      loadAndValidateConfig({
+        configPath,
+        allowMigration: false,
+        writeMigrated: false,
+      })
+    ).toThrow('`runtime.rate_limiter.ip_header` must be non-empty string');
+  });
 });

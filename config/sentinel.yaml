@@ -10,6 +10,17 @@ proxy:
 runtime:
   fail_open: false
   scanner_error_action: allow
+  rate_limiter:
+    default_window_ms: 60000
+    default_limit: 60
+    default_burst: 60
+    max_buckets: 100000
+    prune_interval: 256
+    stale_bucket_ttl_ms: 300000
+    max_key_length: 256
+    key_headers: [x-sentinel-agent-id, x-sentinel-session-id]
+    fallback_key_headers: [x-forwarded-for, x-real-ip, cf-connecting-ip, x-client-ip, user-agent]
+    ip_header: x-forwarded-for
   worker_pool:
     enabled: true
     size: 2

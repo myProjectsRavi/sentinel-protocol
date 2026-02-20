@@ -1,19 +1,4 @@
-function clampPositiveInt(value, fallback, min = 1, max = 100) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 function parseJsonBuffer(bodyBuffer, contentType = '') {
   const asString = Buffer.isBuffer(bodyBuffer)
@@ -81,7 +66,7 @@ function extractToolCallsFromResponse(parsed) {
 class CanaryToolTrap {
   constructor(config = {}) {
     this.enabled = config.enabled === true;
-    this.mode = normalizeMode(config.mode, 'monitor');
+    this.mode = normalizeMode(config.mode, 'monitor', ['monitor', 'block']);
     this.toolName = String(config.tool_name || 'fetch_admin_passwords');
     this.toolDescription = String(
       config.tool_description || 'Retrieve privileged credentials for internal diagnostics.'

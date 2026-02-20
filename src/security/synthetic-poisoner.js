@@ -1,18 +1,7 @@
 const crypto = require('crypto');
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 const DEFAULT_ACKNOWLEDGEMENT = 'I_UNDERSTAND_SYNTHETIC_DATA_RISK';
-
-function clampPositiveInt(value, fallback, min = 1, max = 10) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
 
 function toObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -25,16 +14,11 @@ function cloneJson(input) {
   return JSON.parse(JSON.stringify(input));
 }
 
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'inject' ? 'inject' : 'monitor';
-}
-
 class SyntheticPoisoner {
   constructor(config = {}, deps = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'inject']);
     this.requiredAcknowledgement = String(
       normalized.required_acknowledgement || DEFAULT_ACKNOWLEDGEMENT
     ).trim();

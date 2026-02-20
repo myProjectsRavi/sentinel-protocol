@@ -15,8 +15,16 @@
   "types": "index.d.ts",
   "type": "commonjs",
   "exports": {
-    ".": "./src/index.js",
-    "./embed": "./embed.js",
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./embed": {
+      "types": "./embed.d.ts",
+      "require": "./embed.js",
+      "default": "./embed.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -27,9 +35,12 @@
   },
   "scripts": {
     "start": "node ./cli/sentinel.js start",
-    "lint": "node ./scripts/lint-basic.js",
+    "lint": "npm run lint:eslint && npm run lint:static",
+    "lint:eslint": "npx --yes eslint@9.21.0 . --max-warnings=0",
+    "lint:static": "node ./scripts/lint-basic.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand test/unit",
+    "test:unit:ci": "jest --runInBand test/unit --detectOpenHandles",
     "test:integration": "jest --runInBand test/integration",
     "test:coverage": "jest --runInBand --coverage",
     "openapi:validate": "node ./scripts/validate-openapi.js",

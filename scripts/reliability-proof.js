@@ -3,7 +3,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { once } = require('events');
 const express = require('express');
 const autocannon = require('autocannon');
 
@@ -30,6 +29,40 @@ function runAutocannon(options) {
       }
       resolve(result);
     });
+  });
+}
+
+function listenServer(app, port, host, label) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, host);
+    const onListening = () => {
+      server.off('error', onError);
+      resolve(server);
+    };
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(new Error(`${label} listen failed: ${error.message}`));
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
+  });
+}
+
+function waitForListening(server, label) {
+  if (server?.listening) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(new Error(`${label} listen failed: ${error.message}`));
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
   });
 }
 
@@ -114,9 +147,7 @@ async function startUpstream(handler) {
   const app = express();
   app.use(express.raw({ type: '*/*', limit: '1mb' }));
   app.all('*', handler);
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, '127.0.0.1', () => resolve(s));
-  });
+  const server = await listenServer(app, 0, '127.0.0.1', 'reliability upstream');
   return {
     server,
     url: `http://127.0.0.1:${server.address().port}`,
@@ -136,7 +167,7 @@ function parseResultBody(text) {
   }
 }
 
-async function callSentinel({ sentinelPort, upstreamUrl, method = 'GET', path = '/v1/models', body }) {
+async function callSentinel({ sentinelPort, upstreamUrl, method = 'GET', path: routePath = '/v1/models', body }) {
   const headers = {
     'x-sentinel-target': 'custom',
     'x-sentinel-custom-url': upstreamUrl,
@@ -147,7 +178,7 @@ async function callSentinel({ sentinelPort, upstreamUrl, method = 'GET', path = 
     payload = JSON.stringify(body);
   }
 
-  const response = await fetch(`http://127.0.0.1:${sentinelPort}${path}`, {
+  const response = await fetch(`http://127.0.0.1:${sentinelPort}${routePath}`, {
     method,
     headers,
     body: payload,
@@ -166,9 +197,7 @@ async function runStressScenario(durationSeconds, connections) {
   });
   const sentinel = new SentinelServer(makeConfig(0, 800));
   const server = sentinel.start();
-  if (!server.listening) {
-    await once(server, 'listening');
-  }
+  await waitForListening(server, 'reliability sentinel');
   const sentinelPort = server.address().port;
 
   try {
@@ -221,9 +250,7 @@ async function runChaos503Scenario(requestCount) {
   });
   const sentinel = new SentinelServer(makeConfig(0, 500));
   const server = sentinel.start();
-  if (!server.listening) {
-    await once(server, 'listening');
-  }
+  await waitForListening(server, 'reliability sentinel');
   const sentinelPort = server.address().port;
 
   const byStatus = {};
@@ -270,9 +297,7 @@ async function runChaosTimeoutScenario(requestCount) {
   });
   const sentinel = new SentinelServer(makeConfig(0, 200));
   const server = sentinel.start();
-  if (!server.listening) {
-    await once(server, 'listening');
-  }
+  await waitForListening(server, 'reliability sentinel');
   const sentinelPort = server.address().port;
 
   const byStatus = {};

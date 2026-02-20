@@ -1,4 +1,4 @@
-const { DashboardServer, isLocalAddress, estimateSavings } = require('../../src/monitor/dashboard-server');
+const { isLocalAddress, estimateSavings } = require('../../src/monitor/dashboard-server');
 
 describe('dashboard server', () => {
   test('local address classifier works for loopback variants', () => {

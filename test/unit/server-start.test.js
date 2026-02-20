@@ -40,4 +40,19 @@ describe('SentinelServer start', () => {
 
     await sentinel.stop();
   });
+
+  test('stop does not throw when status persistence is unavailable', async () => {
+    const loaded = loadAndValidateConfig({
+      configPath: PROJECT_DEFAULT_CONFIG,
+      allowMigration: false,
+      writeMigrated: false,
+    });
+
+    const sentinel = new SentinelServer(loaded.config, { runDoctor: false });
+    sentinel.statusStore.write = jest.fn(() => {
+      throw new Error('status_write_failed');
+    });
+
+    await expect(sentinel.stop()).resolves.toBeUndefined();
+  });
 });

@@ -1,16 +1,5 @@
 const crypto = require('crypto');
-
-function clampPositiveInt(value, fallback, min = 1, max = 1048576) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 function clampProbability(value, fallback) {
   const parsed = Number(value);
@@ -26,11 +15,6 @@ function clampEntropy(value, fallback) {
     return fallback;
   }
   return parsed;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
 }
 
 function shannonEntropy(text) {
@@ -63,7 +47,7 @@ function uniqueCharacterRatio(value) {
 function normalizeConfig(config = {}) {
   return {
     enabled: config.enabled === true,
-    mode: normalizeMode(config.mode, 'monitor'),
+    mode: normalizeMode(config.mode, 'monitor', ['monitor', 'block']),
     threshold: clampEntropy(config.threshold, 4.5),
     minTokenLength: clampPositiveInt(config.min_token_length, 24, 8, 8192),
     maxScanBytes: clampPositiveInt(config.max_scan_bytes, 65536, 256, 4 * 1024 * 1024),

@@ -21,6 +21,8 @@ Supported `match` fields in v0.1.0:
 - `tool_name`
 - `body_size_mb`
 - `requests_per_minute`
+- `rate_limit_window_ms`
+- `rate_limit_burst`
 
 Actions:
 - `allow`

@@ -22,8 +22,9 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run openapi:validate
-      - run: npm run test:unit
+      - run: npm run test:unit:ci
       - run: npm run test:integration
+      - run: npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10
       - run: npm audit --omit=dev --audit-level=high
 
   docker-build:

@@ -1,16 +1,5 @@
 const crypto = require('crypto');
-
-function clampPositiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const { clampPositiveInt } = require('../utils/primitives');
 
 function normalizeAction(value, fallback = 'block') {
   const normalized = String(value || fallback).toLowerCase();
@@ -215,10 +204,10 @@ class LoopBreaker {
   constructor(config = {}) {
     this.enabled = config.enabled === true;
     this.action = normalizeAction(config.action, 'block');
-    this.windowMs = clampPositiveInteger(config.window_ms, 30000, { min: 1000, max: 600000 });
-    this.repeatThreshold = clampPositiveInteger(config.repeat_threshold, 4, { min: 2, max: 20 });
-    this.maxRecent = clampPositiveInteger(config.max_recent, 5, { min: this.repeatThreshold, max: 100 });
-    this.maxKeys = clampPositiveInteger(config.max_keys, 2048, { min: 64, max: 500000 });
+    this.windowMs = clampPositiveInt(config.window_ms, 30000, 1000, 600000);
+    this.repeatThreshold = clampPositiveInt(config.repeat_threshold, 4, 2, 20);
+    this.maxRecent = clampPositiveInt(config.max_recent, 5, this.repeatThreshold, 100);
+    this.maxKeys = clampPositiveInt(config.max_keys, 2048, 64, 500000);
     this.keyHeader = String(config.key_header || 'x-sentinel-agent-id').toLowerCase();
     this.state = new Map();
   }

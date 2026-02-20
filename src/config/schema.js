@@ -11,6 +11,7 @@ const RUNTIME_KEYS = new Set([
   'scanner_error_action',
   'telemetry',
   'upstream',
+  'rate_limiter',
   'worker_pool',
   'vcr',
   'semantic_cache',
@@ -45,6 +46,18 @@ const WORKER_POOL_KEYS = new Set([
   'task_timeout_ms',
   'scan_task_timeout_ms',
   'embed_task_timeout_ms',
+]);
+const RATE_LIMITER_KEYS = new Set([
+  'default_window_ms',
+  'default_limit',
+  'default_burst',
+  'max_buckets',
+  'prune_interval',
+  'stale_bucket_ttl_ms',
+  'max_key_length',
+  'key_headers',
+  'fallback_key_headers',
+  'ip_header',
 ]);
 const VCR_KEYS = new Set(['enabled', 'mode', 'tape_file', 'max_entries', 'strict_replay']);
 const VCR_MODES = new Set(['off', 'record', 'replay']);
@@ -428,6 +441,8 @@ const RULE_MATCH_KEYS = new Set([
   'body_size_mb',
   'injection_threshold',
   'requests_per_minute',
+  'rate_limit_window_ms',
+  'rate_limit_burst',
 ]);
 const WHITELIST_KEYS = new Set(['domains']);
 const LOGGING_KEYS = new Set(['level', 'audit_file', 'audit_stdout']);
@@ -489,6 +504,38 @@ function validateRules(rules, details) {
         `${prefix}.match.injection_threshold must be between 0 and 1`,
         details
       );
+    }
+    if (rule.match?.requests_per_minute !== undefined) {
+      const rpm = Number(rule.match.requests_per_minute);
+      assertType(
+        Number.isInteger(rpm) && rpm > 0,
+        `${prefix}.match.requests_per_minute must be integer > 0`,
+        details
+      );
+    }
+    if (rule.match?.rate_limit_window_ms !== undefined) {
+      const windowMs = Number(rule.match.rate_limit_window_ms);
+      assertType(
+        Number.isInteger(windowMs) && windowMs > 0,
+        `${prefix}.match.rate_limit_window_ms must be integer > 0`,
+        details
+      );
+    }
+    if (rule.match?.rate_limit_burst !== undefined) {
+      const burst = Number(rule.match.rate_limit_burst);
+      assertType(
+        Number.isInteger(burst) && burst > 0,
+        `${prefix}.match.rate_limit_burst must be integer > 0`,
+        details
+      );
+      if (rule.match?.requests_per_minute !== undefined) {
+        const rpm = Number(rule.match.requests_per_minute);
+        assertType(
+          Number.isInteger(rpm) && burst >= rpm,
+          `${prefix}.match.rate_limit_burst must be >= requests_per_minute`,
+          details
+        );
+      }
     }
   });
 }
@@ -645,6 +692,25 @@ function applyDefaults(config) {
     providerConfig.env_var = String(providerConfig.env_var || defaultEnv);
     authVault.providers[provider] = providerConfig;
   }
+
+  normalized.runtime.rate_limiter = normalized.runtime.rate_limiter || {};
+  const rateLimiter = normalized.runtime.rate_limiter;
+  rateLimiter.default_window_ms = Number(rateLimiter.default_window_ms ?? 60 * 1000);
+  rateLimiter.default_limit = Number(rateLimiter.default_limit ?? 60);
+  rateLimiter.default_burst = Number(rateLimiter.default_burst ?? rateLimiter.default_limit);
+  rateLimiter.max_buckets = Number(rateLimiter.max_buckets ?? 100000);
+  rateLimiter.prune_interval = Number(rateLimiter.prune_interval ?? 256);
+  rateLimiter.stale_bucket_ttl_ms = Number(
+    rateLimiter.stale_bucket_ttl_ms ?? Math.max(rateLimiter.default_window_ms * 4, 5 * 60 * 1000)
+  );
+  rateLimiter.max_key_length = Number(rateLimiter.max_key_length ?? 256);
+  rateLimiter.key_headers = Array.isArray(rateLimiter.key_headers)
+    ? rateLimiter.key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-sentinel-session-id'];
+  rateLimiter.fallback_key_headers = Array.isArray(rateLimiter.fallback_key_headers)
+    ? rateLimiter.fallback_key_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip', 'x-client-ip', 'user-agent'];
+  rateLimiter.ip_header = String(rateLimiter.ip_header || 'x-forwarded-for').toLowerCase();
 
   normalized.runtime.worker_pool = normalized.runtime.worker_pool || {};
   const workerPool = normalized.runtime.worker_pool;
@@ -1256,6 +1322,78 @@ function validateConfigShape(config) {
     '`runtime.scanner_error_action` must be allow|block',
     details
   );
+  const rateLimiter = runtime.rate_limiter || {};
+  if (runtime.rate_limiter !== undefined) {
+    assertNoUnknownKeys(rateLimiter, RATE_LIMITER_KEYS, 'runtime.rate_limiter', details);
+    assertType(
+      Number.isInteger(rateLimiter.default_window_ms) && rateLimiter.default_window_ms > 0,
+      '`runtime.rate_limiter.default_window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.default_limit) && rateLimiter.default_limit > 0,
+      '`runtime.rate_limiter.default_limit` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.default_burst) && rateLimiter.default_burst >= rateLimiter.default_limit,
+      '`runtime.rate_limiter.default_burst` must be integer >= default_limit',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.max_buckets) && rateLimiter.max_buckets > 0,
+      '`runtime.rate_limiter.max_buckets` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.prune_interval) && rateLimiter.prune_interval > 0,
+      '`runtime.rate_limiter.prune_interval` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.stale_bucket_ttl_ms) && rateLimiter.stale_bucket_ttl_ms > 0,
+      '`runtime.rate_limiter.stale_bucket_ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(rateLimiter.max_key_length) && rateLimiter.max_key_length >= 16 && rateLimiter.max_key_length <= 4096,
+      '`runtime.rate_limiter.max_key_length` must be integer between 16 and 4096',
+      details
+    );
+    assertType(
+      Array.isArray(rateLimiter.key_headers),
+      '`runtime.rate_limiter.key_headers` must be array',
+      details
+    );
+    if (Array.isArray(rateLimiter.key_headers)) {
+      rateLimiter.key_headers.forEach((header, idx) => {
+        assertType(
+          typeof header === 'string' && header.trim().length > 0,
+          `runtime.rate_limiter.key_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(rateLimiter.fallback_key_headers),
+      '`runtime.rate_limiter.fallback_key_headers` must be array',
+      details
+    );
+    if (Array.isArray(rateLimiter.fallback_key_headers)) {
+      rateLimiter.fallback_key_headers.forEach((header, idx) => {
+        assertType(
+          typeof header === 'string' && header.trim().length > 0,
+          `runtime.rate_limiter.fallback_key_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof rateLimiter.ip_header === 'string' && rateLimiter.ip_header.trim().length > 0,
+      '`runtime.rate_limiter.ip_header` must be non-empty string',
+      details
+    );
+  }
   const workerPool = runtime.worker_pool || {};
   if (runtime.worker_pool !== undefined) {
     assertNoUnknownKeys(workerPool, WORKER_POOL_KEYS, 'runtime.worker_pool', details);

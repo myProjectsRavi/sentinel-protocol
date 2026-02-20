@@ -6,6 +6,54 @@ const {
 } = require('../shared');
 const { mergeInjectionResults } = require('../../engines/injection-merge');
 
+function applyRateLimitHeaders(res, rateLimit) {
+  if (!rateLimit || typeof rateLimit !== 'object') {
+    return;
+  }
+
+  if (Number.isFinite(Number(rateLimit.limit))) {
+    res.setHeader('x-sentinel-rate-limit-limit', String(Math.max(0, Math.floor(Number(rateLimit.limit)))));
+  }
+  if (Number.isFinite(Number(rateLimit.remaining))) {
+    res.setHeader('x-sentinel-rate-limit-remaining', String(Math.max(0, Math.floor(Number(rateLimit.remaining)))));
+  }
+  if (Number.isFinite(Number(rateLimit.windowMs))) {
+    res.setHeader('x-sentinel-rate-limit-window-ms', String(Math.max(0, Math.floor(Number(rateLimit.windowMs)))));
+  }
+  if (Number.isFinite(Number(rateLimit.burst))) {
+    res.setHeader('x-sentinel-rate-limit-burst', String(Math.max(0, Math.floor(Number(rateLimit.burst)))));
+  }
+  if (Number.isFinite(Number(rateLimit.retryAfterMs))) {
+    const retryMs = Math.max(0, Math.ceil(Number(rateLimit.retryAfterMs)));
+    res.setHeader('x-sentinel-rate-limit-retry-ms', String(retryMs));
+    if (retryMs > 0) {
+      res.setHeader('retry-after', String(Math.ceil(retryMs / 1000)));
+    }
+  }
+  if (typeof rateLimit.scope === 'string' && rateLimit.scope.length > 0) {
+    res.setHeader('x-sentinel-rate-limit-scope', rateLimit.scope);
+  }
+  if (typeof rateLimit.keySource === 'string' && rateLimit.keySource.length > 0) {
+    res.setHeader('x-sentinel-rate-limit-key-source', rateLimit.keySource);
+  }
+}
+
+function extractClientIp(req) {
+  if (!req || typeof req !== 'object') {
+    return '';
+  }
+  if (typeof req.ip === 'string' && req.ip.trim()) {
+    return req.ip.trim();
+  }
+  if (typeof req.socket?.remoteAddress === 'string' && req.socket.remoteAddress.trim()) {
+    return req.socket.remoteAddress.trim();
+  }
+  if (typeof req.connection?.remoteAddress === 'string' && req.connection.remoteAddress.trim()) {
+    return req.connection.remoteAddress.trim();
+  }
+  return '';
+}
+
 async function runInjectionAndPolicyStage({
   server,
   req,
@@ -51,7 +99,7 @@ async function runInjectionAndPolicyStage({
       });
       precomputedLocalScan = workerScan.piiResult || null;
       precomputedInjection = workerScan.injectionResult || null;
-    } catch (error) {
+    } catch {
       server.stats.scan_worker_fallbacks += 1;
       warnings.push('scan_worker_fallback_main_thread');
       server.stats.warnings_total += 1;
@@ -112,8 +160,10 @@ async function runInjectionAndPolicyStage({
     headers: req.headers,
     provider,
     rateLimitKey: req.headers['x-sentinel-agent-id'],
+    clientIp: extractClientIp(req),
     injectionResult,
   });
+  applyRateLimitHeaders(res, policyDecision.rateLimit);
 
   const injectionScore = Number(policyDecision.injection?.score || 0);
   if (injectionScore > 0) {
@@ -256,6 +306,7 @@ async function runInjectionAndPolicyStage({
       if (policyDecision.reason === 'prompt_injection_detected') {
         server.stats.injection_blocked += 1;
       }
+      const blockedStatusCode = policyDecision.reason === 'rate_limit_exceeded' ? 429 : 403;
       const diagnostics = {
         errorSource: 'sentinel',
         upstreamError: false,
@@ -268,7 +319,7 @@ async function runInjectionAndPolicyStage({
       responseHeaderDiagnostics(res, diagnostics);
       await server.maybeNormalizeBlockedLatency({
         res,
-        statusCode: 403,
+        statusCode: blockedStatusCode,
         requestStart,
       });
       server.auditLogger.write({
@@ -279,28 +330,50 @@ async function runInjectionAndPolicyStage({
         decision: 'blocked',
         reasons: [policyDecision.reason || 'policy_violation'],
         rule: policyDecision.rule,
+        rate_limit_limit: policyDecision.rateLimit?.limit,
+        rate_limit_remaining: policyDecision.rateLimit?.remaining,
+        rate_limit_window_ms: policyDecision.rateLimit?.windowMs,
+        rate_limit_burst: policyDecision.rateLimit?.burst,
+        rate_limit_retry_after_ms: policyDecision.rateLimit?.retryAfterMs,
         pii_types: [],
         redactions: 0,
         duration_ms: 0,
         request_bytes: rawBody.length,
-        response_status: 403,
+        response_status: blockedStatusCode,
         response_bytes: 0,
         provider,
       });
       server.writeStatus();
       finalizeRequestTelemetry({
         decision: 'blocked_policy',
-        status: 403,
+        status: blockedStatusCode,
         providerName: provider,
       });
-      res.status(403).json({
-        error: 'POLICY_VIOLATION',
-        reason: policyDecision.reason,
-        rule: policyDecision.rule,
-        message: policyDecision.message,
-        injection_score: injectionScore || undefined,
-        correlation_id: correlationId,
-      });
+      if (policyDecision.reason === 'rate_limit_exceeded') {
+        res.status(blockedStatusCode).json({
+          error: 'RATE_LIMIT_EXCEEDED',
+          reason: policyDecision.reason,
+          rule: policyDecision.rule,
+          message: policyDecision.message,
+          rate_limit: {
+            limit: policyDecision.rateLimit?.limit,
+            remaining: policyDecision.rateLimit?.remaining,
+            burst: policyDecision.rateLimit?.burst,
+            window_ms: policyDecision.rateLimit?.windowMs,
+            retry_after_ms: policyDecision.rateLimit?.retryAfterMs,
+          },
+          correlation_id: correlationId,
+        });
+      } else {
+        res.status(blockedStatusCode).json({
+          error: 'POLICY_VIOLATION',
+          reason: policyDecision.reason,
+          rule: policyDecision.rule,
+          message: policyDecision.message,
+          injection_score: injectionScore || undefined,
+          correlation_id: correlationId,
+        });
+      }
       return {
         handled: true,
         bodyText,
@@ -315,6 +388,8 @@ async function runInjectionAndPolicyStage({
     warnings.push(`policy:${policyDecision.rule || 'blocked-rule'}`);
     if (policyDecision.reason === 'prompt_injection_detected') {
       warnings.push(`injection:${injectionScore.toFixed(3)}`);
+    } else if (policyDecision.reason === 'rate_limit_exceeded') {
+      warnings.push(`rate_limit:${policyDecision.rule || 'policy-rate-limit'}`);
     }
     server.stats.warnings_total += 1;
   }

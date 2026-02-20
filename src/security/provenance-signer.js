@@ -1,16 +1,5 @@
 const crypto = require('crypto');
-
-function clampPositiveInt(value, fallback, min = 1, max = 600000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const { clampPositiveInt } = require('../utils/primitives');
 
 class ProvenanceSigner {
   constructor(config = {}) {

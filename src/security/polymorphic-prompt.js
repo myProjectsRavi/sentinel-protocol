@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { clampPositiveInt } = require('../utils/primitives');
 
 const DEFAULT_LEXICON = Object.freeze({
   helpful: ['assistive', 'supportive'],
@@ -13,18 +14,6 @@ const DEFAULT_LEXICON = Object.freeze({
   response: ['reply', 'output'],
   enforce: ['apply', 'uphold'],
 });
-
-function clampPositiveInt(value, fallback, min = 1, max = 86400) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
 
 function toObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {

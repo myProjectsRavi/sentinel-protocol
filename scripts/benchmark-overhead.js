@@ -3,7 +3,6 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { once } = require('events');
 const express = require('express');
 const autocannon = require('autocannon');
 
@@ -30,6 +29,40 @@ function runAutocannon(options) {
       }
       resolve(result);
     });
+  });
+}
+
+function listenServer(app, port, host, label) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, host);
+    const onListening = () => {
+      server.off('error', onError);
+      resolve(server);
+    };
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(new Error(`${label} listen failed: ${error.message}`));
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
+  });
+}
+
+function waitForListening(server, label) {
+  if (server?.listening) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(new Error(`${label} listen failed: ${error.message}`));
+    };
+    server.once('listening', onListening);
+    server.once('error', onError);
   });
 }
 
@@ -128,9 +161,7 @@ async function startUpstream() {
     res.status(200).json({ data: [{ id: 'model-1' }] });
   });
 
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, '127.0.0.1', () => resolve(s));
-  });
+  const server = await listenServer(app, 0, '127.0.0.1', 'benchmark upstream');
   const port = server.address().port;
   return { server, port };
 }
@@ -165,9 +196,7 @@ async function main() {
   sentinel.auditLogger.write = () => {};
   sentinel.writeStatus = () => {};
   const sentinelHttpServer = sentinel.start();
-  if (!sentinelHttpServer.listening) {
-    await once(sentinelHttpServer, 'listening');
-  }
+  await waitForListening(sentinelHttpServer, 'benchmark sentinel');
   const sentinelPort = sentinelHttpServer.address().port;
 
   const postBody = JSON.stringify({

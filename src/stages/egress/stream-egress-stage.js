@@ -2,6 +2,39 @@ const logger = require('../../utils/logger');
 const { SSERedactionTransform } = require('../../egress/sse-redaction-transform');
 const { ProvenanceSigner } = require('../../security/provenance-signer');
 
+function terminateStream({ upstreamBodyStream, streamOut, res, code }) {
+  setImmediate(() => {
+    const error = new Error(code);
+    if (typeof upstreamBodyStream?.destroy === 'function') {
+      upstreamBodyStream.destroy(error);
+    }
+    if (streamOut !== upstreamBodyStream && typeof streamOut?.destroy === 'function') {
+      streamOut.destroy(error);
+    }
+    if (!res.destroyed) {
+      res.destroy(error);
+    }
+  });
+}
+
+function buildStreamEgressAuditFields({
+  streamEgressTypes,
+  streamProjectedRedaction,
+  streamBlockedSeverity,
+  streamEntropyFindings,
+  streamEntropyMode,
+  streamEntropyProjectedRedaction,
+}) {
+  return {
+    egress_pii_types: Array.from(streamEgressTypes).sort(),
+    egress_projected_redaction: streamProjectedRedaction || undefined,
+    egress_block_severity: streamBlockedSeverity || undefined,
+    egress_entropy_findings: streamEntropyFindings,
+    egress_entropy_mode: streamEntropyMode || undefined,
+    egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
+  };
+}
+
 async function runStreamEgressStage({
   server,
   res,
@@ -101,16 +134,11 @@ async function runStreamEgressStage({
           }
           warnings.push('egress_stream_blocked');
           server.stats.warnings_total += 1;
-          setImmediate(() => {
-            if (typeof upstream.bodyStream.destroy === 'function') {
-              upstream.bodyStream.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
-            if (typeof streamOut.destroy === 'function') {
-              streamOut.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
-            if (!res.destroyed) {
-              res.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
           });
         }
       },
@@ -151,16 +179,11 @@ async function runStreamEgressStage({
           }
           warnings.push('egress_entropy_stream_blocked');
           server.stats.warnings_total += 1;
-          setImmediate(() => {
-            if (typeof upstream.bodyStream.destroy === 'function') {
-              upstream.bodyStream.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
-            if (typeof streamOut.destroy === 'function') {
-              streamOut.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
-            if (!res.destroyed) {
-              res.destroy(new Error('EGRESS_STREAM_BLOCKED'));
-            }
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
           });
         }
       },
@@ -225,6 +248,57 @@ async function runStreamEgressStage({
     return streamBudgetFinalizePromise;
   };
 
+  const buildStreamAuditPayload = ({ decision, reasons, responseStatus, responseBytes, budgetCharge }) => ({
+    timestamp: new Date().toISOString(),
+    correlation_id: correlationId,
+    config_version: server.config.version,
+    mode: effectiveMode,
+    decision,
+    reasons,
+    pii_types: piiTypes,
+    redactions: redactedCount,
+    pii_vault_detokenized: streamVaultReplacements,
+    duration_ms: Date.now() - start,
+    request_bytes: bodyBuffer.length,
+    response_status: responseStatus,
+    response_bytes: responseBytes,
+    provider: routedProvider,
+    upstream_target: routedTarget,
+    failover_used: upstream.route?.failoverUsed === true,
+    route_source: routePlan.routeSource,
+    route_group: routePlan.selectedGroup || undefined,
+    route_contract: routePlan.desiredContract,
+    requested_target: routePlan.requestedTarget,
+    honeytoken_applied: Boolean(honeytokenDecision),
+    honeytoken_mode: honeytokenDecision?.mode,
+    honeytoken_token_hash: honeytokenDecision?.token_hash,
+    canary_tool_injected: Boolean(canaryToolDecision),
+    canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+    canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+    parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+    parallax_veto: Boolean(parallaxDecision?.veto),
+    parallax_risk: parallaxDecision?.risk,
+    parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+    parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+    cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+    cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+    cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+    cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+    omni_shield_detected: Boolean(omniShieldDecision?.detected),
+    omni_shield_findings: omniShieldDecision?.findings,
+    intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
+    intent_drift_reason: intentDriftDecision?.reason,
+    intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
+    intent_drift_distance: intentDriftDecision?.distance,
+    intent_drift_threshold: intentDriftDecision?.threshold,
+    intent_drift_turn_count: intentDriftDecision?.turnCount,
+    sandbox_detected: Boolean(sandboxDecision?.detected),
+    sandbox_findings: sandboxDecision?.findings,
+    budget_charged_usd: budgetCharge?.chargedUsd,
+    budget_spent_usd: budgetCharge?.spentUsd,
+    budget_remaining_usd: budgetCharge?.remainingUsd,
+  });
+
   streamOut.on('end', async () => {
     if (canAddProofTrailers) {
       const proof = streamProof.finalize();
@@ -236,60 +310,21 @@ async function runStreamEgressStage({
     const budgetCharge = await finalizeStreamBudget();
 
     server.auditLogger.write({
-      timestamp: new Date().toISOString(),
-      correlation_id: correlationId,
-      config_version: server.config.version,
-      mode: effectiveMode,
-      decision: 'forwarded_stream',
-      reasons: warnings,
-      pii_types: piiTypes,
-      egress_pii_types: Array.from(streamEgressTypes).sort(),
-      egress_projected_redaction: streamProjectedRedaction || undefined,
-      egress_block_severity: streamBlockedSeverity || undefined,
-      egress_entropy_findings: streamEntropyFindings,
-      egress_entropy_mode: streamEntropyMode || undefined,
-      egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
-      pii_vault_detokenized: streamVaultReplacements,
-      redactions: redactedCount,
-      duration_ms: Date.now() - start,
-      request_bytes: bodyBuffer.length,
-      response_status: upstream.status,
-      response_bytes: streamedBytes,
-      provider: routedProvider,
-      upstream_target: routedTarget,
-      failover_used: upstream.route?.failoverUsed === true,
-      budget_charged_usd: budgetCharge?.chargedUsd,
-      budget_spent_usd: budgetCharge?.spentUsd,
-      budget_remaining_usd: budgetCharge?.remainingUsd,
-      route_source: routePlan.routeSource,
-      route_group: routePlan.selectedGroup || undefined,
-      route_contract: routePlan.desiredContract,
-      requested_target: routePlan.requestedTarget,
-      honeytoken_applied: Boolean(honeytokenDecision),
-      honeytoken_mode: honeytokenDecision?.mode,
-      honeytoken_token_hash: honeytokenDecision?.token_hash,
-      canary_tool_injected: Boolean(canaryToolDecision),
-      canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
-      canary_tool_triggered: Boolean(canaryTriggered?.triggered),
-      parallax_evaluated: Boolean(parallaxDecision?.evaluated),
-      parallax_veto: Boolean(parallaxDecision?.veto),
-      parallax_risk: parallaxDecision?.risk,
-      parallax_secondary_provider: parallaxDecision?.secondaryProvider,
-      parallax_high_risk_tools: parallaxDecision?.highRiskTools,
-      cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
-      cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
-      cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
-      cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
-      omni_shield_detected: Boolean(omniShieldDecision?.detected),
-      omni_shield_findings: omniShieldDecision?.findings,
-      intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
-      intent_drift_reason: intentDriftDecision?.reason,
-      intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
-      intent_drift_distance: intentDriftDecision?.distance,
-      intent_drift_threshold: intentDriftDecision?.threshold,
-      intent_drift_turn_count: intentDriftDecision?.turnCount,
-      sandbox_detected: Boolean(sandboxDecision?.detected),
-      sandbox_findings: sandboxDecision?.findings,
+      ...buildStreamAuditPayload({
+        decision: 'forwarded_stream',
+        reasons: warnings,
+        responseStatus: upstream.status,
+        responseBytes: streamedBytes,
+        budgetCharge,
+      }),
+      ...buildStreamEgressAuditFields({
+        streamEgressTypes,
+        streamProjectedRedaction,
+        streamBlockedSeverity,
+        streamEntropyFindings,
+        streamEntropyMode,
+        streamEntropyProjectedRedaction,
+      }),
     });
     server.writeStatus();
     finalizeRequestTelemetry({
@@ -304,60 +339,21 @@ async function runStreamEgressStage({
       const budgetCharge = await finalizeStreamBudget();
       if ((streamTerminatedForPII || streamTerminatedForEntropy) && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
         server.auditLogger.write({
-          timestamp: new Date().toISOString(),
-          correlation_id: correlationId,
-          config_version: server.config.version,
-          mode: effectiveMode,
-          decision: 'blocked_egress_stream',
-          reasons: [streamTerminatedForEntropy ? 'egress_entropy_stream_blocked' : 'egress_stream_blocked'],
-          pii_types: piiTypes,
-          egress_pii_types: Array.from(streamEgressTypes).sort(),
-          egress_projected_redaction: streamProjectedRedaction || undefined,
-          egress_block_severity: streamBlockedSeverity || undefined,
-          egress_entropy_findings: streamEntropyFindings,
-          egress_entropy_mode: streamEntropyMode || undefined,
-          egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
-          pii_vault_detokenized: streamVaultReplacements,
-          redactions: redactedCount,
-          duration_ms: Date.now() - start,
-          request_bytes: bodyBuffer.length,
-          response_status: 499,
-          response_bytes: streamedBytes,
-          provider: routedProvider,
-          upstream_target: routedTarget,
-          failover_used: upstream.route?.failoverUsed === true,
-          route_source: routePlan.routeSource,
-          route_group: routePlan.selectedGroup || undefined,
-          route_contract: routePlan.desiredContract,
-          requested_target: routePlan.requestedTarget,
-          honeytoken_applied: Boolean(honeytokenDecision),
-          honeytoken_mode: honeytokenDecision?.mode,
-          honeytoken_token_hash: honeytokenDecision?.token_hash,
-          canary_tool_injected: Boolean(canaryToolDecision),
-          canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
-          canary_tool_triggered: Boolean(canaryTriggered?.triggered),
-          parallax_evaluated: Boolean(parallaxDecision?.evaluated),
-          parallax_veto: Boolean(parallaxDecision?.veto),
-          parallax_risk: parallaxDecision?.risk,
-          parallax_secondary_provider: parallaxDecision?.secondaryProvider,
-          parallax_high_risk_tools: parallaxDecision?.highRiskTools,
-          cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
-          cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
-          cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
-          cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
-          omni_shield_detected: Boolean(omniShieldDecision?.detected),
-          omni_shield_findings: omniShieldDecision?.findings,
-          intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
-          intent_drift_reason: intentDriftDecision?.reason,
-          intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
-          intent_drift_distance: intentDriftDecision?.distance,
-          intent_drift_threshold: intentDriftDecision?.threshold,
-          intent_drift_turn_count: intentDriftDecision?.turnCount,
-          sandbox_detected: Boolean(sandboxDecision?.detected),
-          sandbox_findings: sandboxDecision?.findings,
-          budget_charged_usd: budgetCharge?.chargedUsd,
-          budget_spent_usd: budgetCharge?.spentUsd,
-          budget_remaining_usd: budgetCharge?.remainingUsd,
+          ...buildStreamAuditPayload({
+            decision: 'blocked_egress_stream',
+            reasons: [streamTerminatedForEntropy ? 'egress_entropy_stream_blocked' : 'egress_stream_blocked'],
+            responseStatus: 499,
+            responseBytes: streamedBytes,
+            budgetCharge,
+          }),
+          ...buildStreamEgressAuditFields({
+            streamEgressTypes,
+            streamProjectedRedaction,
+            streamBlockedSeverity,
+            streamEntropyFindings,
+            streamEntropyMode,
+            streamEntropyProjectedRedaction,
+          }),
         });
         server.writeStatus();
         finalizeRequestTelemetry({
@@ -368,56 +364,15 @@ async function runStreamEgressStage({
         return;
       }
       server.stats.upstream_errors += 1;
-      server.auditLogger.write({
-        timestamp: new Date().toISOString(),
-        correlation_id: correlationId,
-        config_version: server.config.version,
-        mode: effectiveMode,
-        decision: 'stream_error',
-        reasons: [error.message || 'stream_error'],
-        pii_types: piiTypes,
-        redactions: redactedCount,
-        pii_vault_detokenized: streamVaultReplacements,
-        duration_ms: Date.now() - start,
-        request_bytes: bodyBuffer.length,
-        response_status: upstream.status,
-        response_bytes: streamedBytes,
-        provider: routedProvider,
-        upstream_target: routedTarget,
-        failover_used: upstream.route?.failoverUsed === true,
-        route_source: routePlan.routeSource,
-        route_group: routePlan.selectedGroup || undefined,
-        route_contract: routePlan.desiredContract,
-        requested_target: routePlan.requestedTarget,
-        honeytoken_applied: Boolean(honeytokenDecision),
-        honeytoken_mode: honeytokenDecision?.mode,
-        honeytoken_token_hash: honeytokenDecision?.token_hash,
-        canary_tool_injected: Boolean(canaryToolDecision),
-        canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
-        canary_tool_triggered: Boolean(canaryTriggered?.triggered),
-        parallax_evaluated: Boolean(parallaxDecision?.evaluated),
-        parallax_veto: Boolean(parallaxDecision?.veto),
-        parallax_risk: parallaxDecision?.risk,
-        parallax_secondary_provider: parallaxDecision?.secondaryProvider,
-        parallax_high_risk_tools: parallaxDecision?.highRiskTools,
-        cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
-        cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
-        cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
-        cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
-        omni_shield_detected: Boolean(omniShieldDecision?.detected),
-        omni_shield_findings: omniShieldDecision?.findings,
-        intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
-        intent_drift_reason: intentDriftDecision?.reason,
-        intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
-        intent_drift_distance: intentDriftDecision?.distance,
-        intent_drift_threshold: intentDriftDecision?.threshold,
-        intent_drift_turn_count: intentDriftDecision?.turnCount,
-        sandbox_detected: Boolean(sandboxDecision?.detected),
-        sandbox_findings: sandboxDecision?.findings,
-        budget_charged_usd: budgetCharge?.chargedUsd,
-        budget_spent_usd: budgetCharge?.spentUsd,
-        budget_remaining_usd: budgetCharge?.remainingUsd,
-      });
+      server.auditLogger.write(
+        buildStreamAuditPayload({
+          decision: 'stream_error',
+          reasons: [error.message || 'stream_error'],
+          responseStatus: upstream.status,
+          responseBytes: streamedBytes,
+          budgetCharge,
+        })
+      );
       server.writeStatus();
       finalizeRequestTelemetry({
         decision: 'stream_error',

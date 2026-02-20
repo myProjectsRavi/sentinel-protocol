@@ -1,17 +1,6 @@
 const { resolveUpstreamPlan } = require('../upstream/router');
 const { extractToolCallsFromResponse } = require('./canary-tool-trap');
-
-function clampPositiveInt(value, fallback, min = 1, max = 60000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 function clampScore(value, fallback) {
   const parsed = Number(value);
@@ -22,11 +11,6 @@ function clampScore(value, fallback) {
     return fallback;
   }
   return parsed;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
 }
 
 function parseJsonBuffer(bodyBuffer, contentType = '') {
@@ -95,7 +79,7 @@ function parseToolCalls(responseBody, contentType) {
 class ParallaxValidator {
   constructor(config = {}, deps = {}) {
     this.enabled = config.enabled === true;
-    this.mode = normalizeMode(config.mode, 'monitor');
+    this.mode = normalizeMode(config.mode, 'monitor', ['monitor', 'block']);
     this.highRiskTools = new Set(
       Array.isArray(config.high_risk_tools)
         ? config.high_risk_tools.map((value) => String(value || '')).filter(Boolean)

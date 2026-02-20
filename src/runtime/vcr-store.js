@@ -4,17 +4,10 @@ const crypto = require('crypto');
 const readline = require('readline');
 
 const { SENTINEL_HOME } = require('../utils/paths');
+const { normalizeMode } = require('../utils/primitives');
 
 function sha256Hex(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
-}
-
-function normalizeMode(rawMode) {
-  const mode = String(rawMode || 'off').toLowerCase();
-  if (mode === 'record' || mode === 'replay') {
-    return mode;
-  }
-  return 'off';
 }
 
 function sanitizeResponseHeaders(headers = {}) {
@@ -71,7 +64,7 @@ function safeParseLine(line) {
 class VCRStore {
   constructor(config = {}) {
     this.enabled = config.enabled === true;
-    this.mode = normalizeMode(config.mode);
+    this.mode = normalizeMode(config.mode, 'off', ['off', 'record', 'replay']);
     this.strictReplay = config.strict_replay === true;
     this.maxEntries = Number(config.max_entries || 2000);
     this.tapePath = normalizeTapePath(config.tape_file);

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 const SWARM_VERSION = 'v1';
 const SWARM_HEADERS = Object.freeze({
@@ -11,23 +12,6 @@ const SWARM_HEADERS = Object.freeze({
   SIGNATURE_INPUT: 'x-sentinel-swarm-signature-input',
   SIGNATURE: 'x-sentinel-swarm-signature',
 });
-
-function clampPositiveInt(value, fallback, min = 1, max = 86400000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
-}
 
 function toObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -111,7 +95,7 @@ class SwarmProtocol {
   constructor(config = {}, deps = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'block']);
     this.nodeId = String(normalized.node_id || `sentinel-node-${process.pid}`).trim();
     this.keyId = String(normalized.key_id || this.nodeId).trim();
     this.verifyInbound = normalized.verify_inbound !== false;

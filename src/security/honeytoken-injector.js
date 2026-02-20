@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { clampPositiveInt } = require('../utils/primitives');
 
 function clampProbability(value, fallback) {
   const parsed = Number(value);
@@ -6,18 +7,6 @@ function clampProbability(value, fallback) {
     return fallback;
   }
   return parsed;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 1000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
 }
 
 function sanitizePrefix(value, fallback = 'SNTL') {

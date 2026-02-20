@@ -79,4 +79,26 @@ describe('createSentinel embed API', () => {
       hooks: {},
     });
   });
+
+  test('scan returns local provider metadata and pii findings for sensitive input', async () => {
+    const embedded = createSentinel(baseConfig());
+
+    const result = await embedded.scan('Contact me at john@example.com');
+    expect(Array.isArray(result.pii.findings)).toBe(true);
+    expect(result.pii.findings.length).toBeGreaterThan(0);
+    expect(result.provider.providerMode).toBe('local');
+    expect(result.provider.providerUsed).toBe('local');
+    expect(result.provider.fallbackUsed).toBe(false);
+  });
+
+  test('scan safely stringifies object payloads', async () => {
+    const embedded = createSentinel(baseConfig());
+
+    const result = await embedded.scan({
+      note: 'secure',
+      secret: 'john@example.com',
+    });
+    expect(Array.isArray(result.pii.findings)).toBe(true);
+    expect(result.provider.providerMode).toBe('local');
+  });
 });

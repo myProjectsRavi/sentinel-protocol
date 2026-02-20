@@ -1,25 +1,10 @@
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
+
 function toObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
   }
   return value;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 100) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'auto' ? 'auto' : 'monitor';
 }
 
 function cloneJson(input) {
@@ -30,7 +15,7 @@ class CognitiveRollback {
   constructor(config = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'auto']);
     this.triggers = new Set(
       Array.isArray(normalized.triggers)
         ? normalized.triggers.map((item) => String(item || '').trim()).filter(Boolean)

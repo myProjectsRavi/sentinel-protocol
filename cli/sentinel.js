@@ -6,7 +6,7 @@ const yaml = require('js-yaml');
 const { Command } = require('commander');
 
 const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeYamlConfig } = require('../src/config/loader');
-const { migrateConfig, CURRENT_CONFIG_VERSION } = require('../src/config/migrations');
+const { migrateConfig } = require('../src/config/migrations');
 const { ConfigValidationError } = require('../src/config/schema');
 const { SemanticScanner } = require('../src/engines/semantic-scanner');
 const { PolicyBundle } = require('../src/governance/policy-bundle');

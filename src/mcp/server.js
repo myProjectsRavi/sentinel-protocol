@@ -35,7 +35,7 @@ function highestSeverity(findings) {
 class SentinelMCPGovernance {
   constructor(config) {
     this.config = config;
-    this.rateLimiter = new InMemoryRateLimiter();
+    this.rateLimiter = new InMemoryRateLimiter(config.runtime?.rate_limiter || {});
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
     this.neuralInjectionClassifier = new NeuralInjectionClassifier(config.injection?.neural || {});
     this.piiScanner = new PIIScanner({
@@ -94,7 +94,8 @@ class SentinelMCPGovernance {
       requestBytes: Buffer.byteLength(bodyText, 'utf8'),
       headers,
       provider: resolved.provider,
-      rateLimitKey: headers['x-sentinel-agent-id'] || 'mcp',
+      rateLimitKey: headers['x-sentinel-agent-id'],
+      clientIp: args.client_ip || headers['x-forwarded-for'] || headers['x-real-ip'],
       injectionResult,
     });
 

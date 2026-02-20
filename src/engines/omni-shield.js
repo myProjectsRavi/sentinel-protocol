@@ -1,4 +1,5 @@
 const path = require('path');
+const { clampPositiveInt, normalizeMode } = require('../utils/primitives');
 
 const PLACEHOLDER_BASE64_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+XjT0AAAAASUVORK5CYII=';
@@ -8,23 +9,6 @@ function toObject(value) {
     return {};
   }
   return value;
-}
-
-function clampPositiveInt(value, fallback, min = 1, max = 100 * 1024 * 1024) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
-
-function normalizeMode(value, fallback = 'monitor') {
-  const normalized = String(value || fallback).toLowerCase();
-  return normalized === 'block' ? 'block' : 'monitor';
 }
 
 function normalizePluginMode(value, fallback = 'enforce') {
@@ -76,7 +60,7 @@ class OmniShield {
   constructor(config = {}) {
     const normalized = toObject(config);
     this.enabled = normalized.enabled === true;
-    this.mode = normalizeMode(normalized.mode, 'monitor');
+    this.mode = normalizeMode(normalized.mode, 'monitor', ['monitor', 'block']);
     this.maxImageBytes = clampPositiveInt(normalized.max_image_bytes, 5 * 1024 * 1024, 1024, 100 * 1024 * 1024);
     this.allowRemoteImageUrls = normalized.allow_remote_image_urls === true;
     this.allowBase64Images = normalized.allow_base64_images !== false;
@@ -140,7 +124,6 @@ class OmniShield {
     const absolute = path.isAbsolute(this.plugin.modulePath)
       ? this.plugin.modulePath
       : path.resolve(process.cwd(), this.plugin.modulePath);
-    // eslint-disable-next-line global-require, import/no-dynamic-require
     const mod = require(absolute);
     const fn =
       typeof mod === 'function'

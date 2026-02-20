@@ -1,14 +1,4 @@
-function clampPositiveInt(value, fallback, min = 1, max = 60000) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  const normalized = Math.floor(parsed);
-  if (normalized < min || normalized > max) {
-    return fallback;
-  }
-  return normalized;
-}
+const { clampPositiveInt } = require('../utils/primitives');
 
 function clampScore(value, fallback) {
   const parsed = Number(value);
