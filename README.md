@@ -643,4 +643,10 @@ See docs:
 - `docs/INTEGRATIONS.md`
 - `docs/RELIABILITY_PROOF.md`
 - `docs/OWASP-HARDENING.md`
+- `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
+- `docs/releases/EXECUTION_BOARD_30_60_90.md`
+- `docs/releases/research/WASM_SCANNER_RESEARCH_TRACK.md`
+- `docs/releases/tickets/T2-001-COVERAGE-RATCHET.md`
+- `docs/releases/tickets/T2-002-SERVER-EXTRACTION.md`
+- `docs/releases/tickets/T2-003-EMBED-TYPING-POLISH.md`
 - `BENCHMARKS.md`
