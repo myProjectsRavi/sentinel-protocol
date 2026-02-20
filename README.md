@@ -14,6 +14,53 @@ It sits between your app and model providers and gives you deterministic control
 
 If you are shipping AI features locally every day, Sentinel helps you ship faster with fewer security incidents and less operational chaos.
 
+## Executive Summary (Enterprise)
+
+Sentinel Protocol is a local AI governance perimeter that reduces four enterprise risks immediately:
+
+- **Data risk**: blocks or redacts sensitive data on ingress and egress.
+- **Safety risk**: detects injection and tool-abuse patterns with deterministic policy actions.
+- **Reliability risk**: contains upstream failures with retry/circuit-breaker/failover controls.
+- **Audit risk**: produces verifiable evidence (CI gates, SBOMs, reliability reports, signed governance artifacts).
+
+Deployment model is simple:
+
+- start local (`npx sentinel-protocol init && npx sentinel-protocol start`)
+- roll out monitor-first
+- enforce incrementally with explicit config and no silent behavior shifts
+
+## Proof Links (Hard Evidence)
+
+- Baseline freeze tag: `release-baseline-7186f1f`
+- Baseline commit: `7186f1fdad29c927753e4c08a32fa47ab0257ec9`
+- Evidence doc: `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
+- 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
+- CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518`
+- Quality gates job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256888360`
+- Docker quickstart smoke job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256947051`
+- SBOM artifact digest: `sha256:fdff3692aca5cc48d31c402b7a8455fa6033290f2aee43f5172970a9365ca171`
+
+## Architecture at a Glance
+
+```mermaid
+flowchart LR
+  A["App / Agent / MCP"] --> B["Sentinel Ingress: PII + Injection + Policy"]
+  B --> C["Routing + Resilience: Target Selection, Retry, Circuit Breaker, Failover"]
+  C --> D["Provider(s): OpenAI / Anthropic / Google / Ollama / Custom"]
+  D --> E["Sentinel Egress: PII Redaction, Entropy Guard, Stream Controls"]
+  E --> A
+
+  B --> F["Audit Log + Compliance Reports"]
+  C --> G["Status + Health + Prometheus Metrics"]
+  E --> F
+```
+
+Operational model:
+
+- deterministic policy modes (`monitor`, `warn`, `enforce`)
+- config-as-contract (strict validation, migration, unknown-key rejection)
+- local-first runtime with optional precision/fallback providers
+
 ## Why Sentinel Exists
 
 Agent-powered apps fail in the same ways repeatedly:
