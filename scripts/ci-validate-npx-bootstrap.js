@@ -39,6 +39,68 @@ async function waitForServerReady(statusPath, timeoutMs = 25000) {
   throw new Error('sentinel start timeout waiting for running status');
 }
 
+function killSpawnedProcess(child, signal) {
+  if (!child || !Number.isInteger(child.pid)) {
+    return;
+  }
+  // When detached, negative PID targets the process group and cleans up npx+sentinel.
+  try {
+    process.kill(-child.pid, signal);
+    return;
+  } catch {
+    // fall through to direct child signal
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // best-effort cleanup
+  }
+}
+
+async function terminateSpawnedProcess(child, output) {
+  if (!child || !Number.isInteger(child.pid)) {
+    return { code: 0, signal: null };
+  }
+
+  killSpawnedProcess(child, 'SIGTERM');
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(graceTimer);
+      clearTimeout(forceTimer);
+      resolve(result);
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(graceTimer);
+      clearTimeout(forceTimer);
+      reject(error);
+    };
+
+    const onClose = (code, signal) => finish({ code, signal });
+    const onError = (error) => fail(error);
+    child.once('close', onClose);
+    child.once('error', onError);
+
+    const graceTimer = setTimeout(() => {
+      killSpawnedProcess(child, 'SIGKILL');
+    }, 8000);
+    graceTimer.unref?.();
+
+    const forceTimer = setTimeout(() => {
+      fail(new Error(`sentinel start process did not terminate after SIGTERM/SIGKILL\n${output.join('')}`));
+    }, 12000);
+    forceTimer.unref?.();
+  });
+}
+
 async function main() {
   const root = process.cwd();
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-npx-bootstrap-'));
@@ -85,6 +147,7 @@ async function main() {
       {
         cwd: root,
         env,
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
@@ -96,13 +159,7 @@ async function main() {
     const statusPath = path.join(sentinelHome, 'status.json');
     await waitForServerReady(statusPath);
 
-    child.kill('SIGTERM');
-    const exitCode = await new Promise((resolve) => {
-      child.once('close', (code) => resolve(code));
-    });
-    if (exitCode !== 0) {
-      throw new Error(`sentinel start/stop failed in npx bootstrap path: exit=${exitCode}\n${output.join('')}`);
-    }
+    await terminateSpawnedProcess(child, output);
     process.stdout.write('npx bootstrap validation passed.\n');
   } finally {
     try {
