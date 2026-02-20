@@ -1,76 +1,318 @@
-# Sentinel Protocol (v1.0)
+# Sentinel Protocol
 
 ![Sentinel Protocol Hero Demo](docs/assets/sentinel-hero.gif)
 
-Sentinel Protocol is a local firewall for AI agents.
+Sentinel Protocol is a local-first AI governance firewall for agents, MCP servers, and LLM apps.
 
-Sentinel is the only Open Source AI Firewall that runs PII detection in Worker Threads and performs Real-Time Neural Injection analysis without blocking the Event Loop. It supports Bi-directional SSE Stream Redaction out of the box.
+It sits between your app and model providers and gives you deterministic controls for:
 
-It provides:
-- Deterministic policy enforcement (`monitor`, `warn`, `enforce`)
-- Configurable token-bucket rate limiting for policy rules (`runtime.rate_limiter.*` + `requests_per_minute`)
-- PII/secret detection with severity actions (`block`, `redact`, `log`)
-- Format-preserving masking mode for test-safe pseudonyms (`pii.redaction.mode: format_preserving`)
-- Bi-directional protection: ingress request scanning + egress response scanning/redaction
-- Entropy egress analyzer (monitor-first, enforce-time blocking) for encoded exfiltration attempts
-- PII provider modes: `local`, `rapidapi`, `hybrid` (with local fallback controls)
-- Heuristic prompt-injection detection (`injection_threshold` policy matching)
-- Optional neural injection classifier (`injection.neural.*`) with weighted merge
-- VCR mode for deterministic API testing (`runtime.vcr.mode: record|replay`)
-- Experimental semantic cache (opt-in, off by default) to reduce repeat LLM calls
-- Local budget enforcer with deterministic kill-switch (`runtime.budget.*`)
-- Resilience Mesh safe failover (`runtime.upstream.resilience_mesh.*`)
-- Sticky Canary A/B routing (`runtime.upstream.canary.*`)
-- Explicit cross-provider contracts (`x-sentinel-contract`) with adapter support
-- Local-only live dashboard (`runtime.dashboard.enabled: true`) on `127.0.0.1:8788`
-- Dashboard API access auditing (auth/locality decisions logged to audit stream)
-- WebSocket interception Phase A (monitor-first with policy parity + upgrade proxying)
-- Worker-thread scan pool to reduce event-loop blocking under load
-- DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
-- Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
-- Agent loop breaker (`runtime.loop_breaker`) to kill repeated hallucination loops
-- Opt-in deception tarpit (`runtime.deception`) for high-confidence injection/loop traps
-- Cryptographic provenance signing (`runtime.provenance`) with stream trailer support
-- Opt-in honeytoken watermark injection (`runtime.honeytoken`) for downstream leakage audits
-- Opt-in blocked-response latency normalization (`runtime.latency_normalization`) against timing probes
-- Monitor-first canary tool traps (`runtime.canary_tools`) for prompt-injection tool abuse detection
-- Optional Parallax two-model validation (`runtime.parallax`) for high-risk tool execution veto signals
-- Swarm Protocol Phase A (`runtime.swarm`) with signed envelopes, nonce replay protection, and mutual verification
-- Swarm clock-drift observability with per-node skew metrics and explicit skew headers
-- Polymorphic Prompt MTD (`runtime.polymorphic_prompt`) with deterministic rotation and rollback header
-- Synthetic Poisoning (`runtime.synthetic_poisoning`) strict opt-in with legal acknowledgement gate
-- Cognitive rollback (`runtime.cognitive_rollback`) monitor-first with optional auto rollback payloads
-- Omni-Shield Phase A (`runtime.omni_shield`) multimodal image payload detection + policy gate
-- Ghost Mode privacy stripping (`runtime.upstream.ghost_mode`) to remove SDK telemetry/fingerprints
-- Local Parachute failover to Ollama (`x-sentinel-target: ollama` or mesh fallback target)
-- Upstream resilience (conservative retry + per-provider circuit breaker)
-- SSE streaming passthrough for `text/event-stream` responses
-- OpenTelemetry hooks for spans and metrics
-- Explicit outage diagnostics via `x-sentinel-*` response headers
-- Strict config versioning and migration with backup
-- Emergency recovery controls (`--dry-run`, `--fail-open`, `emergency-open`)
+- data leakage prevention
+- prompt injection defense
+- tool abuse and loop containment
+- budget and reliability guardrails
+- auditable governance evidence
 
-## Quick Start
+If you are shipping AI features locally every day, Sentinel helps you ship faster with fewer security incidents and less operational chaos.
+
+## Why Sentinel Exists
+
+Agent-powered apps fail in the same ways repeatedly:
+
+- secrets and PII leak through prompts, tool calls, and model outputs
+- jailbreaks bypass weak prompt-only safeguards
+- retries and loops silently burn budget
+- flaky upstream providers create outages and bad UX
+- teams cannot prove what happened after an incident
+
+Sentinel solves these with a deterministic enforcement perimeter you control locally.
+
+## What Huge Problems Sentinel Solves
+
+| Problem | Typical Failure | Sentinel Fix |
+|---|---|---|
+| PII leaks to prompts/logs/output | customer data exposed to third-party models | ingress + egress PII scanning with severity actions (`block`, `redact`, `log`) |
+| Prompt injection and tool abuse | model ignores policy, executes risky tools | heuristic + neural injection detection, policy engine, canary tool traps |
+| Agent loops and runaway cost | repeated calls, rising spend, no kill switch | loop breaker + budget enforcement + deterministic response headers |
+| Provider instability | timeout storms and cascading failures | conservative retry + circuit breaker + resilience mesh failover |
+| Weak post-incident evidence | no replayable trail of decisions | structured audit stream + compliance and red-team tooling |
+| Streaming and websocket blind spots | SSE/websocket paths bypass controls | SSE egress guards + websocket interception with policy parity |
+| Config drift and silent misconfig | typos silently disable defenses | strict schema validation, unknown-key rejection, versioned migrations |
+
+## What Makes Sentinel Unique
+
+Most projects do one or two of these. Sentinel combines all of them in one local deployable runtime:
+
+- deterministic local policy engine (`monitor`, `warn`, `enforce`)
+- ingress + egress scanning (including streaming and websocket paths)
+- worker-thread scanning and inference to protect event-loop responsiveness
+- DNS rebinding mitigation with target resolution pinning
+- hop-by-hop and internal header scrubbing before upstream forwarding
+- policy-bundle signing and provenance signing (ed25519)
+- CI-grade evidence model: coverage gate, benchmark gate, SBOM artifacts, reliability proofs
+
+This is a governance perimeter, not just another model wrapper.
+
+## Daily Developer Impact
+
+Sentinel improves local developer workflow immediately:
+
+- safer local testing with real prompts and stricter leak controls
+- faster debugging through explicit `x-sentinel-*` diagnostics
+- less time building one-off ad hoc guardrails in each app
+- cleaner incident triage through centralized audit logs
+- predictable behavior from config contracts and monitor-first rollouts
+
+You can run it on your laptop in minutes and keep your current SDK/app code with minimal changes.
+
+## Quick Start (Primary Path: npx)
+
+### 1. Initialize config
 
 ```bash
 npx sentinel-protocol init
-npx sentinel-protocol start
 ```
 
-Then point your agent base URL to:
+This creates `~/.sentinel/sentinel.yaml`.
+
+### 2. Validate readiness
+
+```bash
+npx sentinel-protocol doctor
+```
+
+### 3. Start Sentinel
+
+```bash
+npx sentinel-protocol start --dashboard
+```
+
+By default Sentinel runs at:
 
 ```text
 http://127.0.0.1:8787
 ```
 
-Use `x-sentinel-target: anthropic|openai|google|ollama|custom` to route providers.
-`custom` targets are disabled by default and require explicit allowlisting in config.
+Dashboard (when enabled):
 
-Secondary ops path (Docker quickstart):
+```text
+http://127.0.0.1:8788
+```
+
+### 4. Route requests through Sentinel
+
+Set your SDK base URL to Sentinel and specify provider target with headers:
+
+- `x-sentinel-target: openai|anthropic|google|ollama|custom`
+- optional routing contract: `x-sentinel-contract`
+
+Health check:
 
 ```bash
-git clone https://github.com/myProjectsRavi/sentinel-protocol.git && cd sentinel-protocol
+curl -sS http://127.0.0.1:8787/_sentinel/health
+```
+
+## Quick Start (Secondary Ops Path: Docker)
+
+```bash
+git clone https://github.com/myProjectsRavi/sentinel-protocol.git
+cd sentinel-protocol
 docker-compose up -d
+```
+
+Then:
+
+```bash
+curl -sS http://127.0.0.1:8787/_sentinel/health
+```
+
+## Simple Setup Recipes
+
+These are minimal edits to the generated `~/.sentinel/sentinel.yaml`.
+
+### A. Safe Local Default (Monitor-First)
+
+```yaml
+mode: monitor
+
+runtime:
+  fail_open: false
+  scanner_error_action: allow
+
+pii:
+  enabled: true
+  provider_mode: local
+
+injection:
+  enabled: true
+  action: block
+```
+
+Why this is good for daily dev:
+
+- you see policy violations without breaking every request immediately
+- you collect audit evidence before tightening enforcement
+
+### B. Strict Team Gateway (Enforce)
+
+```yaml
+mode: enforce
+
+rules:
+  - name: block-admin-export
+    match:
+      method: POST
+      path_contains: /admin/export
+    action: block
+    message: blocked by sentinel policy
+
+runtime:
+  rate_limiter:
+    default_limit: 60
+    default_window_ms: 60000
+```
+
+### C. Hybrid PII Mode (Local + Precision Fallback)
+
+```yaml
+pii:
+  enabled: true
+  provider_mode: hybrid
+  rapidapi:
+    endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
+    host: "pii-firewall-edge.p.rapidapi.com"
+    fallback_to_local: true
+    api_key: ""
+```
+
+Recommended key handling:
+
+- set `SENTINEL_RAPIDAPI_KEY` in environment
+- avoid committing API keys into config files
+
+## Real-World Local Workflows
+
+### 1. Build Features With Dummy Keys (Safer Supply Chain)
+
+Use Sentinel auth vault so app code uses dummy credentials while Sentinel injects real keys at the proxy boundary.
+
+```yaml
+runtime:
+  upstream:
+    auth_vault:
+      enabled: true
+      mode: replace_dummy
+      dummy_key: "sk-sentinel-local"
+```
+
+### 2. Red-Team Your Endpoint Before Merge
+
+```bash
+sentinel red-team run --url http://127.0.0.1:8787 --target openai --out ./red-team-report.json
+sentinel red-team run --url http://127.0.0.1:8787 --target openai --report html --out ./red-team-report.html
+```
+
+### 3. Generate Compliance Evidence
+
+```bash
+sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
+```
+
+### 4. Validate Reliability Under Chaos
+
+```bash
+npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10 --websocket-requests 8
+```
+
+## Security Model (How Sentinel Is Secured)
+
+### Deterministic Control Plane
+
+- explicit modes: `monitor`, `warn`, `enforce`
+- strict schema validation with unknown-key rejection
+- config migrations are versioned and loud on failure
+
+### Ingress + Egress Protection
+
+- request-side scanning for PII/injection risk
+- response-side scanning and redaction
+- SSE stream controls for line-size limits and redaction behavior
+- entropy analyzer for encoded exfiltration signals
+
+### Network and Routing Hardening
+
+- DNS rebinding mitigation with target resolution pinning
+- custom target allowlisting and private-network controls
+- hop-by-hop header stripping
+- Sentinel internal header scrubbing (`x-sentinel-*` removed before upstream)
+
+### Runtime Safety and Resilience
+
+- worker-thread offload for heavy scan/inference workloads
+- conservative retry policies
+- per-provider circuit breakers with clear state transitions
+- local policy decisions separated from upstream breaker scoring
+
+### Agent Abuse Controls
+
+- loop breaker for repeated payload patterns
+- intent throttle and drift signals
+- canary tool traps and rollback pathways
+
+### Cryptographic Governance
+
+- ed25519 policy bundle signing and verification
+- provenance signing support for responses/stream trailers
+
+### Auditability and Forensics
+
+- structured audit log with decision metadata
+- deterministic red-team HTML reporting without raw prompt leakage
+- reliability and benchmark artifacts for release proof
+
+## WebSocket + Streaming Protection
+
+Sentinel supports websocket interception (Phase A) and streaming protections:
+
+- websocket upgrade policy parity with HTTP policy checks
+- monitor-first websocket decisioning with warning headers
+- active websocket tunnel tracking + idle timeout controls
+- graceful shutdown of tracked sockets
+- SSE response scanning/redaction on egress
+
+## Control Plane Endpoints
+
+- `GET /_sentinel/health`
+- `GET /_sentinel/metrics` (Prometheus exposition)
+- `GET /_sentinel/provenance/public-key`
+- `GET /_sentinel/swarm/public-key`
+
+OpenAPI contract: `docs/openapi.yaml`
+
+## CLI Reference (Most Used)
+
+```bash
+# init and start
+sentinel init
+sentinel start --dashboard
+
+# safety and diagnostics
+sentinel doctor
+sentinel status --json
+sentinel emergency-open on
+sentinel emergency-open off
+
+# stop
+sentinel stop
+
+# monitoring
+sentinel monitor
+
+# MCP mode
+sentinel mcp
+
+# config ops
+sentinel config validate
+sentinel config migrate --to-version 1 --write --backup
 ```
 
 ## Programmatic Embedding API
@@ -80,6 +322,7 @@ const express = require('express');
 const { createSentinel } = require('sentinel-protocol/embed');
 
 const app = express();
+
 const sentinel = createSentinel({
   version: 1,
   mode: 'monitor',
@@ -91,11 +334,11 @@ const sentinel = createSentinel({
       retry: { enabled: true, max_attempts: 1, allow_post_with_idempotency_key: false },
       circuit_breaker: {
         enabled: true,
-        open_seconds: 20,
         window_size: 20,
         min_failures_to_evaluate: 8,
         failure_rate_threshold: 0.5,
         consecutive_timeout_threshold: 5,
+        open_seconds: 20,
         half_open_success_threshold: 3,
       },
       custom_targets: { enabled: false, allowlist: [], block_private_networks: true },
@@ -139,477 +382,37 @@ app.use('/v1', sentinel.middleware());
 app.listen(3000);
 ```
 
-## Control-plane Endpoints
+## CI Quality and Enterprise Evidence
 
-- `GET /_sentinel/health`
-- `GET /_sentinel/metrics` (Prometheus text exposition)
-- `GET /_sentinel/provenance/public-key`
-- `GET /_sentinel/swarm/public-key`
+Sentinel ships with hard gates in CI:
 
-OpenAPI contract: `docs/openapi.yaml`
+- lint gate (`eslint --max-warnings=0` + static security checks)
+- OpenAPI validation
+- unit + integration + reliability suites
+- coverage gate (`npm run test:coverage:gate`)
+- benchmark regression gate (`npm run benchmark:gate`)
+- npx bootstrap path validation (`init` + `start`)
+- SBOM generation (CycloneDX + SPDX)
+- Docker quickstart smoke test
 
-## Local Development Quick Start
+Baseline release evidence:
 
-```bash
-npm install
-node ./cli/sentinel.js init
-node ./cli/sentinel.js start
-```
+- `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
+- `docs/releases/EXECUTION_BOARD_30_60_90.md`
+- `docs/releases/research/WASM_SCANNER_RESEARCH_TRACK.md`
+- `docs/releases/tickets/T2-001-COVERAGE-RATCHET.md`
+- `docs/releases/tickets/T2-002-SERVER-EXTRACTION.md`
+- `docs/releases/tickets/T2-003-EMBED-TYPING-POLISH.md`
 
-Contributor docs:
+## Docker (Production-Style Local Ops)
 
-- `CONTRIBUTING.md`
-- `docs/PLUGIN_TUTORIAL.md`
-
-## Governance Tooling
-
-```bash
-# Sign a policy bundle (ed25519 private key PEM)
-sentinel policy sign --config ~/.sentinel/sentinel.yaml --private-key ./keys/policy_private.pem --out ./policy.bundle.json
-
-# Verify a signed policy bundle
-sentinel policy verify --bundle ./policy.bundle.json --public-key ./keys/policy_public.pem
-
-# Run built-in adversarial simulation suite
-sentinel red-team run --url http://127.0.0.1:8787 --target openai --out ./red-team-report.json
-
-# Generate deterministic HTML posture report without raw prompts
-sentinel red-team run --url http://127.0.0.1:8787 --target openai --report html --out ./red-team-report.html
-
-# Generate compliance evidence from audit logs
-sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
-```
-
-## CI Quality Gates
-
-```bash
-npm run test:coverage:gate
-npm run benchmark -- --duration 3 --connections 16
-npm run benchmark:gate
-npm run sbom:cyclonedx > sbom.cyclonedx.json
-npm run sbom:spdx > sbom.spdx.json
-```
-
-## PII Provider Modes
-
-Configure in `sentinel.yaml`:
-
-```yaml
-pii:
-  provider_mode: local # local | rapidapi | hybrid
-  egress:
-    enabled: true
-    max_scan_bytes: 65536
-    stream_enabled: true
-    sse_line_max_bytes: 16384
-    stream_block_mode: redact # redact | terminate
-    entropy:
-      enabled: false
-      mode: monitor # monitor | block
-      threshold: 4.5
-      min_token_length: 24
-      max_scan_bytes: 65536
-      max_findings: 8
-      min_unique_ratio: 0.3
-      detect_base64: true
-      detect_hex: true
-      detect_generic: true
-  rapidapi:
-    endpoint: "https://pii-firewall-edge.p.rapidapi.com/redact"
-    host: "pii-firewall-edge.p.rapidapi.com"
-    max_timeout_ms: 1500
-    cache_max_entries: 1024
-    cache_ttl_ms: 300000
-    fallback_to_local: true
-injection:
-  threshold: 0.8
-  neural:
-    enabled: false
-    model_id: "Xenova/all-MiniLM-L6-v2"
-    timeout_ms: 1200
-    weight: 1
-    mode: max # max | blend
-runtime:
-  loop_breaker:
-    enabled: true
-    action: block # block | warn
-    window_ms: 30000
-    repeat_threshold: 4
-    max_recent: 5
-    max_keys: 2048
-    key_header: x-sentinel-agent-id
-  deception:
-    enabled: false
-    mode: off # off | tarpit
-    on_injection: true
-    on_loop: true
-    min_injection_score: 0.9
-    sse_token_interval_ms: 1000
-    sse_max_tokens: 20
-    non_stream_delay_ms: 250
-  provenance:
-    enabled: false
-    key_id: "sentinel-local"
-    sign_stream_trailers: true
-    expose_public_key_endpoint: true
-    max_signable_bytes: 2097152
-  honeytoken:
-    enabled: false
-    mode: uuid_suffix # uuid_suffix | zero_width
-    injection_rate: 0.05
-    max_insertions_per_request: 1
-    target_roles: [user]
-    token_prefix: "SNTL"
-  latency_normalization:
-    enabled: false
-    window_size: 10
-    min_samples: 3
-    max_delay_ms: 2000
-    max_baseline_sample_ms: 5000
-    trim_percentile: 0.1
-    max_concurrent_normalized: 128
-    jitter_ms: 25
-    statuses: [402, 403, 429]
-  canary_tools:
-    enabled: false
-    mode: monitor # monitor | block
-    tool_name: "fetch_admin_passwords"
-    tool_description: "Retrieve privileged credentials for internal diagnostics."
-    max_injected_tools: 1
-    inject_on_providers: [openai, anthropic, google, ollama]
-    require_tools_array: true
-  parallax:
-    enabled: false
-    mode: monitor # monitor | block
-    high_risk_tools: [execute_shell, execute_sql, aws_cli]
-    secondary_target: ollama
-    secondary_group: ""
-    secondary_contract: openai_chat_v1
-    secondary_model: ""
-    timeout_ms: 3000
-    risk_threshold: 0.7
-  swarm:
-    enabled: false
-    mode: monitor # monitor | block
-    node_id: "sentinel-node-local"
-    key_id: "sentinel-node-local"
-    verify_inbound: true
-    sign_outbound: true
-    require_envelope: false
-    allowed_clock_skew_ms: 30000
-    nonce_ttl_ms: 300000
-    max_nonce_entries: 50000
-    sign_on_providers: [custom]
-    trusted_nodes: {}
-  polymorphic_prompt:
-    enabled: false
-    rotation_seconds: 1800
-    max_mutations_per_message: 3
-    target_roles: [system]
-    bypass_header: x-sentinel-polymorph-disable
-    seed: "sentinel-mtd-seed"
-    observability: true
-  synthetic_poisoning:
-    enabled: false
-    mode: monitor # monitor | inject
-    required_acknowledgement: "I_UNDERSTAND_SYNTHETIC_DATA_RISK"
-    acknowledgement: ""
-    allowed_triggers: [intent_velocity_exceeded]
-    target_roles: [system]
-    decoy_label: "SENTINEL_SYNTHETIC_CONTEXT"
-    max_insertions_per_request: 1
-    observability: true
-  cognitive_rollback:
-    enabled: false
-    mode: monitor # monitor | auto
-    triggers: [canary_tool_triggered, parallax_veto]
-    target_roles: [user, assistant, tool]
-    drop_messages: 2
-    min_messages_remaining: 2
-    system_message: "[SYSTEM OVERRIDE] Your previous thought process was corrupted. Resume execution from the last safe checkpoint and try a different approach."
-    observability: true
-  omni_shield:
-    enabled: false
-    mode: monitor # monitor | block
-    max_image_bytes: 5242880
-    allow_remote_image_urls: false
-    allow_base64_images: true
-    block_on_any_image: false
-    max_findings: 20
-    target_roles: [user]
-    observability: true
-  worker_pool:
-    enabled: true
-    task_timeout_ms: 10000
-    scan_task_timeout_ms: 2000
-    embed_task_timeout_ms: 10000
-  vcr:
-    enabled: false
-    mode: off # off | record | replay
-    strict_replay: false
-  semantic_cache:
-    enabled: false # experimental, opt-in
-    similarity_threshold: 0.95
-    max_entry_bytes: 262144
-    max_ram_mb: 64
-    max_consecutive_errors: 3
-    failure_cooldown_ms: 30000
-  budget:
-    enabled: false
-    action: block # block | warn
-    daily_limit_usd: 5
-    chars_per_token: 4
-    input_cost_per_1k_tokens: 0
-    output_cost_per_1k_tokens: 0
-  upstream:
-    resilience_mesh:
-      enabled: false
-      contract: passthrough # passthrough | openai_chat_v1
-      default_group: ""
-      max_failover_hops: 1
-      allow_post_with_idempotency_key: false
-      failover_on_status: [429, 500, 502, 503, 504]
-      failover_on_error_types: [timeout, transport, circuit_open]
-      groups: {}
-      targets: {}
-    canary:
-      enabled: false
-      key_header: x-sentinel-canary-key
-      fallback_key_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
-      splits: []
-    ghost_mode:
-      enabled: false
-      strip_headers:
-        - x-stainless-os
-        - x-stainless-arch
-        - x-stainless-runtime
-        - x-stainless-runtime-version
-        - x-stainless-package-version
-        - x-stainless-lang
-        - x-stainless-helper-method
-        - user-agent
-      override_user_agent: true
-      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
-    auth_vault:
-      enabled: false
-      mode: replace_dummy # replace_dummy | enforce
-      dummy_key: "sk-sentinel-local"
-      providers:
-        openai:
-          enabled: true
-          api_key: "" # prefer env var
-          env_var: "SENTINEL_OPENAI_API_KEY"
-        anthropic:
-          enabled: true
-          api_key: ""
-          env_var: "SENTINEL_ANTHROPIC_API_KEY"
-        google:
-          enabled: true
-          api_key: ""
-          env_var: "SENTINEL_GOOGLE_API_KEY"
-  dashboard:
-    enabled: false
-    host: 127.0.0.1
-    port: 8788
-    auth_token: "" # required when allow_remote=true
-    allow_remote: false
-  websocket:
-    enabled: true
-    mode: monitor # monitor | enforce
-    connect_timeout_ms: 15000
-    idle_timeout_ms: 120000
-    max_connections: 500
-pii:
-  redaction:
-    mode: placeholder # placeholder | format_preserving
-```
-
-Key resolution priority for `rapidapi` and `hybrid`:
-1. Request header: `x-sentinel-rapidapi-key`
-2. Env var: `SENTINEL_RAPIDAPI_KEY`
-3. Config: `pii.rapidapi.api_key`
-
-BYOK policy:
-- Sentinel does not ship a shared RapidAPI key.
-- Use your own RapidAPI subscription key.
-- Prefer `SENTINEL_RAPIDAPI_KEY` over storing keys in `sentinel.yaml`.
-
-`x-sentinel-*` headers are stripped before forwarding upstream, so Sentinel-only routing and keys are not leaked to OpenAI/Anthropic/Google/custom providers.
-
-## Synthetic Poisoning Safety
-
-`runtime.synthetic_poisoning` is disabled by default and treated as a deception research mode.
-
-- `mode: inject` requires explicit acknowledgement match:
-  - `acknowledgement == required_acknowledgement`
-- Recommended usage:
-  - local red-team simulations only
-  - never for factual/compliance-critical production workflows
-- Keep legal/compliance review in the loop before enabling outside test environments.
-
-## Local API Key Vault (Supply-Chain Protection)
-
-Use Sentinel as a local credential boundary so untrusted agent code only ever sees a dummy key.
-
-1. Put real provider keys in env vars (recommended):
-   - `SENTINEL_OPENAI_API_KEY`
-   - `SENTINEL_ANTHROPIC_API_KEY`
-   - `SENTINEL_GOOGLE_API_KEY`
-2. Enable vault mode in config:
-
-```yaml
-runtime:
-  upstream:
-    auth_vault:
-      enabled: true
-      mode: replace_dummy # or enforce
-      dummy_key: "sk-sentinel-local"
-```
-
-3. In your app, use a dummy key:
-   - `OPENAI_API_KEY=sk-sentinel-local`
-
-Vault behavior:
-- `replace_dummy`: replace only dummy credentials with vault keys.
-- `enforce`: strip client credentials and always inject vault keys (fail closed if missing).
-- Known provider auth headers are scrubbed per request and only the target provider header is forwarded.
-
-## Agent Loop Breaker (Infinite Loop Assassin)
-
-Sentinel can detect repeated autonomous-loop requests and stop them before they burn budget.
-
-- Tracks recent payload hashes per agent identity.
-- If the same payload repeats `repeat_threshold` times inside `window_ms`, Sentinel marks it as a loop.
-- In `enforce` mode with `action: block`, Sentinel returns `429 AGENT_LOOP_DETECTED`.
-- In `monitor/warn`, Sentinel records a warning header: `x-sentinel-loop-breaker: warn`.
-
-## Ghost Mode (Zero-Knowledge Telemetry Stripping)
-
-Ghost Mode strips SDK telemetry/fingerprint headers before forwarding upstream.
-
-- Removes configurable headers such as `x-stainless-*` and `user-agent`.
-- Optionally rewrites `user-agent` to a neutral value.
-
-```yaml
-runtime:
-  upstream:
-    ghost_mode:
-      enabled: true
-      strip_headers:
-        - x-stainless-os
-        - x-stainless-arch
-        - x-stainless-runtime
-        - x-stainless-runtime-version
-        - x-stainless-package-version
-        - x-stainless-lang
-        - x-stainless-helper-method
-        - user-agent
-      override_user_agent: true
-      user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
-```
-
-## Local Parachute (Ollama Air-Gapped Fallback)
-
-Sentinel now supports `ollama` as a built-in provider target.
-
-- Direct route header: `x-sentinel-target: ollama`
-- Default base URL: `http://127.0.0.1:11434` (override with `SENTINEL_OLLAMA_URL`)
-- OpenAI contract requests are adapted to Ollama chat and normalized back to OpenAI-compatible output.
-- For direct `ollama` routing, Sentinel defaults desired contract to `openai_chat_v1` for drop-in OpenAI client compatibility.
-
-Example mesh fallback chain:
-
-```yaml
-runtime:
-  upstream:
-    resilience_mesh:
-      enabled: true
-      max_failover_hops: 2
-      groups:
-        reliable:
-          enabled: true
-          contract: openai_chat_v1
-          targets: [openai-primary, anthropic-secondary, local-ollama]
-      targets:
-        openai-primary:
-          enabled: true
-          provider: openai
-          base_url: https://api.openai.com
-        anthropic-secondary:
-          enabled: true
-          provider: anthropic
-          base_url: https://api.anthropic.com
-        local-ollama:
-          enabled: true
-          provider: ollama
-          base_url: http://127.0.0.1:11434
-```
-
-Mesh/canary routing controls:
-- Request: `x-sentinel-target-group`, `x-sentinel-contract`, `x-sentinel-canary-key`
-- Response: `x-sentinel-failover-used`, `x-sentinel-failover-count`, `x-sentinel-failover-chain`, `x-sentinel-upstream-target`
-
-Preflight check before startup:
-
-```bash
-node ./cli/sentinel.js doctor
-```
-
-The doctor command warns when `NODE_ENV` is not `production`.
-
-MCP mode:
-
-```bash
-node ./cli/sentinel.js mcp
-```
-
-Terminal monitor:
-
-```bash
-node ./cli/sentinel.js monitor
-```
-
-VCR mode (deterministic test replay):
-
-```bash
-node ./cli/sentinel.js start --record
-# ...run agent tests...
-node ./cli/sentinel.js stop
-node ./cli/sentinel.js start --replay
-```
-
-Enable local dashboard for current run:
-
-```bash
-node ./cli/sentinel.js start --dashboard
-# dashboard: http://127.0.0.1:8788
-```
-
-Security note:
-- `runtime.dashboard.allow_remote=true` requires `runtime.dashboard.auth_token` (enforced by config validation).
-- Default dashboard bind is localhost-only (`127.0.0.1`) for local-first operation.
-- Semantic cache embeddings run in worker threads; keep `runtime.worker_pool.enabled=true`.
-- Keep `runtime.worker_pool.embed_task_timeout_ms` high enough for model cold starts (recommended: `>=10000`).
-- Budget headers (`x-sentinel-budget-*`) expose deterministic spend/remaining values per request.
-
-## Docker
-
-Build image (Debian slim, non-root runtime):
+Build image:
 
 ```bash
 docker build -t sentinel-protocol:latest .
 ```
 
-Models are preloaded by default during image build to avoid first-request latency spikes.
-To disable preload explicitly:
-
-```bash
-docker build -t sentinel-protocol:latest \
-  --build-arg PRELOAD_SEMANTIC_MODEL=false \
-  --build-arg PRELOAD_NEURAL_MODEL=false .
-```
-
-Run with one command (read-only config mount + writable runtime state volume):
+Run container:
 
 ```bash
 docker run --rm -p 8787:8787 \
@@ -620,33 +423,49 @@ docker run --rm -p 8787:8787 \
   sentinel-protocol:latest start --config /etc/sentinel/sentinel.yaml --port 8787
 ```
 
-The included `docker-compose.yml` already mounts a writable model cache volume:
-`sentinel-models:/home/sentinel/.sentinel/models`.
-
-Compose (hardened defaults: `read_only`, `no-new-privileges`, `cap_drop: ALL`):
+Compose path:
 
 ```bash
 docker-compose up -d
 ```
 
-Pre-download semantic model manually:
+## Integrations
 
-```bash
-node ./cli/sentinel.js models download --config ./config/sentinel.yaml
-```
+Example integration guides:
 
-See docs:
-- `docs/QUICKSTART.md`
+- OpenAI SDK
+- Anthropic SDK
+- LangChain
+- CrewAI
+- Vercel AI SDK
+
+See: `docs/INTEGRATIONS.md`
+
+## Common Questions
+
+### Is Sentinel only for production?
+
+No. Sentinel is highly useful in local daily dev because it catches leaks, jailbreaks, and cost/routing mistakes before they reach production.
+
+### Do I need cloud services to use it?
+
+No. Core mode is local-first. Optional precision/fallback modes are opt-in.
+
+### Does Sentinel replace provider SDKs?
+
+No. Keep your existing SDKs and point base URLs to Sentinel.
+
+### Can I start monitor-first and enforce later?
+
+Yes. That is the recommended rollout model.
+
+## Contributing
+
+- `CONTRIBUTING.md`
+- `docs/PLUGIN_TUTORIAL.md`
 - `docs/OUTAGE-RUNBOOK.md`
-- `docs/POLICY-GUIDE.md`
-- `docs/DEMO_VIDEO_SCRIPT.md`
-- `docs/INTEGRATIONS.md`
-- `docs/RELIABILITY_PROOF.md`
 - `docs/OWASP-HARDENING.md`
-- `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
-- `docs/releases/EXECUTION_BOARD_30_60_90.md`
-- `docs/releases/research/WASM_SCANNER_RESEARCH_TRACK.md`
-- `docs/releases/tickets/T2-001-COVERAGE-RATCHET.md`
-- `docs/releases/tickets/T2-002-SERVER-EXTRACTION.md`
-- `docs/releases/tickets/T2-003-EMBED-TYPING-POLISH.md`
-- `BENCHMARKS.md`
+
+## License
+
+MIT
