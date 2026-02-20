@@ -46,6 +46,7 @@ COPY --from=build /app/README.md ./README.md
 COPY --from=build /app/LICENSE ./LICENSE
 
 RUN cp ./src/config/default.yaml /etc/sentinel/sentinel.yaml \
+  && sed -i '0,/host: 127.0.0.1/s//host: 0.0.0.0/' /etc/sentinel/sentinel.yaml \
   && chown sentinel:sentinel /etc/sentinel/sentinel.yaml
 
 USER sentinel
@@ -65,4 +66,4 @@ RUN if [ "$PRELOAD_SEMANTIC_MODEL" = "true" ]; then \
 EXPOSE 8787
 
 ENTRYPOINT ["node", "./cli/sentinel.js"]
-CMD ["start", "--config", "/etc/sentinel/sentinel.yaml", "--host", "0.0.0.0", "--port", "8787"]
+CMD ["start", "--config", "/etc/sentinel/sentinel.yaml", "--port", "8787"]
