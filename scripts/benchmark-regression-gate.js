@@ -21,7 +21,7 @@ function findLatestBenchmarkReport(metricsDir) {
   }
   const files = fs
     .readdirSync(metricsDir)
-    .filter((file) => file.startsWith('benchmark-') && file.endsWith('.json'))
+    .filter((file) => /^benchmark-\d{4}-\d{2}-\d{2}(?:[Tt][\w:-]+)?\.json$/.test(file))
     .sort();
   if (files.length === 0) {
     return '';

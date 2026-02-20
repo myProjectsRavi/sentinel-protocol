@@ -20,6 +20,16 @@ function parseIntArg(name, defaultValue) {
   return Number.isInteger(value) && value > 0 ? value : defaultValue;
 }
 
+function sleep(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
 function runAutocannon(options) {
   return new Promise((resolve, reject) => {
     autocannon(options, (error, result) => {
@@ -151,13 +161,15 @@ function makeConfig(sentinelPort) {
   };
 }
 
-async function startUpstream() {
+async function startUpstream({ upstreamLatencyMs = 0 } = {}) {
   const app = express();
   app.use(express.raw({ type: '*/*', limit: '1mb' }));
-  app.post('/v1/chat/completions', (req, res) => {
+  app.post('/v1/chat/completions', async (req, res) => {
+    await sleep(upstreamLatencyMs);
     res.status(200).json({ ok: true });
   });
-  app.get('/v1/models', (req, res) => {
+  app.get('/v1/models', async (req, res) => {
+    await sleep(upstreamLatencyMs);
     res.status(200).json({ data: [{ id: 'model-1' }] });
   });
 
@@ -186,8 +198,9 @@ async function main() {
   const duration = parseIntArg('--duration', 12);
   const connections = parseIntArg('--connections', 64);
   const pipelining = parseIntArg('--pipelining', 1);
+  const upstreamLatencyMs = parseIntArg('--upstream-latency-ms', 25);
 
-  const upstream = await startUpstream();
+  const upstream = await startUpstream({ upstreamLatencyMs });
   const upstreamUrl = `http://127.0.0.1:${upstream.port}`;
   process.env.SENTINEL_OPENAI_URL = upstreamUrl;
   const sentinelConfig = makeConfig(0);
@@ -245,6 +258,7 @@ async function main() {
         duration_seconds: duration,
         connections,
         pipelining,
+        upstream_latency_ms: upstreamLatencyMs,
       },
       direct,
       sentinel: proxied,

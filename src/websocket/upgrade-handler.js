@@ -409,6 +409,17 @@ async function handleWebSocketUpgrade({ server, req, socket, head }) {
     if (Buffer.isBuffer(head) && head.length > 0) {
       upstreamSocket.write(head);
     }
+    const trackedSockets = server.webSocketSockets instanceof Set ? server.webSocketSockets : null;
+    if (trackedSockets) {
+      trackedSockets.add(socket);
+      trackedSockets.add(upstreamSocket);
+      socket.once('close', () => {
+        trackedSockets.delete(socket);
+      });
+      upstreamSocket.once('close', () => {
+        trackedSockets.delete(upstreamSocket);
+      });
+    }
 
     const onClientData = (chunk) => {
       sentBytes += chunk.length;
@@ -434,6 +445,10 @@ async function handleWebSocketUpgrade({ server, req, socket, head }) {
     upstreamSocket.pipe(socket);
 
     const closeDecision = () => {
+      if (trackedSockets) {
+        trackedSockets.delete(socket);
+        trackedSockets.delete(upstreamSocket);
+      }
       finalize({
         decision: 'forwarded_websocket',
         reasons: extraReasons.length > 0 ? extraReasons : ['websocket_forwarded'],

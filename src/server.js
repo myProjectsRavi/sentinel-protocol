@@ -296,6 +296,8 @@ class SentinelServer {
     }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
     this.activeWebSocketTunnels = 0;
+    this.webSocketSockets = new Set();
+    this.serverSockets = new Set();
     this.lastStatusWriteError = null;
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
@@ -1826,6 +1828,12 @@ class SentinelServer {
       this.writeStatus();
     });
     if (typeof this.server?.on === 'function') {
+      this.server.on('connection', (socket) => {
+        this.serverSockets.add(socket);
+        socket.once('close', () => {
+          this.serverSockets.delete(socket);
+        });
+      });
       this.server.on('upgrade', (req, socket, head) => {
         handleWebSocketUpgrade({
           server: this,
@@ -1883,13 +1891,67 @@ class SentinelServer {
     }
 
     this.writeStatus();
+    if (this.webSocketSockets.size > 0) {
+      for (const socket of this.webSocketSockets) {
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort shutdown
+        }
+      }
+      this.webSocketSockets.clear();
+    }
+    if (this.serverSockets.size > 0) {
+      for (const socket of this.serverSockets) {
+        try {
+          socket.destroy();
+        } catch {
+          // best-effort shutdown
+        }
+      }
+      this.serverSockets.clear();
+    }
 
     await new Promise((resolve) => {
       if (!this.server) {
         resolve();
         return;
       }
-      this.server.close(resolve);
+      const instance = this.server;
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve();
+      };
+      const closeTimeout = setTimeout(() => {
+        logger.warn('Sentinel shutdown close timeout; forcing connection cleanup', {
+          open_connections: this.serverSockets.size,
+          open_ws_sockets: this.webSocketSockets.size,
+        });
+        if (typeof instance.closeIdleConnections === 'function') {
+          try {
+            instance.closeIdleConnections();
+          } catch {
+            // best-effort shutdown
+          }
+        }
+        if (typeof instance.closeAllConnections === 'function') {
+          try {
+            instance.closeAllConnections();
+          } catch {
+            // best-effort shutdown
+          }
+        }
+        finish();
+      }, 3000);
+      closeTimeout.unref?.();
+      instance.close(() => {
+        clearTimeout(closeTimeout);
+        finish();
+      });
     });
 
     await this.upstreamClient.close();

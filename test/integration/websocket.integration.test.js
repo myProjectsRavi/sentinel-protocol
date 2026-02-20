@@ -124,9 +124,16 @@ function waitForListening(server) {
 
 function startWebSocketEchoServer() {
   return new Promise((resolve, reject) => {
+    const sockets = new Set();
     const server = http.createServer((req, res) => {
       res.writeHead(426, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: 'upgrade_required' }));
+    });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => {
+        sockets.delete(socket);
+      });
     });
     server.on('upgrade', (req, socket, head) => {
       const key = String(req.headers['sec-websocket-key'] || '');
@@ -154,6 +161,7 @@ function startWebSocketEchoServer() {
       const port = server.address().port;
       resolve({
         server,
+        sockets,
         url: `http://127.0.0.1:${port}`,
       });
     });
@@ -161,9 +169,16 @@ function startWebSocketEchoServer() {
   });
 }
 
-function closeServer(server) {
-  if (!server) {
+function closeServer(upstream) {
+  if (!upstream) {
     return Promise.resolve();
+  }
+  const server = upstream.server || upstream;
+  const sockets = upstream.sockets;
+  if (sockets instanceof Set) {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
   }
   return new Promise((resolve) => server.close(resolve));
 }
@@ -185,7 +200,12 @@ function parseHeaders(lines) {
 function runUpgradeRequest({ port, path: requestPath, headers, payload }) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: '127.0.0.1', port });
+    let settled = false;
     const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       socket.destroy();
       reject(new Error('websocket integration timeout'));
     }, 4000);
@@ -213,6 +233,10 @@ function runUpgradeRequest({ port, path: requestPath, headers, payload }) {
       socket.write(requestBuffer);
     });
     socket.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       clearTimeout(timeout);
       reject(error);
     });
@@ -238,8 +262,12 @@ function runUpgradeRequest({ port, path: requestPath, headers, payload }) {
       }
 
       if (parsed && statusCode !== 101) {
+        if (settled) {
+          return;
+        }
+        settled = true;
         clearTimeout(timeout);
-        socket.end();
+        socket.destroy();
         resolve({
           statusCode,
           headers: responseHeaders,
@@ -251,8 +279,12 @@ function runUpgradeRequest({ port, path: requestPath, headers, payload }) {
       if (parsed && statusCode === 101 && payload && payload.length > 0) {
         const body = received.slice(headerEndIndex + 4);
         if (body.includes(payload)) {
+          if (settled) {
+            return;
+          }
+          settled = true;
           clearTimeout(timeout);
-          socket.end();
+          socket.destroy();
           resolve({
             statusCode,
             headers: responseHeaders,
@@ -274,7 +306,7 @@ describe('websocket interception integration', () => {
       sentinel = null;
     }
     if (upstream) {
-      await closeServer(upstream.server);
+      await closeServer(upstream);
       upstream = null;
     }
   });
