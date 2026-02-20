@@ -185,6 +185,9 @@ function statusServer(asJson = false) {
           budget_enabled: false,
           budget_spent_usd_today: 0,
           budget_remaining_usd_today: 0,
+          websocket_enabled: false,
+          websocket_mode: 'monitor',
+          websocket_active_tunnels: 0,
         }
       : [
           'Service status: stopped',
@@ -194,6 +197,7 @@ function statusServer(asJson = false) {
           'VCR mode: off',
           'Semantic cache: disabled',
           'Dashboard: disabled',
+          'WebSocket interception: disabled',
           'PII provider mode: unknown',
           'PII provider fallbacks: 0',
           'RapidAPI errors: 0',
@@ -237,6 +241,7 @@ function statusServer(asJson = false) {
     `VCR mode: ${status.vcr_mode || 'off'}`,
     `Semantic cache: ${status.semantic_cache_enabled ? 'enabled' : 'disabled'}`,
     `Dashboard: ${status.dashboard_enabled ? `enabled (http://${status.dashboard_host}:${status.dashboard_port})` : 'disabled'}`,
+    `WebSocket interception: ${status.websocket_enabled ? `enabled (${status.websocket_mode}, active_tunnels=${status.websocket_active_tunnels ?? 0}, upgrades=${status.counters?.websocket_upgrades_total ?? 0}, forwarded=${status.counters?.websocket_forwarded ?? 0}, blocked=${status.counters?.websocket_blocked ?? 0}, errors=${status.counters?.websocket_errors ?? 0})` : 'disabled'}`,
     `PII provider mode: ${status.pii_provider_mode || 'unknown'}`,
     `PII provider fallbacks: ${status.pii_provider_fallbacks ?? status.counters?.pii_provider_fallbacks ?? 0}`,
     `RapidAPI errors: ${status.rapidapi_error_count ?? status.counters?.rapidapi_error_count ?? 0}`,

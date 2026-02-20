@@ -1,0 +1,6 @@
+{
+  "min_req_sec_ratio_vs_direct": 0.55,
+  "max_p95_ratio_vs_direct": 1.9,
+  "max_overhead_p95_percent": 75,
+  "max_overhead_p95_ms": 45
+}

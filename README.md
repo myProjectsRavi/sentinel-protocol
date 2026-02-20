@@ -23,6 +23,8 @@ It provides:
 - Sticky Canary A/B routing (`runtime.upstream.canary.*`)
 - Explicit cross-provider contracts (`x-sentinel-contract`) with adapter support
 - Local-only live dashboard (`runtime.dashboard.enabled: true`) on `127.0.0.1:8788`
+- Dashboard API access auditing (auth/locality decisions logged to audit stream)
+- WebSocket interception Phase A (monitor-first with policy parity + upgrade proxying)
 - Worker-thread scan pool to reduce event-loop blocking under load
 - DNS-rebinding-resistant custom upstream routing (IP pinning + Host/SNI preservation)
 - Local API key vault with dummy-key replacement (`runtime.upstream.auth_vault.*`)
@@ -51,8 +53,8 @@ It provides:
 ## Quick Start
 
 ```bash
-git clone https://github.com/myProjectsRavi/sentinel-protocol.git && cd sentinel-protocol
-docker-compose up -d
+npx sentinel-protocol init
+npx sentinel-protocol start
 ```
 
 Then point your agent base URL to:
@@ -63,6 +65,13 @@ http://127.0.0.1:8787
 
 Use `x-sentinel-target: anthropic|openai|google|ollama|custom` to route providers.
 `custom` targets are disabled by default and require explicit allowlisting in config.
+
+Secondary ops path (Docker quickstart):
+
+```bash
+git clone https://github.com/myProjectsRavi/sentinel-protocol.git && cd sentinel-protocol
+docker-compose up -d
+```
 
 ## Programmatic Embedding API
 
@@ -147,6 +156,11 @@ node ./cli/sentinel.js init
 node ./cli/sentinel.js start
 ```
 
+Contributor docs:
+
+- `CONTRIBUTING.md`
+- `docs/PLUGIN_TUTORIAL.md`
+
 ## Governance Tooling
 
 ```bash
@@ -159,8 +173,21 @@ sentinel policy verify --bundle ./policy.bundle.json --public-key ./keys/policy_
 # Run built-in adversarial simulation suite
 sentinel red-team run --url http://127.0.0.1:8787 --target openai --out ./red-team-report.json
 
+# Generate deterministic HTML posture report without raw prompts
+sentinel red-team run --url http://127.0.0.1:8787 --target openai --report html --out ./red-team-report.html
+
 # Generate compliance evidence from audit logs
 sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
+```
+
+## CI Quality Gates
+
+```bash
+npm run test:coverage:gate
+npm run benchmark -- --duration 3 --connections 16
+npm run benchmark:gate
+npm run sbom:cyclonedx > sbom.cyclonedx.json
+npm run sbom:spdx > sbom.spdx.json
 ```
 
 ## PII Provider Modes
@@ -385,6 +412,13 @@ runtime:
     host: 127.0.0.1
     port: 8788
     auth_token: "" # required when allow_remote=true
+    allow_remote: false
+  websocket:
+    enabled: true
+    mode: monitor # monitor | enforce
+    connect_timeout_ms: 15000
+    idle_timeout_ms: 120000
+    max_connections: 500
 pii:
   redaction:
     mode: placeholder # placeholder | format_preserving
@@ -553,6 +587,7 @@ node ./cli/sentinel.js start --dashboard
 
 Security note:
 - `runtime.dashboard.allow_remote=true` requires `runtime.dashboard.auth_token` (enforced by config validation).
+- Default dashboard bind is localhost-only (`127.0.0.1`) for local-first operation.
 - Semantic cache embeddings run in worker threads; keep `runtime.worker_pool.enabled=true`.
 - Keep `runtime.worker_pool.embed_task_timeout_ms` high enough for model cold starts (recommended: `>=10000`).
 - Budget headers (`x-sentinel-budget-*`) expose deterministic spend/remaining values per request.

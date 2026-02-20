@@ -1,27 +1,34 @@
 # Quickstart
 
-## 1. Install
+## 1. Primary Bootstrap (npx)
+
+```bash
+npx sentinel-protocol init
+npx sentinel-protocol start
+```
+
+This is the primary onboarding path for docs/tutorials.
+
+## 2. Alternate Bootstrap (source checkout)
 
 ```bash
 npm install
-```
-
-## 2. Initialize config
-
-```bash
 node ./cli/sentinel.js init
-```
-
-This creates:
-- `/Users/ravitejanekkalapu/.sentinel/sentinel.yaml`
-
-## 3. Start Sentinel
-
-```bash
 node ./cli/sentinel.js start
 ```
 
-Startup runs `doctor` checks automatically. To run explicitly:
+`init` creates:
+- `~/.sentinel/sentinel.yaml`
+
+## 3. Alternate Ops Path (Docker)
+
+```bash
+docker-compose up -d
+```
+
+## 4. Startup Notes
+
+Startup runs `doctor` checks automatically. Run explicitly:
 
 ```bash
 node ./cli/sentinel.js doctor
@@ -30,18 +37,18 @@ node ./cli/sentinel.js doctor
 Set production mode for safer runtime defaults:
 
 ```bash
-NODE_ENV=production node ./cli/sentinel.js start
+NODE_ENV=production npx sentinel-protocol start
 ```
 
 Optional safe startup flags:
 
 ```bash
-node ./cli/sentinel.js start --dry-run
-node ./cli/sentinel.js start --fail-open
-node ./cli/sentinel.js start --skip-doctor
+npx sentinel-protocol start --dry-run
+npx sentinel-protocol start --fail-open
+npx sentinel-protocol start --skip-doctor
 ```
 
-## 4. Configure agent
+## 5. Configure agent
 
 Set base URL to:
 
@@ -79,6 +86,12 @@ pii:
   regex_safety_cap_bytes: 51200 # 50KB regex budget
 
 runtime:
+  websocket:
+    enabled: true
+    mode: monitor
+    connect_timeout_ms: 15000
+    idle_timeout_ms: 120000
+    max_connections: 500
   loop_breaker:
     enabled: true
     action: block
@@ -92,7 +105,7 @@ runtime:
       user_agent_value: "Sentinel/1.0 (Privacy Proxy)"
 ```
 
-## 5. Configure PII provider mode
+## 6. Configure PII provider mode
 
 Choose one:
 - `local`: local scanner only (default)
@@ -126,7 +139,7 @@ On RapidAPI failures:
 
 Sentinel strips all `x-sentinel-*` headers before forwarding upstream.
 
-## 5.1 Optional: Local API Key Vault (dummy-key replacement)
+## 6.1 Optional: Local API Key Vault (dummy-key replacement)
 
 Use this when running untrusted agent code/packages locally.
 
@@ -150,7 +163,7 @@ Recommended:
 - `replace_dummy`: replace only dummy keys.
 - `enforce`: strip client keys and fail closed if vault keys are missing.
 
-## 6. Configure prompt-injection detection
+## 7. Configure prompt-injection detection
 
 Injection scanning is enabled by default. You can tune the default threshold and add rule-level controls.
 
@@ -168,7 +181,7 @@ rules:
     action: block
 ```
 
-## 7. Optional semantic scanner
+## 8. Optional semantic scanner
 
 Semantic NER runs locally and is disabled by default.
 
@@ -190,7 +203,7 @@ pii:
     max_scan_bytes: 32768
 ```
 
-## 8. MCP and monitor modes
+## 9. MCP and monitor modes
 
 Run Sentinel as minimal MCP server:
 
@@ -204,7 +217,13 @@ Open terminal dashboard:
 node ./cli/sentinel.js monitor
 ```
 
-## 9. Check status
+Web dashboard auth/binding defaults:
+
+- Bind host defaults to `127.0.0.1` (localhost-only).
+- Optional production auth token: `runtime.dashboard.auth_token`.
+- If `runtime.dashboard.allow_remote=true`, a non-empty `runtime.dashboard.auth_token` is required.
+
+## 10. Check status
 
 Human output:
 
@@ -223,7 +242,7 @@ Provider observability fields:
 - `pii_provider_fallbacks`
 - `rapidapi_error_count`
 
-## 10. Benchmark overhead
+## 11. Benchmark overhead
 
 ```bash
 npm run benchmark
@@ -231,7 +250,7 @@ npm run benchmark
 
 See `BENCHMARKS.md` and generated files in `metrics/`.
 
-## 11. Emergency recovery
+## 12. Emergency recovery
 
 Enable emergency pass-through:
 

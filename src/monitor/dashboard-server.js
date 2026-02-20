@@ -22,6 +22,81 @@ function estimateSavings(counters = {}) {
   return Number((semanticSavingsUsd + blockedSavingsUsd).toFixed(4));
 }
 
+function createRequestId() {
+  return `dash-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDashboardAccessGuard({ allowRemote, authToken, accessLogger }) {
+  const enforceLocalOnly = allowRemote !== true;
+  const token = String(authToken || '');
+  const loggerFn = typeof accessLogger === 'function' ? accessLogger : null;
+  return (req, res, next) => {
+    const startedAt = Date.now();
+    const requestId = createRequestId();
+    const remoteAddr = req.socket?.remoteAddress || req.ip;
+    const reqPath = String(req.path || req.url || '/');
+    const method = String(req.method || 'GET').toUpperCase();
+    const authRequired = token.length > 0;
+    const providedToken = (req.headers || {})['x-sentinel-dashboard-token'];
+    const authenticated = !authRequired || providedToken === token;
+    let logged = false;
+    const logAccess = ({ allowed, reason, statusCode }) => {
+      if (logged || !loggerFn) {
+        return;
+      }
+      logged = true;
+      try {
+        loggerFn({
+          requestId,
+          method,
+          path: reqPath,
+          remoteAddress: remoteAddr,
+          localOnly: enforceLocalOnly,
+          authRequired,
+          authenticated,
+          allowed,
+          reason,
+          statusCode,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        });
+      } catch {
+        // Audit callback failures must never block dashboard responses.
+      }
+    };
+    res.once('finish', () => {
+      logAccess({
+        allowed: res.statusCode < 400,
+        reason: res.statusCode < 400 ? 'ok' : 'http_error',
+        statusCode: res.statusCode,
+      });
+    });
+    if (enforceLocalOnly && !isLocalAddress(remoteAddr)) {
+      logAccess({
+        allowed: false,
+        reason: 'local_only_enforced',
+        statusCode: 403,
+      });
+      res.status(403).json({ error: 'DASHBOARD_LOCAL_ONLY' });
+      return;
+    }
+    if (authRequired && !authenticated) {
+      logAccess({
+        allowed: false,
+        reason: 'dashboard_auth_failed',
+        statusCode: 401,
+      });
+      res.status(401).json({ error: 'DASHBOARD_AUTH_REQUIRED' });
+      return;
+    }
+    res.setHeader('x-content-type-options', 'nosniff');
+    res.setHeader('x-frame-options', 'DENY');
+    res.setHeader('referrer-policy', 'no-referrer');
+    res.setHeader('cache-control', 'no-store');
+    res.setHeader('content-security-policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
+    next();
+  };
+}
+
 const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -131,6 +206,7 @@ class DashboardServer {
     this.allowRemote = options.allowRemote === true;
     this.authToken = String(options.authToken || '');
     this.statusProvider = typeof options.statusProvider === 'function' ? options.statusProvider : () => ({});
+    this.accessLogger = typeof options.accessLogger === 'function' ? options.accessLogger : null;
     this.auditTailer = new LogTailer(options.auditPath || AUDIT_LOG_PATH, {
       maxEntries: Number(options.maxAuditEntries || 300),
     });
@@ -138,23 +214,11 @@ class DashboardServer {
     this.app = express();
 
     this.app.disable('x-powered-by');
-    this.app.use((req, res, next) => {
-      const remoteAddr = req.socket?.remoteAddress || req.ip;
-      if (!this.allowRemote && !isLocalAddress(remoteAddr)) {
-        res.status(403).json({ error: 'DASHBOARD_LOCAL_ONLY' });
-        return;
-      }
-      if (this.authToken && req.headers['x-sentinel-dashboard-token'] !== this.authToken) {
-        res.status(401).json({ error: 'DASHBOARD_AUTH_REQUIRED' });
-        return;
-      }
-      res.setHeader('x-content-type-options', 'nosniff');
-      res.setHeader('x-frame-options', 'DENY');
-      res.setHeader('referrer-policy', 'no-referrer');
-      res.setHeader('cache-control', 'no-store');
-      res.setHeader('content-security-policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'");
-      next();
-    });
+    this.app.use(createDashboardAccessGuard({
+      allowRemote: this.allowRemote,
+      authToken: this.authToken,
+      accessLogger: this.accessLogger,
+    }));
 
     this.app.get('/', (req, res) => {
       res.type('html').send(DASHBOARD_HTML);
@@ -205,4 +269,5 @@ module.exports = {
   DashboardServer,
   isLocalAddress,
   estimateSavings,
+  createDashboardAccessGuard,
 };

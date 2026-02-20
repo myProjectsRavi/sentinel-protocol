@@ -90,6 +90,25 @@ describe('config loader and migration', () => {
     }).toThrow(/dashboard\.auth_token.*allow_remote=true/);
   });
 
+  test('fails validation on invalid websocket mode', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.websocket = {
+      enabled: true,
+      mode: 'block',
+      connect_timeout_ms: 1000,
+      idle_timeout_ms: 1000,
+      max_connections: 5,
+    };
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/runtime\.websocket\.mode/);
+  });
+
   test('fails validation when auth vault provider key is unknown', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
     const configPath = path.join(tmpDir, 'sentinel.yaml');

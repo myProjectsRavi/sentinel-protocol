@@ -24,13 +24,51 @@ jobs:
       - run: npm run openapi:validate
       - run: npm run test:unit:ci
       - run: npm run test:integration
-      - run: npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10
+      - run: npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10 --websocket-requests 8
       - run: npm audit --omit=dev --audit-level=high
 
-  docker-build:
+  quality-gates:
     runs-on: ubuntu-latest
     needs: test
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:coverage:gate
+      - run: npm run benchmark -- --duration 3 --connections 16 --pipelining 1
+      - run: npm run benchmark:gate
+      - run: npm run ci:bootstrap:npx
+      - run: npm run sbom:cyclonedx > sbom.cyclonedx.json
+      - run: npm run sbom:spdx > sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-ci
+          path: |
+            sbom.cyclonedx.json
+            sbom.spdx.json
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    steps:
+      - uses: actions/checkout@v4
       - name: Build Docker image
         run: docker build -t sentinel-protocol:ci .
+      - name: Docker quickstart smoke
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name sentinel-ci-smoke -p 8787:8787 sentinel-protocol:ci start --config /etc/sentinel/sentinel.yaml --port 8787 --skip-doctor
+          trap 'docker rm -f sentinel-ci-smoke >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/_sentinel/health >/dev/null; then
+              echo "Docker quickstart health check passed"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Docker quickstart health check failed"
+          docker logs sentinel-ci-smoke || true
+          exit 1

@@ -25,6 +25,7 @@ const RUNTIME_KEYS = new Set([
   'omni_shield',
   'sandbox_experimental',
   'dashboard',
+  'websocket',
   'budget',
   'loop_breaker',
   'auto_immune',
@@ -235,6 +236,8 @@ const SANDBOX_EXPERIMENTAL_KEYS = new Set([
 ]);
 const SANDBOX_EXPERIMENTAL_MODES = new Set(['monitor', 'block']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
+const WEBSOCKET_KEYS = new Set(['enabled', 'mode', 'connect_timeout_ms', 'idle_timeout_ms', 'max_connections']);
+const WEBSOCKET_MODES = new Set(['monitor', 'enforce']);
 const BUDGET_KEYS = new Set([
   'enabled',
   'action',
@@ -1003,6 +1006,16 @@ function applyDefaults(config) {
   dashboard.port = Number(dashboard.port ?? 8788);
   dashboard.auth_token = String(dashboard.auth_token || process.env.SENTINEL_DASHBOARD_TOKEN || '');
   dashboard.allow_remote = dashboard.allow_remote === true;
+
+  normalized.runtime.websocket = normalized.runtime.websocket || {};
+  const websocket = normalized.runtime.websocket;
+  websocket.enabled = websocket.enabled !== false;
+  websocket.mode = WEBSOCKET_MODES.has(String(websocket.mode || '').toLowerCase())
+    ? String(websocket.mode).toLowerCase()
+    : 'monitor';
+  websocket.connect_timeout_ms = Number(websocket.connect_timeout_ms ?? 15000);
+  websocket.idle_timeout_ms = Number(websocket.idle_timeout_ms ?? 120000);
+  websocket.max_connections = Number(websocket.max_connections ?? 500);
 
   normalized.runtime.budget = normalized.runtime.budget || {};
   const budget = normalized.runtime.budget;
@@ -2192,6 +2205,32 @@ function validateConfigShape(config) {
     if (dashboard.allow_remote === true && String(dashboard.auth_token || '').length === 0) {
       details.push('`runtime.dashboard.auth_token` must be non-empty when `runtime.dashboard.allow_remote=true`');
     }
+  }
+
+  const websocket = runtime.websocket || {};
+  if (runtime.websocket !== undefined) {
+    assertNoUnknownKeys(websocket, WEBSOCKET_KEYS, 'runtime.websocket', details);
+    assertType(typeof websocket.enabled === 'boolean', '`runtime.websocket.enabled` must be boolean', details);
+    assertType(
+      typeof websocket.mode === 'string' && WEBSOCKET_MODES.has(String(websocket.mode).toLowerCase()),
+      '`runtime.websocket.mode` must be one of: monitor, enforce',
+      details
+    );
+    assertType(
+      Number.isInteger(websocket.connect_timeout_ms) && websocket.connect_timeout_ms > 0,
+      '`runtime.websocket.connect_timeout_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(websocket.idle_timeout_ms) && websocket.idle_timeout_ms > 0,
+      '`runtime.websocket.idle_timeout_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(websocket.max_connections) && websocket.max_connections > 0,
+      '`runtime.websocket.max_connections` must be integer > 0',
+      details
+    );
   }
 
   const budget = runtime.budget || {};

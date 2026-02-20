@@ -11,6 +11,7 @@ const { ConfigValidationError } = require('../src/config/schema');
 const { SemanticScanner } = require('../src/engines/semantic-scanner');
 const { PolicyBundle } = require('../src/governance/policy-bundle');
 const { RedTeamEngine } = require('../src/governance/red-team');
+const { renderRedTeamHtmlReport } = require('../src/governance/red-team-html-report');
 const { ComplianceEngine } = require('../src/governance/compliance-engine');
 const { startMCPServer } = require('../src/mcp/server');
 const { startMonitorTUI } = require('../src/monitor/tui');
@@ -364,7 +365,8 @@ redTeamCommand
   .option('--url <baseUrl>', 'Sentinel base URL', 'http://127.0.0.1:8787')
   .option('--target <target>', 'x-sentinel-target provider', 'openai')
   .option('--path <path>', 'Proxy path', '/v1/chat/completions')
-  .option('--out <path>', 'Write JSON report to path')
+  .option('--report <format>', 'Report format: json|html', 'json')
+  .option('--out <path>', 'Write report to path')
   .action(async (options) => {
     try {
       const engine = new RedTeamEngine(options.url, {
@@ -372,12 +374,27 @@ redTeamCommand
         targetPath: options.path,
       });
       const report = await engine.runFullSuite();
+      const reportFormat = String(options.report || 'json').toLowerCase();
+      if (!['json', 'html'].includes(reportFormat)) {
+        throw new Error('Invalid --report value. Use json or html.');
+      }
       if (options.out) {
         const outPath = path.resolve(options.out);
-        fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        const output = reportFormat === 'html'
+          ? renderRedTeamHtmlReport(report, {
+              title: 'Sentinel Red-Team Report',
+            })
+          : `${JSON.stringify(report, null, 2)}\n`;
+        fs.writeFileSync(outPath, output, 'utf8');
         console.log(`Red-team report written: ${outPath}`);
       } else {
-        console.log(JSON.stringify(report, null, 2));
+        if (reportFormat === 'html') {
+          console.log(renderRedTeamHtmlReport(report, {
+            title: 'Sentinel Red-Team Report',
+          }));
+        } else {
+          console.log(JSON.stringify(report, null, 2));
+        }
       }
       if (report.score_percent < 50) {
         process.exitCode = 1;

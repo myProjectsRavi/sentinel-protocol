@@ -11,12 +11,13 @@ This project ships a reproducible benchmark harness to measure Sentinel overhead
 
 ```bash
 npm run benchmark
+npm run benchmark:gate
 ```
 
 Reliability (stress + chaos scenarios):
 
 ```bash
-npm run reliability
+npm run reliability -- --websocket-requests 8
 ```
 
 Custom run parameters:
@@ -63,3 +64,4 @@ Outputs include:
 1. Stress run without transport errors/timeouts.
 2. Chaos-503 scenario where circuit breaker opens and fast-fails.
 3. Chaos-timeout scenario where timeout streak opens breaker and fast-fails.
+4. WebSocket upgrade forwarding stability with monitor-first interception enabled.

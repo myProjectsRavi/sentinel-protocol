@@ -23,6 +23,7 @@ const { VCRStore } = require('./runtime/vcr-store');
 const { SemanticCache } = require('./cache/semantic-cache');
 const { BudgetStore } = require('./accounting/budget-store');
 const { DashboardServer } = require('./monitor/dashboard-server');
+const { handleWebSocketUpgrade } = require('./websocket/upgrade-handler');
 const { LoopBreaker } = require('./engines/loop-breaker');
 const { AutoImmune } = require('./engines/auto-immune');
 const { DeceptionEngine } = require('./engines/deception-engine');
@@ -176,6 +177,13 @@ class SentinelServer {
       canary_tool_triggered: 0,
       parallax_evaluated: 0,
       parallax_vetoed: 0,
+      websocket_upgrades_total: 0,
+      websocket_forwarded: 0,
+      websocket_blocked: 0,
+      websocket_errors: 0,
+      dashboard_requests_total: 0,
+      dashboard_api_requests_total: 0,
+      dashboard_denied_total: 0,
     };
 
     this.rateLimiter = new InMemoryRateLimiter(config.runtime?.rate_limiter || {});
@@ -287,6 +295,7 @@ class SentinelServer {
       });
     }
     this.statusStore = new StatusStore(STATUS_FILE_PATH);
+    this.activeWebSocketTunnels = 0;
     this.lastStatusWriteError = null;
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
@@ -392,6 +401,9 @@ class SentinelServer {
       dashboard_enabled: this.config.runtime?.dashboard?.enabled === true,
       dashboard_host: this.config.runtime?.dashboard?.host || '127.0.0.1',
       dashboard_port: this.config.runtime?.dashboard?.port || 8788,
+      websocket_enabled: this.config.runtime?.websocket?.enabled !== false,
+      websocket_mode: this.config.runtime?.websocket?.mode || 'monitor',
+      websocket_active_tunnels: this.activeWebSocketTunnels,
       plugins_registered: this.pluginRegistry.list(),
       uptime_seconds: Math.floor((Date.now() - this.startedAt) / 1000),
       version: this.config.version,
@@ -414,6 +426,43 @@ class SentinelServer {
         this.lastStatusWriteError = message;
       }
     }
+  }
+
+  recordDashboardAccess(event = {}) {
+    const path = String(event.path || '/');
+    const method = String(event.method || 'GET').toUpperCase();
+    const isApiRequest = path.startsWith('/api/') || path === '/health';
+    this.stats.dashboard_requests_total += 1;
+    if (isApiRequest) {
+      this.stats.dashboard_api_requests_total += 1;
+    }
+    if (event.allowed === false) {
+      this.stats.dashboard_denied_total += 1;
+    }
+
+    this.auditLogger.write({
+      timestamp: new Date().toISOString(),
+      correlation_id: String(event.requestId || `dashboard-${Date.now().toString(36)}`),
+      config_version: this.config.version,
+      mode: this.computeEffectiveMode(),
+      decision: event.allowed === false ? 'dashboard_access_denied' : 'dashboard_access',
+      reasons: [String(event.reason || (event.allowed === false ? 'dashboard_denied' : 'dashboard_ok'))],
+      pii_types: [],
+      redactions: 0,
+      duration_ms: Number(event.durationMs || 0),
+      request_bytes: 0,
+      response_status: Number(event.statusCode || 0),
+      response_bytes: 0,
+      provider: 'dashboard',
+      dashboard_method: method,
+      dashboard_path: path,
+      dashboard_api_request: isApiRequest,
+      dashboard_remote_address: String(event.remoteAddress || ''),
+      dashboard_local_only: event.localOnly !== false,
+      dashboard_auth_required: event.authRequired === true,
+      dashboard_authenticated: event.authenticated === true,
+    });
+    this.writeStatus();
   }
 
   recordSwarmObservation(decision = {}) {
@@ -1776,6 +1825,25 @@ class SentinelServer {
       });
       this.writeStatus();
     });
+    if (typeof this.server?.on === 'function') {
+      this.server.on('upgrade', (req, socket, head) => {
+        handleWebSocketUpgrade({
+          server: this,
+          req,
+          socket,
+          head,
+        }).catch((error) => {
+          this.stats.websocket_errors += 1;
+          logger.warn('websocket upgrade handler failed', {
+            error: error.message,
+            url: req?.url,
+          });
+          if (!socket.destroyed) {
+            socket.destroy(error);
+          }
+        });
+      });
+    }
 
     const dashboardConfig = this.config.runtime?.dashboard || {};
     if (dashboardConfig.enabled === true) {
@@ -1785,6 +1853,7 @@ class SentinelServer {
         allowRemote: dashboardConfig.allow_remote === true,
         authToken: dashboardConfig.auth_token,
         statusProvider: () => this.currentStatusPayload(),
+        accessLogger: (event) => this.recordDashboardAccess(event),
       });
       this.dashboardServer
         .start()

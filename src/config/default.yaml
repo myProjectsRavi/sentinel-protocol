@@ -208,6 +208,12 @@ runtime:
     port: 8788
     auth_token: ""
     allow_remote: false
+  websocket:
+    enabled: true
+    mode: monitor # monitor | enforce
+    connect_timeout_ms: 15000
+    idle_timeout_ms: 120000
+    max_connections: 500
   budget:
     enabled: false
     action: block
