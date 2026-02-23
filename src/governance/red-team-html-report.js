@@ -43,20 +43,40 @@ function summarizeVectors(results) {
     .slice(0, 20);
 }
 
+function summarizeFamilies(results) {
+  const counts = {};
+  for (const item of results) {
+    const key = String(item.family || 'unknown');
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .sort((a, b) => {
+      if (b[1] !== a[1]) {
+        return b[1] - a[1];
+      }
+      return String(a[0]).localeCompare(String(b[0]));
+    })
+    .slice(0, 20);
+}
+
 function toRenderableResults(report = {}) {
   const rawResults = Array.isArray(report.results) ? report.results : [];
   return rawResults
     .map((item) => ({
       type: normalizeResultType(item.type),
+      family: String(item.family || item.vector || 'unknown'),
       vector: String(item.vector || 'unknown'),
       statusCode: safeNumber(item.status_code, 0),
       blocked: item.blocked === true,
       error: String(item.error || ''),
-      caseId: fingerprintPrompt(item.prompt || ''),
+      caseId: String(item.case_id || '').trim() || fingerprintPrompt(item.prompt || ''),
     }))
     .sort((a, b) => {
       if (a.type !== b.type) {
         return a.type.localeCompare(b.type);
+      }
+      if (a.family !== b.family) {
+        return a.family.localeCompare(b.family);
       }
       if (a.vector !== b.vector) {
         return a.vector.localeCompare(b.vector);
@@ -78,6 +98,7 @@ function renderRedTeamHtmlReport(report = {}, options = {}) {
   const statusCodes = report.status_codes && typeof report.status_codes === 'object' ? report.status_codes : {};
   const results = toRenderableResults(report);
   const vectorSummary = summarizeVectors(results);
+  const familySummary = summarizeFamilies(results);
   const statusRows = Object.entries(statusCodes).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
 
   const statusCodeTableRows = statusRows
@@ -86,10 +107,13 @@ function renderRedTeamHtmlReport(report = {}, options = {}) {
   const vectorTableRows = vectorSummary
     .map(([vector, count]) => `<tr><td>${escapeHtml(vector)}</td><td>${escapeHtml(count)}</td></tr>`)
     .join('');
+  const familyTableRows = familySummary
+    .map(([family, count]) => `<tr><td>${escapeHtml(family)}</td><td>${escapeHtml(count)}</td></tr>`)
+    .join('');
   const resultTableRows = results
     .map((item) => {
       const verdict = item.blocked ? 'blocked' : 'allowed';
-      return `<tr><td>${escapeHtml(item.type)}</td><td>${escapeHtml(item.vector)}</td><td>${escapeHtml(item.statusCode)}</td><td>${escapeHtml(verdict)}</td><td>${escapeHtml(item.caseId)}</td><td>${escapeHtml(item.error || '--')}</td></tr>`;
+      return `<tr><td>${escapeHtml(item.type)}</td><td>${escapeHtml(item.family)}</td><td>${escapeHtml(item.vector)}</td><td>${escapeHtml(item.statusCode)}</td><td>${escapeHtml(verdict)}</td><td>${escapeHtml(item.caseId)}</td><td>${escapeHtml(item.error || '--')}</td></tr>`;
     })
     .join('');
 
@@ -142,11 +166,18 @@ function renderRedTeamHtmlReport(report = {}, options = {}) {
         </table>
       </div>
     </div>
+    <div class="card" style="margin-bottom: 12px;">
+      <div class="k">Vector Family Distribution</div>
+      <table>
+        <thead><tr><th>Family</th><th>Count</th></tr></thead>
+        <tbody>${familyTableRows || '<tr><td colspan="2">none</td></tr>'}</tbody>
+      </table>
+    </div>
     <div class="card">
       <div class="k">Case Results</div>
       <table>
-        <thead><tr><th>Type</th><th>Vector</th><th>Status</th><th>Verdict</th><th>Case ID</th><th>Error</th></tr></thead>
-        <tbody>${resultTableRows || '<tr><td colspan="6">none</td></tr>'}</tbody>
+        <thead><tr><th>Type</th><th>Family</th><th>Vector</th><th>Status</th><th>Verdict</th><th>Case ID</th><th>Error</th></tr></thead>
+        <tbody>${resultTableRows || '<tr><td colspan="7">none</td></tr>'}</tbody>
       </table>
       <div class="hint">Case IDs are SHA256(prompt) prefixes. Prompts are intentionally excluded to avoid sensitive payload leakage.</div>
     </div>
@@ -156,6 +187,7 @@ function renderRedTeamHtmlReport(report = {}, options = {}) {
 }
 
 module.exports = {
+  escapeHtml,
   renderRedTeamHtmlReport,
   fingerprintPrompt,
   toRenderableResults,

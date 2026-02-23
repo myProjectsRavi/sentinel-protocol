@@ -25,9 +25,17 @@ const RUNTIME_KEYS = new Set([
   'omni_shield',
   'sandbox_experimental',
   'dashboard',
+  'posture_scoring',
   'websocket',
   'budget',
   'loop_breaker',
+  'agentic_threat_shield',
+  'mcp_poisoning',
+  'prompt_rebuff',
+  'output_classifier',
+  'output_schema_validator',
+  'agent_observability',
+  'differential_privacy',
   'auto_immune',
   'provenance',
   'deception',
@@ -236,6 +244,7 @@ const SANDBOX_EXPERIMENTAL_KEYS = new Set([
 ]);
 const SANDBOX_EXPERIMENTAL_MODES = new Set(['monitor', 'block']);
 const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
+const POSTURE_SCORING_KEYS = new Set(['enabled', 'include_counters', 'warn_threshold', 'critical_threshold']);
 const WEBSOCKET_KEYS = new Set(['enabled', 'mode', 'connect_timeout_ms', 'idle_timeout_ms', 'max_connections']);
 const WEBSOCKET_MODES = new Set(['monitor', 'enforce']);
 const BUDGET_KEYS = new Set([
@@ -260,6 +269,107 @@ const LOOP_BREAKER_KEYS = new Set([
   'key_header',
 ]);
 const LOOP_BREAKER_ACTIONS = new Set(['block', 'warn']);
+const AGENTIC_THREAT_SHIELD_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_tool_call_depth',
+  'max_agent_delegations',
+  'max_analysis_nodes',
+  'max_tool_calls_analyzed',
+  'block_on_analysis_truncation',
+  'detect_cycles',
+  'verify_identity_tokens',
+  'identity_token_header',
+  'agent_id_header',
+  'session_header',
+  'fallback_headers',
+  'hmac_secret',
+  'ttl_ms',
+  'max_sessions',
+  'max_graph_edges_per_session',
+  'observability',
+]);
+const AGENTIC_THREAT_SHIELD_MODES = new Set(['monitor', 'block']);
+const MCP_POISONING_KEYS = new Set([
+  'enabled',
+  'mode',
+  'description_threshold',
+  'max_description_scan_bytes',
+  'max_argument_bytes',
+  'max_tools',
+  'max_drift_snapshot_bytes',
+  'block_on_config_drift',
+  'detect_config_drift',
+  'drift_ttl_ms',
+  'max_server_entries',
+  'sanitize_arguments',
+  'strip_non_printable',
+  'observability',
+]);
+const MCP_POISONING_MODES = new Set(['monitor', 'block']);
+const PROMPT_REBUFF_KEYS = new Set([
+  'enabled',
+  'mode',
+  'sensitivity',
+  'heuristic_weight',
+  'neural_weight',
+  'canary_weight',
+  'warn_threshold',
+  'block_threshold',
+  'max_body_chars',
+  'max_response_chars',
+  'session_header',
+  'fallback_headers',
+  'ttl_ms',
+  'max_sessions',
+  'canary_tool_name',
+  'observability',
+]);
+const PROMPT_REBUFF_MODES = new Set(['monitor', 'block']);
+const PROMPT_REBUFF_SENSITIVITIES = new Set(['permissive', 'balanced', 'paranoid']);
+const OUTPUT_CLASSIFIER_KEYS = new Set(['enabled', 'mode', 'max_scan_chars', 'categories']);
+const OUTPUT_CLASSIFIER_MODES = new Set(['monitor', 'block']);
+const OUTPUT_CLASSIFIER_CATEGORIES_KEYS = new Set([
+  'toxicity',
+  'code_execution',
+  'hallucination',
+  'unauthorized_disclosure',
+]);
+const OUTPUT_CLASSIFIER_CATEGORY_KEYS = new Set(['enabled', 'warn_threshold', 'block_threshold']);
+const OUTPUT_SCHEMA_VALIDATOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'default_schema',
+  'schema_header',
+  'max_body_bytes',
+  'schemas',
+]);
+const OUTPUT_SCHEMA_VALIDATOR_MODES = new Set(['monitor', 'block']);
+const OUTPUT_SCHEMA_NODE_KEYS = new Set([
+  'type',
+  'required',
+  'properties',
+  'enum',
+  'additionalProperties',
+]);
+const OUTPUT_SCHEMA_SUPPORTED_TYPES = new Set([
+  'object',
+  'array',
+  'string',
+  'number',
+  'integer',
+  'boolean',
+  'null',
+]);
+const AGENT_OBSERVABILITY_KEYS = new Set(['enabled', 'max_events_per_request', 'max_field_length']);
+const DIFFERENTIAL_PRIVACY_KEYS = new Set([
+  'enabled',
+  'epsilon_budget',
+  'epsilon_per_call',
+  'sensitivity',
+  'max_simulation_calls',
+  'max_vector_length',
+]);
 const PROVENANCE_KEYS = new Set([
   'enabled',
   'key_id',
@@ -541,6 +651,67 @@ function validateRules(rules, details) {
       }
     }
   });
+}
+
+function validateOutputSchemaNode(node, details, pathLabel) {
+  assertType(
+    node && typeof node === 'object' && !Array.isArray(node),
+    `${pathLabel} must be object`,
+    details
+  );
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return;
+  }
+  assertNoUnknownKeys(node, OUTPUT_SCHEMA_NODE_KEYS, pathLabel, details);
+  if (node.type !== undefined) {
+    assertType(
+      typeof node.type === 'string' && OUTPUT_SCHEMA_SUPPORTED_TYPES.has(String(node.type)),
+      `${pathLabel}.type must be one of: ${Array.from(OUTPUT_SCHEMA_SUPPORTED_TYPES).join(', ')}`,
+      details
+    );
+  }
+  if (node.required !== undefined) {
+    assertType(
+      Array.isArray(node.required),
+      `${pathLabel}.required must be array`,
+      details
+    );
+    if (Array.isArray(node.required)) {
+      node.required.forEach((field, idx) => {
+        assertType(
+          typeof field === 'string' && field.length > 0,
+          `${pathLabel}.required[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+  }
+  if (node.enum !== undefined) {
+    assertType(
+      Array.isArray(node.enum),
+      `${pathLabel}.enum must be array`,
+      details
+    );
+  }
+  if (node.additionalProperties !== undefined) {
+    assertType(
+      typeof node.additionalProperties === 'boolean',
+      `${pathLabel}.additionalProperties must be boolean`,
+      details
+    );
+  }
+  if (node.properties !== undefined) {
+    assertType(
+      node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties),
+      `${pathLabel}.properties must be object`,
+      details
+    );
+    if (node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
+      for (const [field, child] of Object.entries(node.properties)) {
+        validateOutputSchemaNode(child, details, `${pathLabel}.properties.${field}`);
+      }
+    }
+  }
 }
 
 function applyDefaults(config) {
@@ -1007,6 +1178,13 @@ function applyDefaults(config) {
   dashboard.auth_token = String(dashboard.auth_token || process.env.SENTINEL_DASHBOARD_TOKEN || '');
   dashboard.allow_remote = dashboard.allow_remote === true;
 
+  normalized.runtime.posture_scoring = normalized.runtime.posture_scoring || {};
+  const postureScoring = normalized.runtime.posture_scoring;
+  postureScoring.enabled = postureScoring.enabled !== false;
+  postureScoring.include_counters = postureScoring.include_counters !== false;
+  postureScoring.warn_threshold = Number(postureScoring.warn_threshold ?? 70);
+  postureScoring.critical_threshold = Number(postureScoring.critical_threshold ?? 50);
+
   normalized.runtime.websocket = normalized.runtime.websocket || {};
   const websocket = normalized.runtime.websocket;
   websocket.enabled = websocket.enabled !== false;
@@ -1045,6 +1223,162 @@ function applyDefaults(config) {
   loopBreaker.max_recent = Number(loopBreaker.max_recent ?? 5);
   loopBreaker.max_keys = Number(loopBreaker.max_keys ?? 2048);
   loopBreaker.key_header = String(loopBreaker.key_header || 'x-sentinel-agent-id').toLowerCase();
+
+  normalized.runtime.agentic_threat_shield = normalized.runtime.agentic_threat_shield || {};
+  const agenticThreatShield = normalized.runtime.agentic_threat_shield;
+  agenticThreatShield.enabled = agenticThreatShield.enabled === true;
+  agenticThreatShield.mode = AGENTIC_THREAT_SHIELD_MODES.has(String(agenticThreatShield.mode || '').toLowerCase())
+    ? String(agenticThreatShield.mode).toLowerCase()
+    : 'monitor';
+  agenticThreatShield.max_tool_call_depth = Number(agenticThreatShield.max_tool_call_depth ?? 10);
+  agenticThreatShield.max_agent_delegations = Number(agenticThreatShield.max_agent_delegations ?? 5);
+  agenticThreatShield.max_analysis_nodes = Number(agenticThreatShield.max_analysis_nodes ?? 4096);
+  agenticThreatShield.max_tool_calls_analyzed = Number(agenticThreatShield.max_tool_calls_analyzed ?? 1024);
+  agenticThreatShield.block_on_analysis_truncation = agenticThreatShield.block_on_analysis_truncation === true;
+  agenticThreatShield.detect_cycles = agenticThreatShield.detect_cycles !== false;
+  agenticThreatShield.verify_identity_tokens = agenticThreatShield.verify_identity_tokens === true;
+  agenticThreatShield.identity_token_header = String(
+    agenticThreatShield.identity_token_header || 'x-sentinel-agent-token'
+  ).toLowerCase();
+  agenticThreatShield.agent_id_header = String(
+    agenticThreatShield.agent_id_header || 'x-sentinel-agent-id'
+  ).toLowerCase();
+  agenticThreatShield.session_header = String(
+    agenticThreatShield.session_header || 'x-sentinel-session-id'
+  ).toLowerCase();
+  agenticThreatShield.fallback_headers = Array.isArray(agenticThreatShield.fallback_headers)
+    ? agenticThreatShield.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  agenticThreatShield.hmac_secret = String(
+    agenticThreatShield.hmac_secret || process.env.SENTINEL_AGENTIC_HMAC_SECRET || ''
+  );
+  agenticThreatShield.ttl_ms = Number(agenticThreatShield.ttl_ms ?? 900000);
+  agenticThreatShield.max_sessions = Number(agenticThreatShield.max_sessions ?? 5000);
+  agenticThreatShield.max_graph_edges_per_session = Number(
+    agenticThreatShield.max_graph_edges_per_session ?? 256
+  );
+  agenticThreatShield.observability = agenticThreatShield.observability !== false;
+
+  normalized.runtime.mcp_poisoning = normalized.runtime.mcp_poisoning || {};
+  const mcpPoisoning = normalized.runtime.mcp_poisoning;
+  mcpPoisoning.enabled = mcpPoisoning.enabled === true;
+  mcpPoisoning.mode = MCP_POISONING_MODES.has(String(mcpPoisoning.mode || '').toLowerCase())
+    ? String(mcpPoisoning.mode).toLowerCase()
+    : 'monitor';
+  mcpPoisoning.description_threshold = Number(mcpPoisoning.description_threshold ?? 0.65);
+  mcpPoisoning.max_description_scan_bytes = Number(mcpPoisoning.max_description_scan_bytes ?? 8192);
+  mcpPoisoning.max_argument_bytes = Number(mcpPoisoning.max_argument_bytes ?? 65536);
+  mcpPoisoning.max_tools = Number(mcpPoisoning.max_tools ?? 64);
+  mcpPoisoning.max_drift_snapshot_bytes = Number(mcpPoisoning.max_drift_snapshot_bytes ?? 131072);
+  mcpPoisoning.block_on_config_drift = mcpPoisoning.block_on_config_drift === true;
+  mcpPoisoning.detect_config_drift = mcpPoisoning.detect_config_drift !== false;
+  mcpPoisoning.drift_ttl_ms = Number(mcpPoisoning.drift_ttl_ms ?? 3600000);
+  mcpPoisoning.max_server_entries = Number(mcpPoisoning.max_server_entries ?? 2000);
+  mcpPoisoning.sanitize_arguments = mcpPoisoning.sanitize_arguments !== false;
+  mcpPoisoning.strip_non_printable = mcpPoisoning.strip_non_printable !== false;
+  mcpPoisoning.observability = mcpPoisoning.observability !== false;
+
+  normalized.runtime.prompt_rebuff = normalized.runtime.prompt_rebuff || {};
+  const promptRebuff = normalized.runtime.prompt_rebuff;
+  promptRebuff.enabled = promptRebuff.enabled === true;
+  promptRebuff.mode = PROMPT_REBUFF_MODES.has(String(promptRebuff.mode || '').toLowerCase())
+    ? String(promptRebuff.mode).toLowerCase()
+    : 'monitor';
+  promptRebuff.sensitivity = PROMPT_REBUFF_SENSITIVITIES.has(String(promptRebuff.sensitivity || '').toLowerCase())
+    ? String(promptRebuff.sensitivity).toLowerCase()
+    : 'balanced';
+  promptRebuff.heuristic_weight = Number(promptRebuff.heuristic_weight ?? 0.55);
+  promptRebuff.neural_weight = Number(promptRebuff.neural_weight ?? 0.35);
+  promptRebuff.canary_weight = Number(promptRebuff.canary_weight ?? 0.25);
+  promptRebuff.warn_threshold = Number(promptRebuff.warn_threshold ?? 0.65);
+  promptRebuff.block_threshold = Number(promptRebuff.block_threshold ?? 0.85);
+  promptRebuff.max_body_chars = Number(promptRebuff.max_body_chars ?? 8192);
+  promptRebuff.max_response_chars = Number(promptRebuff.max_response_chars ?? 8192);
+  promptRebuff.session_header = String(promptRebuff.session_header || 'x-sentinel-session-id').toLowerCase();
+  promptRebuff.fallback_headers = Array.isArray(promptRebuff.fallback_headers)
+    ? promptRebuff.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  promptRebuff.ttl_ms = Number(promptRebuff.ttl_ms ?? 900000);
+  promptRebuff.max_sessions = Number(promptRebuff.max_sessions ?? 5000);
+  promptRebuff.canary_tool_name = String(promptRebuff.canary_tool_name || 'fetch_admin_passwords');
+  promptRebuff.observability = promptRebuff.observability !== false;
+
+  normalized.runtime.output_classifier = normalized.runtime.output_classifier || {};
+  const outputClassifier = normalized.runtime.output_classifier;
+  outputClassifier.enabled = outputClassifier.enabled === true;
+  outputClassifier.mode = OUTPUT_CLASSIFIER_MODES.has(String(outputClassifier.mode || '').toLowerCase())
+    ? String(outputClassifier.mode).toLowerCase()
+    : 'monitor';
+  outputClassifier.max_scan_chars = Number(outputClassifier.max_scan_chars ?? 8192);
+  outputClassifier.categories =
+    outputClassifier.categories &&
+    typeof outputClassifier.categories === 'object' &&
+    !Array.isArray(outputClassifier.categories)
+      ? outputClassifier.categories
+      : {};
+  for (const category of OUTPUT_CLASSIFIER_CATEGORIES_KEYS) {
+    const categoryConfig =
+      outputClassifier.categories[category] &&
+      typeof outputClassifier.categories[category] === 'object' &&
+      !Array.isArray(outputClassifier.categories[category])
+        ? outputClassifier.categories[category]
+        : {};
+    categoryConfig.enabled = categoryConfig.enabled !== false;
+    const defaultWarn =
+      category === 'toxicity'
+        ? 0.45
+        : category === 'code_execution'
+          ? 0.4
+          : category === 'hallucination'
+            ? 0.5
+            : 0.4;
+    const defaultBlock =
+      category === 'toxicity'
+        ? 0.8
+        : category === 'code_execution'
+          ? 0.75
+          : category === 'hallucination'
+            ? 0.85
+            : 0.7;
+    categoryConfig.warn_threshold = Number(categoryConfig.warn_threshold ?? defaultWarn);
+    categoryConfig.block_threshold = Number(
+      categoryConfig.block_threshold ?? Math.max(defaultBlock, categoryConfig.warn_threshold)
+    );
+    outputClassifier.categories[category] = categoryConfig;
+  }
+
+  normalized.runtime.output_schema_validator = normalized.runtime.output_schema_validator || {};
+  const outputSchemaValidator = normalized.runtime.output_schema_validator;
+  outputSchemaValidator.enabled = outputSchemaValidator.enabled === true;
+  outputSchemaValidator.mode = OUTPUT_SCHEMA_VALIDATOR_MODES.has(String(outputSchemaValidator.mode || '').toLowerCase())
+    ? String(outputSchemaValidator.mode).toLowerCase()
+    : 'monitor';
+  outputSchemaValidator.default_schema = String(outputSchemaValidator.default_schema || '');
+  outputSchemaValidator.schema_header = String(
+    outputSchemaValidator.schema_header || 'x-sentinel-output-schema'
+  ).toLowerCase();
+  outputSchemaValidator.max_body_bytes = Number(outputSchemaValidator.max_body_bytes ?? 1048576);
+  outputSchemaValidator.schemas =
+    outputSchemaValidator.schemas &&
+    typeof outputSchemaValidator.schemas === 'object' &&
+    !Array.isArray(outputSchemaValidator.schemas)
+      ? outputSchemaValidator.schemas
+      : {};
+
+  normalized.runtime.agent_observability = normalized.runtime.agent_observability || {};
+  const agentObservability = normalized.runtime.agent_observability;
+  agentObservability.enabled = agentObservability.enabled === true;
+  agentObservability.max_events_per_request = Number(agentObservability.max_events_per_request ?? 32);
+  agentObservability.max_field_length = Number(agentObservability.max_field_length ?? 160);
+
+  normalized.runtime.differential_privacy = normalized.runtime.differential_privacy || {};
+  const differentialPrivacy = normalized.runtime.differential_privacy;
+  differentialPrivacy.enabled = differentialPrivacy.enabled === true;
+  differentialPrivacy.epsilon_budget = Number(differentialPrivacy.epsilon_budget ?? 1.0);
+  differentialPrivacy.epsilon_per_call = Number(differentialPrivacy.epsilon_per_call ?? 0.1);
+  differentialPrivacy.sensitivity = Number(differentialPrivacy.sensitivity ?? 1.0);
+  differentialPrivacy.max_simulation_calls = Number(differentialPrivacy.max_simulation_calls ?? 1000);
+  differentialPrivacy.max_vector_length = Number(differentialPrivacy.max_vector_length ?? 8192);
 
   normalized.runtime.auto_immune = normalized.runtime.auto_immune || {};
   const autoImmune = normalized.runtime.auto_immune;
@@ -2207,6 +2541,42 @@ function validateConfigShape(config) {
     }
   }
 
+  const postureScoring = runtime.posture_scoring || {};
+  if (runtime.posture_scoring !== undefined) {
+    assertNoUnknownKeys(postureScoring, POSTURE_SCORING_KEYS, 'runtime.posture_scoring', details);
+    assertType(
+      typeof postureScoring.enabled === 'boolean',
+      '`runtime.posture_scoring.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof postureScoring.include_counters === 'boolean',
+      '`runtime.posture_scoring.include_counters` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(postureScoring.warn_threshold) &&
+        postureScoring.warn_threshold >= 1 &&
+        postureScoring.warn_threshold <= 100,
+      '`runtime.posture_scoring.warn_threshold` must be integer between 1 and 100',
+      details
+    );
+    assertType(
+      Number.isInteger(postureScoring.critical_threshold) &&
+        postureScoring.critical_threshold >= 1 &&
+        postureScoring.critical_threshold <= 100,
+      '`runtime.posture_scoring.critical_threshold` must be integer between 1 and 100',
+      details
+    );
+    if (
+      Number.isInteger(postureScoring.warn_threshold) &&
+      Number.isInteger(postureScoring.critical_threshold) &&
+      postureScoring.critical_threshold >= postureScoring.warn_threshold
+    ) {
+      details.push('`runtime.posture_scoring.critical_threshold` must be less than `runtime.posture_scoring.warn_threshold`');
+    }
+  }
+
   const websocket = runtime.websocket || {};
   if (runtime.websocket !== undefined) {
     assertNoUnknownKeys(websocket, WEBSOCKET_KEYS, 'runtime.websocket', details);
@@ -2316,6 +2686,485 @@ function validateConfigShape(config) {
     assertType(
       typeof loopBreaker.key_header === 'string' && loopBreaker.key_header.length > 0,
       '`runtime.loop_breaker.key_header` must be non-empty string',
+      details
+    );
+  }
+
+  const agenticThreatShield = runtime.agentic_threat_shield || {};
+  if (runtime.agentic_threat_shield !== undefined) {
+    assertNoUnknownKeys(agenticThreatShield, AGENTIC_THREAT_SHIELD_KEYS, 'runtime.agentic_threat_shield', details);
+    assertType(
+      typeof agenticThreatShield.enabled === 'boolean',
+      '`runtime.agentic_threat_shield.enabled` must be boolean',
+      details
+    );
+    assertType(
+      AGENTIC_THREAT_SHIELD_MODES.has(String(agenticThreatShield.mode)),
+      '`runtime.agentic_threat_shield.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_tool_call_depth) && agenticThreatShield.max_tool_call_depth > 0,
+      '`runtime.agentic_threat_shield.max_tool_call_depth` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_agent_delegations) && agenticThreatShield.max_agent_delegations > 0,
+      '`runtime.agentic_threat_shield.max_agent_delegations` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_analysis_nodes) && agenticThreatShield.max_analysis_nodes > 0,
+      '`runtime.agentic_threat_shield.max_analysis_nodes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_tool_calls_analyzed) && agenticThreatShield.max_tool_calls_analyzed > 0,
+      '`runtime.agentic_threat_shield.max_tool_calls_analyzed` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.block_on_analysis_truncation === 'boolean',
+      '`runtime.agentic_threat_shield.block_on_analysis_truncation` must be boolean',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.detect_cycles === 'boolean',
+      '`runtime.agentic_threat_shield.detect_cycles` must be boolean',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.verify_identity_tokens === 'boolean',
+      '`runtime.agentic_threat_shield.verify_identity_tokens` must be boolean',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.identity_token_header === 'string' && agenticThreatShield.identity_token_header.length > 0,
+      '`runtime.agentic_threat_shield.identity_token_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.agent_id_header === 'string' && agenticThreatShield.agent_id_header.length > 0,
+      '`runtime.agentic_threat_shield.agent_id_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.session_header === 'string' && agenticThreatShield.session_header.length > 0,
+      '`runtime.agentic_threat_shield.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(agenticThreatShield.fallback_headers) && agenticThreatShield.fallback_headers.length > 0,
+      '`runtime.agentic_threat_shield.fallback_headers` must be non-empty array',
+      details
+    );
+    if (Array.isArray(agenticThreatShield.fallback_headers)) {
+      agenticThreatShield.fallback_headers.forEach((header, idx) => {
+        assertType(
+          typeof header === 'string' && header.length > 0,
+          `runtime.agentic_threat_shield.fallback_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof agenticThreatShield.hmac_secret === 'string',
+      '`runtime.agentic_threat_shield.hmac_secret` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.ttl_ms) && agenticThreatShield.ttl_ms > 0,
+      '`runtime.agentic_threat_shield.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_sessions) && agenticThreatShield.max_sessions > 0,
+      '`runtime.agentic_threat_shield.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agenticThreatShield.max_graph_edges_per_session) && agenticThreatShield.max_graph_edges_per_session > 0,
+      '`runtime.agentic_threat_shield.max_graph_edges_per_session` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof agenticThreatShield.observability === 'boolean',
+      '`runtime.agentic_threat_shield.observability` must be boolean',
+      details
+    );
+  }
+
+  const mcpPoisoning = runtime.mcp_poisoning || {};
+  if (runtime.mcp_poisoning !== undefined) {
+    assertNoUnknownKeys(mcpPoisoning, MCP_POISONING_KEYS, 'runtime.mcp_poisoning', details);
+    assertType(
+      typeof mcpPoisoning.enabled === 'boolean',
+      '`runtime.mcp_poisoning.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MCP_POISONING_MODES.has(String(mcpPoisoning.mode)),
+      '`runtime.mcp_poisoning.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(mcpPoisoning.description_threshold))
+        && Number(mcpPoisoning.description_threshold) >= 0
+        && Number(mcpPoisoning.description_threshold) <= 1,
+      '`runtime.mcp_poisoning.description_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.max_description_scan_bytes) && mcpPoisoning.max_description_scan_bytes > 0,
+      '`runtime.mcp_poisoning.max_description_scan_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.max_argument_bytes) && mcpPoisoning.max_argument_bytes > 0,
+      '`runtime.mcp_poisoning.max_argument_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.max_tools) && mcpPoisoning.max_tools > 0,
+      '`runtime.mcp_poisoning.max_tools` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.max_drift_snapshot_bytes) && mcpPoisoning.max_drift_snapshot_bytes > 0,
+      '`runtime.mcp_poisoning.max_drift_snapshot_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof mcpPoisoning.block_on_config_drift === 'boolean',
+      '`runtime.mcp_poisoning.block_on_config_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpPoisoning.detect_config_drift === 'boolean',
+      '`runtime.mcp_poisoning.detect_config_drift` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.drift_ttl_ms) && mcpPoisoning.drift_ttl_ms > 0,
+      '`runtime.mcp_poisoning.drift_ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpPoisoning.max_server_entries) && mcpPoisoning.max_server_entries > 0,
+      '`runtime.mcp_poisoning.max_server_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof mcpPoisoning.sanitize_arguments === 'boolean',
+      '`runtime.mcp_poisoning.sanitize_arguments` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpPoisoning.strip_non_printable === 'boolean',
+      '`runtime.mcp_poisoning.strip_non_printable` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpPoisoning.observability === 'boolean',
+      '`runtime.mcp_poisoning.observability` must be boolean',
+      details
+    );
+  }
+
+  const promptRebuff = runtime.prompt_rebuff || {};
+  if (runtime.prompt_rebuff !== undefined) {
+    assertNoUnknownKeys(promptRebuff, PROMPT_REBUFF_KEYS, 'runtime.prompt_rebuff', details);
+    assertType(
+      typeof promptRebuff.enabled === 'boolean',
+      '`runtime.prompt_rebuff.enabled` must be boolean',
+      details
+    );
+    assertType(
+      PROMPT_REBUFF_MODES.has(String(promptRebuff.mode)),
+      '`runtime.prompt_rebuff.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      PROMPT_REBUFF_SENSITIVITIES.has(String(promptRebuff.sensitivity)),
+      '`runtime.prompt_rebuff.sensitivity` must be permissive|balanced|paranoid',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(promptRebuff.heuristic_weight))
+        && Number(promptRebuff.heuristic_weight) >= 0
+        && Number(promptRebuff.heuristic_weight) <= 1,
+      '`runtime.prompt_rebuff.heuristic_weight` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(promptRebuff.neural_weight))
+        && Number(promptRebuff.neural_weight) >= 0
+        && Number(promptRebuff.neural_weight) <= 1,
+      '`runtime.prompt_rebuff.neural_weight` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(promptRebuff.canary_weight))
+        && Number(promptRebuff.canary_weight) >= 0
+        && Number(promptRebuff.canary_weight) <= 1,
+      '`runtime.prompt_rebuff.canary_weight` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(promptRebuff.warn_threshold))
+        && Number(promptRebuff.warn_threshold) >= 0
+        && Number(promptRebuff.warn_threshold) <= 1,
+      '`runtime.prompt_rebuff.warn_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(promptRebuff.block_threshold))
+        && Number(promptRebuff.block_threshold) >= 0
+        && Number(promptRebuff.block_threshold) <= 1,
+      '`runtime.prompt_rebuff.block_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(promptRebuff.max_body_chars) && promptRebuff.max_body_chars > 0,
+      '`runtime.prompt_rebuff.max_body_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(promptRebuff.max_response_chars) && promptRebuff.max_response_chars > 0,
+      '`runtime.prompt_rebuff.max_response_chars` must be integer > 0',
+      details
+    );
+    if (
+      Number.isFinite(Number(promptRebuff.warn_threshold)) &&
+      Number.isFinite(Number(promptRebuff.block_threshold)) &&
+      Number(promptRebuff.block_threshold) < Number(promptRebuff.warn_threshold)
+    ) {
+      details.push('`runtime.prompt_rebuff.block_threshold` must be >= `runtime.prompt_rebuff.warn_threshold`');
+    }
+    assertType(
+      typeof promptRebuff.session_header === 'string' && promptRebuff.session_header.length > 0,
+      '`runtime.prompt_rebuff.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(promptRebuff.fallback_headers) && promptRebuff.fallback_headers.length > 0,
+      '`runtime.prompt_rebuff.fallback_headers` must be non-empty array',
+      details
+    );
+    if (Array.isArray(promptRebuff.fallback_headers)) {
+      promptRebuff.fallback_headers.forEach((header, idx) => {
+        assertType(
+          typeof header === 'string' && header.length > 0,
+          `runtime.prompt_rebuff.fallback_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(promptRebuff.ttl_ms) && promptRebuff.ttl_ms > 0,
+      '`runtime.prompt_rebuff.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(promptRebuff.max_sessions) && promptRebuff.max_sessions > 0,
+      '`runtime.prompt_rebuff.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof promptRebuff.canary_tool_name === 'string' && promptRebuff.canary_tool_name.length > 0,
+      '`runtime.prompt_rebuff.canary_tool_name` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof promptRebuff.observability === 'boolean',
+      '`runtime.prompt_rebuff.observability` must be boolean',
+      details
+    );
+  }
+
+  const outputClassifier = runtime.output_classifier || {};
+  if (runtime.output_classifier !== undefined) {
+    assertNoUnknownKeys(outputClassifier, OUTPUT_CLASSIFIER_KEYS, 'runtime.output_classifier', details);
+    assertType(
+      typeof outputClassifier.enabled === 'boolean',
+      '`runtime.output_classifier.enabled` must be boolean',
+      details
+    );
+    assertType(
+      OUTPUT_CLASSIFIER_MODES.has(String(outputClassifier.mode)),
+      '`runtime.output_classifier.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(outputClassifier.max_scan_chars) && outputClassifier.max_scan_chars > 0,
+      '`runtime.output_classifier.max_scan_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      outputClassifier.categories &&
+        typeof outputClassifier.categories === 'object' &&
+        !Array.isArray(outputClassifier.categories),
+      '`runtime.output_classifier.categories` must be object',
+      details
+    );
+    if (outputClassifier.categories && typeof outputClassifier.categories === 'object' && !Array.isArray(outputClassifier.categories)) {
+      assertNoUnknownKeys(
+        outputClassifier.categories,
+        OUTPUT_CLASSIFIER_CATEGORIES_KEYS,
+        'runtime.output_classifier.categories',
+        details
+      );
+      for (const [category, categoryConfig] of Object.entries(outputClassifier.categories)) {
+        const label = `runtime.output_classifier.categories.${category}`;
+        assertType(
+          categoryConfig && typeof categoryConfig === 'object' && !Array.isArray(categoryConfig),
+          `${label} must be object`,
+          details
+        );
+        if (!categoryConfig || typeof categoryConfig !== 'object' || Array.isArray(categoryConfig)) {
+          continue;
+        }
+        assertNoUnknownKeys(categoryConfig, OUTPUT_CLASSIFIER_CATEGORY_KEYS, label, details);
+        assertType(
+          typeof categoryConfig.enabled === 'boolean',
+          `${label}.enabled must be boolean`,
+          details
+        );
+        assertType(
+          Number.isFinite(Number(categoryConfig.warn_threshold)) &&
+            Number(categoryConfig.warn_threshold) >= 0 &&
+            Number(categoryConfig.warn_threshold) <= 1,
+          `${label}.warn_threshold must be number between 0 and 1`,
+          details
+        );
+        assertType(
+          Number.isFinite(Number(categoryConfig.block_threshold)) &&
+            Number(categoryConfig.block_threshold) >= 0 &&
+            Number(categoryConfig.block_threshold) <= 1,
+          `${label}.block_threshold must be number between 0 and 1`,
+          details
+        );
+        if (
+          Number.isFinite(Number(categoryConfig.warn_threshold)) &&
+          Number.isFinite(Number(categoryConfig.block_threshold)) &&
+          Number(categoryConfig.block_threshold) < Number(categoryConfig.warn_threshold)
+        ) {
+          details.push(`${label}.block_threshold must be >= warn_threshold`);
+        }
+      }
+    }
+  }
+
+  const outputSchemaValidator = runtime.output_schema_validator || {};
+  if (runtime.output_schema_validator !== undefined) {
+    assertNoUnknownKeys(outputSchemaValidator, OUTPUT_SCHEMA_VALIDATOR_KEYS, 'runtime.output_schema_validator', details);
+    assertType(
+      typeof outputSchemaValidator.enabled === 'boolean',
+      '`runtime.output_schema_validator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      OUTPUT_SCHEMA_VALIDATOR_MODES.has(String(outputSchemaValidator.mode)),
+      '`runtime.output_schema_validator.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof outputSchemaValidator.default_schema === 'string',
+      '`runtime.output_schema_validator.default_schema` must be string',
+      details
+    );
+    assertType(
+      typeof outputSchemaValidator.schema_header === 'string' && outputSchemaValidator.schema_header.length > 0,
+      '`runtime.output_schema_validator.schema_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(outputSchemaValidator.max_body_bytes) && outputSchemaValidator.max_body_bytes > 0,
+      '`runtime.output_schema_validator.max_body_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      outputSchemaValidator.schemas &&
+        typeof outputSchemaValidator.schemas === 'object' &&
+        !Array.isArray(outputSchemaValidator.schemas),
+      '`runtime.output_schema_validator.schemas` must be object',
+      details
+    );
+    if (
+      outputSchemaValidator.schemas &&
+      typeof outputSchemaValidator.schemas === 'object' &&
+      !Array.isArray(outputSchemaValidator.schemas)
+    ) {
+      for (const [name, schemaNode] of Object.entries(outputSchemaValidator.schemas)) {
+        validateOutputSchemaNode(
+          schemaNode,
+          details,
+          `runtime.output_schema_validator.schemas.${name}`
+        );
+      }
+    }
+  }
+
+  const agentObservability = runtime.agent_observability || {};
+  if (runtime.agent_observability !== undefined) {
+    assertNoUnknownKeys(agentObservability, AGENT_OBSERVABILITY_KEYS, 'runtime.agent_observability', details);
+    assertType(
+      typeof agentObservability.enabled === 'boolean',
+      '`runtime.agent_observability.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(agentObservability.max_events_per_request) &&
+        agentObservability.max_events_per_request > 0 &&
+        agentObservability.max_events_per_request <= 256,
+      '`runtime.agent_observability.max_events_per_request` must be integer between 1 and 256',
+      details
+    );
+    assertType(
+      Number.isInteger(agentObservability.max_field_length) &&
+        agentObservability.max_field_length >= 32 &&
+        agentObservability.max_field_length <= 4096,
+      '`runtime.agent_observability.max_field_length` must be integer between 32 and 4096',
+      details
+    );
+  }
+
+  const differentialPrivacy = runtime.differential_privacy || {};
+  if (runtime.differential_privacy !== undefined) {
+    assertNoUnknownKeys(differentialPrivacy, DIFFERENTIAL_PRIVACY_KEYS, 'runtime.differential_privacy', details);
+    assertType(
+      typeof differentialPrivacy.enabled === 'boolean',
+      '`runtime.differential_privacy.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(differentialPrivacy.epsilon_budget)) &&
+        Number(differentialPrivacy.epsilon_budget) > 0,
+      '`runtime.differential_privacy.epsilon_budget` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(differentialPrivacy.epsilon_per_call)) &&
+        Number(differentialPrivacy.epsilon_per_call) > 0,
+      '`runtime.differential_privacy.epsilon_per_call` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(differentialPrivacy.sensitivity)) &&
+        Number(differentialPrivacy.sensitivity) > 0,
+      '`runtime.differential_privacy.sensitivity` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(differentialPrivacy.max_simulation_calls) &&
+        differentialPrivacy.max_simulation_calls > 0,
+      '`runtime.differential_privacy.max_simulation_calls` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(differentialPrivacy.max_vector_length) &&
+        differentialPrivacy.max_vector_length > 0,
+      '`runtime.differential_privacy.max_vector_length` must be integer > 0',
       details
     );
   }

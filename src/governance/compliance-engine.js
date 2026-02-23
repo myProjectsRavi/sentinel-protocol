@@ -1,6 +1,7 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const { clampPositiveInt } = require('../utils/primitives');
+const { summarizeAtlas } = require('./atlas-tracker');
 
 const DEFAULT_LIMIT = 200000;
 const DEFAULT_MAX_READ_BYTES = 32 * 1024 * 1024;
@@ -241,6 +242,9 @@ function summarize(events) {
     budget_charged_usd_total: 0,
     window_start: null,
     window_end: null,
+    atlas_top_techniques: [],
+    atlas_mapped_events: 0,
+    atlas_unmapped_events: 0,
   };
 
   const reasonCounts = {};
@@ -313,6 +317,19 @@ function summarize(events) {
     })
     .slice(0, 10)
     .map(([reason, count]) => ({ reason, count }));
+
+  const atlasSummary = summarizeAtlas(events, { topLimit: 10 });
+  summary.atlas_top_techniques = Array.isArray(atlasSummary.top_techniques)
+    ? atlasSummary.top_techniques.map((item) => ({
+        technique_id: item.technique_id,
+        tactic: item.tactic,
+        name: item.name,
+        severity: item.severity,
+        count: Number(item.count || 0),
+      }))
+    : [];
+  summary.atlas_mapped_events = Number(atlasSummary.mapped_events || 0);
+  summary.atlas_unmapped_events = Number(atlasSummary.unmapped_events || 0);
 
   return summary;
 }

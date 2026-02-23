@@ -1,0 +1,12 @@
+{
+  "warmup_iterations": 1500,
+  "measure_iterations": 8000,
+  "engines": {
+    "agentic_threat_shield": { "max_p95_ms": 0.5 },
+    "mcp_poisoning_detector": { "max_p95_ms": 0.6 },
+    "prompt_rebuff_engine": { "max_p95_ms": 0.2 }
+  },
+  "global": {
+    "max_sum_p95_ms": 1.1
+  }
+}

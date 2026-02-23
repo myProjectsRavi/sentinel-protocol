@@ -14,6 +14,7 @@ const { StatusStore } = require('./status/store');
 const { loadOptimizerPlugin } = require('./optimizer/loader');
 const { createTelemetry } = require('./telemetry');
 const { PrometheusExporter } = require('./telemetry/prometheus');
+const { AgentObservability } = require('./telemetry/agent-observability');
 const { MiddlewarePipeline } = require('./core/middleware-pipeline');
 const { PluginRegistry } = require('./core/plugin-registry');
 const { PIIProviderEngine } = require('./pii/provider-engine');
@@ -22,6 +23,8 @@ const { ScanWorkerPool } = require('./workers/scan-pool');
 const { VCRStore } = require('./runtime/vcr-store');
 const { SemanticCache } = require('./cache/semantic-cache');
 const { BudgetStore } = require('./accounting/budget-store');
+const { AIBOMGenerator } = require('./governance/aibom-generator');
+const { computeSecurityPosture } = require('./governance/security-posture');
 const { DashboardServer } = require('./monitor/dashboard-server');
 const { handleWebSocketUpgrade } = require('./websocket/upgrade-handler');
 const { LoopBreaker } = require('./engines/loop-breaker');
@@ -37,11 +40,16 @@ const { LatencyNormalizer } = require('./runtime/latency-normalizer');
 const { IntentThrottle } = require('./runtime/intent-throttle');
 const { IntentDriftDetector } = require('./runtime/intent-drift');
 const { CanaryToolTrap } = require('./engines/canary-tool-trap');
+const { PromptRebuffEngine } = require('./engines/prompt-rebuff');
 const { ParallaxValidator } = require('./engines/parallax-validator');
 const { OmniShield } = require('./engines/omni-shield');
 const { ExperimentalSandbox } = require('./sandbox/experimental-sandbox');
 const { ShadowOS } = require('./sandbox/shadow-os');
 const { EpistemicAnchor } = require('./runtime/epistemic-anchor');
+const { AgenticThreatShield } = require('./security/agentic-threat-shield');
+const { MCPPoisoningDetector } = require('./security/mcp-poisoning-detector');
+const { OutputClassifier } = require('./egress/output-classifier');
+const { OutputSchemaValidator } = require('./egress/output-schema-validator');
 const {
   initRequestEnvelope,
   attachProvenanceInterceptors,
@@ -58,6 +66,7 @@ const { runAutoImmuneStage } = require('./stages/policy/auto-immune-stage');
 const { runSwarmStage } = require('./stages/policy/swarm-stage');
 const { runOmniShieldStage } = require('./stages/policy/omni-shield-stage');
 const { runLoopStage } = require('./stages/policy/loop-stage');
+const { runAgenticStage } = require('./stages/policy/agentic-stage');
 const { runIntentStage } = require('./stages/policy/intent-stage');
 const { runSandboxStage } = require('./stages/policy/sandbox-stage');
 const {
@@ -71,7 +80,7 @@ const {
 } = require('./stages/egress-stage');
 const { runStreamEgressStage } = require('./stages/egress/stream-egress-stage');
 const { runBufferedEgressAndFinalizeStage } = require('./stages/egress/buffered-egress-stage');
-const { writeAuditAndStatus } = require('./stages/audit-stage');
+const { writeAudit, writeAuditAndStatus } = require('./stages/audit-stage');
 const {
   responseHeaderDiagnostics,
   formatBudgetUsd,
@@ -120,6 +129,14 @@ class SentinelServer {
       egress_entropy_detected: 0,
       egress_entropy_redacted: 0,
       egress_entropy_blocked: 0,
+      output_classifier_detected: 0,
+      output_classifier_blocked: 0,
+      output_classifier_toxicity_detected: 0,
+      output_classifier_code_execution_detected: 0,
+      output_classifier_hallucination_detected: 0,
+      output_classifier_unauthorized_disclosure_detected: 0,
+      output_schema_validator_detected: 0,
+      output_schema_validator_blocked: 0,
       omni_shield_detected: 0,
       omni_shield_blocked: 0,
       omni_shield_sanitized: 0,
@@ -145,9 +162,20 @@ class SentinelServer {
       canary_routed: 0,
       loop_detected: 0,
       loop_blocked: 0,
+      agentic_threat_detected: 0,
+      agentic_threat_blocked: 0,
+      agentic_threat_errors: 0,
+      agentic_analysis_truncated: 0,
+      agentic_identity_invalid: 0,
+      mcp_poisoning_detected: 0,
+      mcp_poisoning_blocked: 0,
+      mcp_config_drift: 0,
       auto_immune_matches: 0,
       auto_immune_blocked: 0,
       auto_immune_learned: 0,
+      prompt_rebuff_detected: 0,
+      prompt_rebuff_blocked: 0,
+      prompt_rebuff_errors: 0,
       intent_throttle_matches: 0,
       intent_throttle_blocked: 0,
       intent_throttle_errors: 0,
@@ -201,6 +229,7 @@ class SentinelServer {
     this.prometheus = new PrometheusExporter({
       version: '1.0.0',
     });
+    this.agentObservability = new AgentObservability(this.config.runtime?.agent_observability || {});
     this.piiProviderEngine = new PIIProviderEngine({
       piiConfig: config.pii,
       localScanner: this.piiScanner,
@@ -232,11 +261,14 @@ class SentinelServer {
     this.auditLogger = new AuditLogger(AUDIT_LOG_PATH, {
       mirrorStdout: this.config.logging?.audit_stdout === true,
     });
+    this.rawAuditWrite = this.auditLogger.write.bind(this.auditLogger);
+    this.auditLogger.write = (payload) => writeAudit(this, payload);
     this.vcrStore = new VCRStore(this.config.runtime?.vcr || {});
     this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {}, {
       scanWorkerPool: this.scanWorkerPool,
     });
     this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
+    this.aibom = new AIBOMGenerator();
     this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
     this.autoImmune = new AutoImmune(this.config.runtime?.auto_immune || {});
     this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
@@ -254,6 +286,10 @@ class SentinelServer {
       embedText,
     });
     this.canaryToolTrap = new CanaryToolTrap(this.config.runtime?.canary_tools || {});
+    this.promptRebuff = new PromptRebuffEngine(this.config.runtime?.prompt_rebuff || {});
+    this.mcpPoisoningDetector = new MCPPoisoningDetector(this.config.runtime?.mcp_poisoning || {});
+    this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
+    this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
     this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
       upstreamClient: this.upstreamClient,
       config: this.config,
@@ -264,6 +300,7 @@ class SentinelServer {
     this.epistemicAnchor = new EpistemicAnchor(this.config.runtime?.epistemic_anchor || {}, {
       embedText,
     });
+    this.agenticThreatShield = new AgenticThreatShield(this.config.runtime?.agentic_threat_shield || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -305,6 +342,10 @@ class SentinelServer {
     if (this.options.plugin) {
       this.pluginRegistry.register(this.options.plugin);
     }
+    this.postureScorer =
+      typeof this.options.postureScorer === 'function'
+        ? this.options.postureScorer
+        : computeSecurityPosture;
 
     this.setupApp();
   }
@@ -360,6 +401,8 @@ class SentinelServer {
       pii_vault_mode: this.piiVault.mode,
       pii_vault_stats: this.piiVault.getStats ? this.piiVault.getStats() : undefined,
       loop_breaker_enabled: this.loopBreaker.enabled,
+      agentic_threat_shield_enabled: this.agenticThreatShield.isEnabled(),
+      agentic_threat_shield_mode: this.agenticThreatShield.mode,
       auto_immune_enabled: this.autoImmune.isEnabled(),
       auto_immune_mode: this.autoImmune.mode,
       auto_immune_stats: this.autoImmune.getStats(),
@@ -384,6 +427,13 @@ class SentinelServer {
       intent_throttle_mode: this.intentThrottle.mode,
       intent_drift_enabled: this.intentDrift.isEnabled(),
       intent_drift_mode: this.intentDrift.mode,
+      mcp_poisoning_enabled: this.mcpPoisoningDetector.isEnabled(),
+      mcp_poisoning_mode: this.mcpPoisoningDetector.mode,
+      prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
+      prompt_rebuff_mode: this.promptRebuff.mode,
+      output_classifier_enabled: this.outputClassifier.isEnabled(),
+      output_schema_validator_enabled: this.outputSchemaValidator.isEnabled(),
+      agent_observability_enabled: this.agentObservability.isEnabled(),
       shadow_os_enabled: this.shadowOS.isEnabled(),
       shadow_os_mode: this.shadowOS.mode,
       shadow_os_stats: this.shadowOS.getStats(),
@@ -403,6 +453,7 @@ class SentinelServer {
       dashboard_enabled: this.config.runtime?.dashboard?.enabled === true,
       dashboard_host: this.config.runtime?.dashboard?.host || '127.0.0.1',
       dashboard_port: this.config.runtime?.dashboard?.port || 8788,
+      aibom: this.aibom.exportArtifact(),
       websocket_enabled: this.config.runtime?.websocket?.enabled !== false,
       websocket_mode: this.config.runtime?.websocket?.mode || 'monitor',
       websocket_active_tunnels: this.activeWebSocketTunnels,
@@ -812,7 +863,32 @@ class SentinelServer {
     });
 
     this.app.get('/_sentinel/health', (req, res) => {
-      res.status(200).json({ status: 'ok' });
+      let posture = null;
+      try {
+        const postureConfig = this.config.runtime?.posture_scoring || {};
+        if (postureConfig.enabled !== false) {
+          posture = this.postureScorer({
+            config: this.config,
+            counters: this.stats,
+            options: {
+              warnThreshold: postureConfig.warn_threshold,
+              criticalThreshold: postureConfig.critical_threshold,
+              includeCounters: postureConfig.include_counters,
+            },
+          });
+        }
+      } catch (error) {
+        logger.warn('health posture scoring failed', {
+          error: error.message,
+        });
+        posture = {
+          error: 'posture_unavailable',
+        };
+      }
+      res.status(200).json({
+        status: 'ok',
+        posture,
+      });
     });
 
     this.app.get('/_sentinel/provenance/public-key', (req, res) => {
@@ -839,6 +915,7 @@ class SentinelServer {
       const payload = this.prometheus.renderMetrics({
         counters: this.stats,
         providers: this.circuitBreakers.snapshot(),
+        agentObservability: this.agentObservability.snapshotMetrics(),
       });
       res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
       res.status(200).send(payload);
@@ -856,6 +933,17 @@ class SentinelServer {
         pipelineContext,
       } = initRequestEnvelope({ server: this, req, res });
       let bodyText = pipelineContext.get('body_text', '');
+      const agentObservabilityContext = this.agentObservability.startRequest({
+        correlationId,
+        headers: req.headers || {},
+        method,
+        path: parsedPath.pathname,
+        requestStart,
+      });
+      if (this.agentObservability.isEnabled()) {
+        res.setHeader('traceparent', agentObservabilityContext.traceparent);
+      }
+      pipelineContext.set('agent_observability', agentObservabilityContext);
       attachProvenanceInterceptors({
         server: this,
         res,
@@ -883,6 +971,14 @@ class SentinelServer {
         server: this,
         requestStart,
         requestSpan,
+        onFinalize: ({ decision, status, providerName, error }) => {
+          this.agentObservability.finishRequest(agentObservabilityContext, {
+            decision,
+            statusCode: status,
+            provider: providerName,
+            error,
+          });
+        },
       });
 
       if (rejectUnsupportedMethod({ method, res, correlationId, finalizeRequestTelemetry })) {
@@ -946,6 +1042,13 @@ class SentinelServer {
         .set('route_plan', routePlan)
         .set('body_json', bodyJson)
         .set('body_text', bodyText);
+      if (this.aibom && typeof this.aibom.recordRequest === 'function') {
+        this.aibom.recordRequest({
+          provider,
+          headers: req.headers || {},
+          body: bodyJson,
+        });
+      }
       if (await runPipelineOrRespond({
         server: this,
         stageName: 'request:prepared',
@@ -984,7 +1087,21 @@ class SentinelServer {
           };
         }
 
-        const result = await execute();
+        let result;
+        try {
+          result = await execute();
+        } catch (error) {
+          this.agentObservability.emitLifecycle(
+            agentObservabilityContext,
+            'agent.error',
+            {
+              stage: stageName,
+              provider: stageProvider || 'unknown',
+              error: String(error.message || error),
+            }
+          );
+          throw error;
+        }
         pipelineContext.set(`stage:${stageName}:result`, result);
 
         if (await runPipelineOrRespond({
@@ -1019,6 +1136,7 @@ class SentinelServer {
           rawBody,
           warnings,
           finalizeRequestTelemetry,
+          agentObservabilityContext,
         })
       );
       if (autoImmuneExecution.handled) {
@@ -1150,6 +1268,30 @@ class SentinelServer {
       }
       const loopStageResult = loopStageExecution.result;
       if (loopStageResult.handled) {
+        return;
+      }
+
+      const agenticStageExecution = await runOrchestratedStage('agentic_threat_shield', async () =>
+        runAgenticStage({
+          server: this,
+          req,
+          res,
+          bodyJson,
+          effectiveMode,
+          provider,
+          breakerKey,
+          correlationId,
+          requestStart,
+          rawBody,
+          warnings,
+          finalizeRequestTelemetry,
+        })
+      );
+      if (agenticStageExecution.handled) {
+        return;
+      }
+      const agenticStageResult = agenticStageExecution.result;
+      if (agenticStageResult.handled) {
         return;
       }
 
@@ -1379,7 +1521,11 @@ class SentinelServer {
       let cognitiveRollbackDecision = null;
 
       const bodyBuffer = bodyJson ? Buffer.from(JSON.stringify(bodyJson)) : Buffer.from(bodyText || '', 'utf8');
-      const forwardHeaders = scrubForwardHeaders(req.headers);
+      let forwardHeaders = scrubForwardHeaders(req.headers);
+      forwardHeaders = this.agentObservability.injectForwardHeaders(
+        forwardHeaders,
+        agentObservabilityContext
+      );
       pipelineContext
         .set('provider', provider)
         .set('body_json', bodyJson)

@@ -53,3 +53,16 @@ npm run reliability
 3. `chaos_timeout_circuit_opened`: `true`
 
 All reliability gates passed for this run.
+
+## Adversarial Robustness Verification
+
+Run deterministic adversarial coverage and HTML output safety check:
+
+```bash
+node ./cli/sentinel.js red-team run --url http://127.0.0.1:8787 --target openai --report html --out ./red-team-adversarial.html
+```
+
+Validation expectations:
+- report includes a `Vector Family Distribution` section
+- report does not include raw prompt payloads (`raw_prompts_exposed=false`)
+- case identifiers are deterministic (`case_id` or SHA256-derived fallback)

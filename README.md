@@ -35,6 +35,7 @@ Deployment model is simple:
 - Baseline commit: `7186f1fdad29c927753e4c08a32fa47ab0257ec9`
 - Evidence doc: `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
 - 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
+- OWASP LLM Top 10 mapping: `docs/OWASP_LLM_TOP10_SENTINEL_MAP.md`
 - CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518`
 - Quality gates job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256888360`
 - Docker quickstart smoke job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256947051`

@@ -8,6 +8,7 @@ const { NeuralInjectionClassifier } = require('../engines/neural-injection-class
 const { mergeInjectionResults } = require('../engines/injection-merge');
 const { PIIProviderEngine } = require('../pii/provider-engine');
 const { resolveProvider } = require('../upstream/router');
+const { MCPPoisoningDetector } = require('../security/mcp-poisoning-detector');
 
 function safeParseJson(input) {
   try {
@@ -47,6 +48,7 @@ class SentinelMCPGovernance {
       localScanner: this.piiScanner,
       telemetry: null,
     });
+    this.mcpPoisoningDetector = new MCPPoisoningDetector(config.runtime?.mcp_poisoning || {});
   }
 
   async inspectRequest(args = {}) {
@@ -55,6 +57,7 @@ class SentinelMCPGovernance {
     const headers = args.headers && typeof args.headers === 'object' && !Array.isArray(args.headers) ? args.headers : {};
     const providerName = String(args.provider || headers['x-sentinel-target'] || 'openai').toLowerCase();
     const customUrl = args.custom_url || headers['x-sentinel-custom-url'];
+    const mode = this.config.mode || 'monitor';
 
     const resolved = await resolveProvider(
       {
@@ -85,6 +88,14 @@ class SentinelMCPGovernance {
       injectionResult = mergeInjectionResults(injectionResult, neural, this.config.injection?.neural || {});
     }
 
+    const mcpDecision = this.mcpPoisoningDetector.inspect({
+      bodyJson,
+      toolArgs: args.tool_arguments || args.arguments || {},
+      serverId: args.server_id || headers['x-sentinel-mcp-server-id'] || providerName,
+      serverConfig: args.mcp_server_config || null,
+      effectiveMode: mode,
+    });
+
     const policyDecision = this.policyEngine.check({
       method,
       hostname: resolved.upstreamHostname || new URL(resolved.baseUrl).hostname,
@@ -101,8 +112,15 @@ class SentinelMCPGovernance {
 
     const warnings = [];
     const reasons = [];
-    const mode = this.config.mode || 'monitor';
     let blocked = false;
+
+    if (mcpDecision.detected) {
+      warnings.push(`mcp_poisoning:${mcpDecision.reason || 'detected'}`);
+      reasons.push(mcpDecision.reason || 'mcp_poisoning_detected');
+      if (mcpDecision.shouldBlock) {
+        blocked = true;
+      }
+    }
 
     if (policyDecision.matched) {
       warnings.push(`policy:${policyDecision.rule || 'matched'}`);
@@ -151,6 +169,18 @@ class SentinelMCPGovernance {
         rule: policyDecision.rule || null,
         injection_score: policyDecision.injection?.score || 0,
         injection_signals: (policyDecision.injection?.matchedSignals || []).map((signal) => signal.id),
+      },
+      mcp: {
+        enabled: mcpDecision.enabled,
+        detected: mcpDecision.detected,
+        should_block: mcpDecision.shouldBlock,
+        reason: mcpDecision.reason || 'clean',
+        findings: mcpDecision.findings || [],
+        drifted: mcpDecision.drift?.drifted === true,
+        sanitized_arguments_changed: Boolean(
+          args.tool_arguments
+            && JSON.stringify(mcpDecision.sanitizedArguments || {}) !== JSON.stringify(args.tool_arguments || {})
+        ),
       },
       pii: {
         provider: piiProvider,

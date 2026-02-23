@@ -17,6 +17,12 @@ async function resolveRouting({ server, req, res, correlationId, finalizeRequest
       breakerKey: primary.breakerKey || provider,
       cacheProviderKey: routePlan.selectedGroup || routePlan.requestedTarget || provider,
     };
+    if (server.aibom && typeof server.aibom.recordRoute === 'function') {
+      server.aibom.recordRoute({
+        provider,
+        routePlan,
+      });
+    }
 
     res.setHeader('x-sentinel-route-target', routePlan.requestedTarget);
     res.setHeader('x-sentinel-route-contract', routePlan.desiredContract);

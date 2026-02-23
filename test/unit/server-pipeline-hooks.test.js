@@ -14,6 +14,7 @@ describe('server pipeline stage orchestration', () => {
       omni_shield: serverSource,
       injection_policy: serverSource,
       loop: serverSource,
+      agentic_threat_shield: serverSource,
       intent: serverSource,
       sandbox: serverSource,
       pii: serverSource,

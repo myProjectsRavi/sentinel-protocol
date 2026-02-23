@@ -47,6 +47,8 @@
     "openapi:validate": "node ./scripts/validate-openapi.js",
     "benchmark": "node ./scripts/benchmark-overhead.js",
     "benchmark:gate": "node ./scripts/benchmark-regression-gate.js",
+    "perf:p0:gate": "node ./scripts/perf-p0-gate.js",
+    "perf:p1:gate": "node ./scripts/perf-p1-gate.js",
     "reliability": "node ./scripts/reliability-proof.js",
     "ci:bootstrap:npx": "node ./scripts/ci-validate-npx-bootstrap.js",
     "sbom:cyclonedx": "npm sbom --sbom-format=cyclonedx",

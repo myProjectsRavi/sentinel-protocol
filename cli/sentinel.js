@@ -13,8 +13,17 @@ const { PolicyBundle } = require('../src/governance/policy-bundle');
 const { RedTeamEngine } = require('../src/governance/red-team');
 const { renderRedTeamHtmlReport } = require('../src/governance/red-team-html-report');
 const { ComplianceEngine } = require('../src/governance/compliance-engine');
+const { AtlasTracker } = require('../src/governance/atlas-tracker');
+const { AIBOMGenerator } = require('../src/governance/aibom-generator');
+const { computeSecurityPosture } = require('../src/governance/security-posture');
+const {
+  generateOWASPComplianceReport,
+  renderOWASPLLMHtmlReport,
+} = require('../src/governance/owasp-compliance-mapper');
+const { DifferentialPrivacyEngine } = require('../src/privacy/differential-privacy');
 const { startMCPServer } = require('../src/mcp/server');
 const { startMonitorTUI } = require('../src/monitor/tui');
+const { StatusStore } = require('../src/status/store');
 const {
   startServer,
   stopServer,
@@ -22,7 +31,7 @@ const {
   setEmergencyOpen,
   doctorServer,
 } = require('../src');
-const { DEFAULT_CONFIG_PATH, AUDIT_LOG_PATH } = require('../src/utils/paths');
+const { DEFAULT_CONFIG_PATH, AUDIT_LOG_PATH, STATUS_FILE_PATH } = require('../src/utils/paths');
 
 const program = new Command();
 
@@ -175,6 +184,61 @@ program
   });
 
 program
+  .command('posture')
+  .description('Compute deterministic security posture score from config, counters, and optional audit summary')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--json', 'Output JSON')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const status = new StatusStore(STATUS_FILE_PATH).read();
+      const counters = status?.counters && typeof status.counters === 'object' ? status.counters : {};
+
+      const limit = Number(options.limit);
+      const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200000;
+      let auditSummary = {};
+      if (fs.existsSync(options.auditPath)) {
+        const compliance = new ComplianceEngine({
+          auditPath: options.auditPath,
+        });
+        auditSummary = compliance.generateSOC2Evidence({ limit: normalizedLimit }).summary || {};
+      }
+
+      const postureConfig = loaded.config.runtime?.posture_scoring || {};
+      const posture = computeSecurityPosture({
+        config: loaded.config,
+        counters,
+        auditSummary,
+        options: {
+          warnThreshold: postureConfig.warn_threshold,
+          criticalThreshold: postureConfig.critical_threshold,
+          includeCounters: postureConfig.include_counters,
+        },
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify(posture, null, 2));
+      } else {
+        console.log(`Posture: ${posture.posture}`);
+        console.log(`Overall: ${posture.overall}`);
+        console.log(`Ingress: ${posture.categories.ingress}`);
+        console.log(`Egress: ${posture.categories.egress}`);
+        console.log(`Privacy: ${posture.categories.privacy}`);
+        console.log(`Agentic: ${posture.categories.agentic}`);
+      }
+    } catch (error) {
+      console.error(`Posture scoring failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command('emergency-open <state>')
   .description('Toggle emergency pass-through mode')
   .action((state) => {
@@ -259,6 +323,55 @@ configCommand
   });
 
 const modelsCommand = program.command('models').description('Model utilities');
+
+const privacyCommand = program.command('privacy').description('Differential privacy research utilities (advisory only)');
+
+privacyCommand
+  .command('simulate')
+  .description('Run advisory differential-privacy simulation against numeric inputs (no live-path mutation)')
+  .requiredOption('--in <path>', 'Input JSON path')
+  .option('--out <path>', 'Write simulation report JSON to path')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--epsilon-per-call <value>', 'Override epsilon spend per call')
+  .action((options) => {
+    try {
+      let dpConfig = {};
+      if (fs.existsSync(options.config)) {
+        const loaded = loadAndValidateConfig({
+          configPath: options.config,
+          allowMigration: true,
+          writeMigrated: false,
+        });
+        dpConfig = loaded.config.runtime?.differential_privacy || {};
+      }
+      if (options.epsilonPerCall !== undefined) {
+        dpConfig = {
+          ...(dpConfig || {}),
+          epsilon_per_call: Number(options.epsilonPerCall),
+        };
+      }
+
+      const inputPath = path.resolve(options.in);
+      const payload = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
+      const engine = new DifferentialPrivacyEngine(dpConfig);
+      const report = engine.simulatePayload(payload);
+      report.source = {
+        input: inputPath,
+        config: fs.existsSync(options.config) ? path.resolve(options.config) : null,
+      };
+
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        console.log(`Privacy simulation report written: ${outPath}`);
+      } else {
+        console.log(JSON.stringify(report, null, 2));
+      }
+    } catch (error) {
+      console.error(`Privacy simulation failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
 
 modelsCommand
   .command('download')
@@ -441,6 +554,124 @@ complianceCommand
       }
     } catch (error) {
       console.error(`Compliance report failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+complianceCommand
+  .command('owasp-llm')
+  .description('Generate OWASP LLM Top 10 coverage report')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--report <format>', 'json|html', 'json')
+  .option('--out <path>', 'Write report to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const format = String(options.report || 'json').toLowerCase();
+      if (!['json', 'html'].includes(format)) {
+        throw new Error('Invalid --report value. Use json or html.');
+      }
+      const report = generateOWASPComplianceReport(loaded.config);
+      const output =
+        format === 'html'
+          ? renderOWASPLLMHtmlReport(report, {
+              title: 'Sentinel OWASP LLM Top 10 Compliance Report',
+            })
+          : `${JSON.stringify(report, null, 2)}\n`;
+
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, output, 'utf8');
+        console.log(`OWASP LLM report written: ${outPath}`);
+      } else {
+        console.log(output);
+      }
+    } catch (error) {
+      console.error(`OWASP LLM report failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const aibomCommand = program.command('aibom').description('Generate AI Bill of Materials artifacts');
+
+aibomCommand
+  .command('export')
+  .description('Export observed AI providers/models/tools/agents as deterministic AIBOM JSON')
+  .option('--format <format>', 'json', 'json')
+  .option('--out <path>', 'Write AIBOM JSON to path')
+  .action((options) => {
+    try {
+      const format = String(options.format || 'json').toLowerCase();
+      if (format !== 'json') {
+        throw new Error('Invalid --format value. Only json is supported.');
+      }
+
+      const statusStore = new StatusStore(STATUS_FILE_PATH);
+      const status = statusStore.read();
+      const emptyAibom = new AIBOMGenerator().exportArtifact();
+      const payload =
+        status && status.aibom && typeof status.aibom === 'object'
+          ? status.aibom
+          : {
+              ...emptyAibom,
+              source: {
+                status_file: STATUS_FILE_PATH,
+                loaded: false,
+              },
+            };
+
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+        console.log(`AIBOM report written: ${outPath}`);
+      } else {
+        console.log(JSON.stringify(payload, null, 2));
+      }
+    } catch (error) {
+      console.error(`AIBOM export failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const atlasCommand = program.command('atlas').description('Generate MITRE ATLAS evidence from audit logs');
+
+atlasCommand
+  .command('report')
+  .description('Generate MITRE ATLAS technique report from audit logs')
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--out <path>', 'Write report JSON to path')
+  .action((options) => {
+    try {
+      const limit = Number(options.limit);
+      const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200000;
+      const compliance = new ComplianceEngine({
+        auditPath: options.auditPath,
+      });
+      const loaded = compliance.loadEventsWithMeta({ limit: normalizedLimit });
+      const tracker = new AtlasTracker();
+      const payload = tracker.exportNavigatorPayload(loaded.events, {
+        source: {
+          audit_path: options.auditPath,
+          limit: normalizedLimit,
+        },
+      });
+      payload.generated_at = new Date().toISOString();
+      payload.summary = tracker.summarize(loaded.events, { topLimit: 20 });
+
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+        console.log(`ATLAS report written: ${outPath}`);
+      } else {
+        console.log(JSON.stringify(payload, null, 2));
+      }
+    } catch (error) {
+      console.error(`ATLAS report failed: ${error.message}`);
       process.exitCode = 1;
     }
   });

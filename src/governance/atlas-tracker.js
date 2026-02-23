@@ -1,0 +1,393 @@
+const MAPPING_VERSION = '2026.02.23';
+const MAX_REASON_ITEMS = 32;
+const MAX_REASON_CHARS = 160;
+const MAX_DECISION_CHARS = 160;
+const MAX_JOINED_REASON_CHARS = 2048;
+
+const UNMAPPED_CLASSIFICATION = Object.freeze({
+  mapping_version: MAPPING_VERSION,
+  engine: 'unknown',
+  technique_id: 'UNMAPPED',
+  tactic: 'UNMAPPED',
+  name: 'Unmapped Sentinel Detection',
+  severity: 'low',
+});
+
+const ENGINE_TECHNIQUE_MAP = Object.freeze({
+  injection_scanner: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Direct and Obfuscated Prompt Injection',
+    severity: 'high',
+  }),
+  neural_injection_classifier: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Neural Prompt Injection Detection',
+    severity: 'high',
+  }),
+  prompt_rebuff: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Correlated Prompt Injection Confidence',
+    severity: 'high',
+  }),
+  pii_scanner: Object.freeze({
+    technique_id: 'AML.T0044.000',
+    tactic: 'Exfiltration',
+    name: 'Sensitive Data Exfiltration Attempt',
+    severity: 'high',
+  }),
+  mcp_poisoning_detector: Object.freeze({
+    technique_id: 'AML.T0018.000',
+    tactic: 'Supply Chain',
+    name: 'Tool and Context Poisoning',
+    severity: 'high',
+  }),
+  agentic_threat_shield: Object.freeze({
+    technique_id: 'AML.T0016.000',
+    tactic: 'Execution',
+    name: 'Unauthorized Agent Delegation and Looping',
+    severity: 'high',
+  }),
+  loop_breaker: Object.freeze({
+    technique_id: 'AML.T0016.000',
+    tactic: 'Execution',
+    name: 'Runaway Agent Loop Control',
+    severity: 'medium',
+  }),
+  intent_throttle: Object.freeze({
+    technique_id: 'AML.T0016.000',
+    tactic: 'Execution',
+    name: 'High-Risk Repetition Throttling',
+    severity: 'medium',
+  }),
+  intent_drift: Object.freeze({
+    technique_id: 'AML.T0034.000',
+    tactic: 'Impact',
+    name: 'Objective Drift and Goal Hijack',
+    severity: 'medium',
+  }),
+  canary_tool_trap: Object.freeze({
+    technique_id: 'AML.T0026.000',
+    tactic: 'Discovery',
+    name: 'Unauthorized Tool Call Discovery',
+    severity: 'medium',
+  }),
+  entropy_analyzer: Object.freeze({
+    technique_id: 'AML.T0044.000',
+    tactic: 'Exfiltration',
+    name: 'High-Entropy Secret Exfiltration',
+    severity: 'high',
+  }),
+  shadow_os: Object.freeze({
+    technique_id: 'AML.T0016.000',
+    tactic: 'Execution',
+    name: 'Tool Sequence Abuse',
+    severity: 'high',
+  }),
+  omni_shield: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Multimodal Prompt Injection',
+    severity: 'high',
+  }),
+  experimental_sandbox: Object.freeze({
+    technique_id: 'AML.T0017.000',
+    tactic: 'Execution',
+    name: 'Unsafe Code Execution Payload',
+    severity: 'high',
+  }),
+  swarm_protocol: Object.freeze({
+    technique_id: 'AML.T0014.000',
+    tactic: 'Credential Access',
+    name: 'Replay and Envelope Integrity Attack',
+    severity: 'medium',
+  }),
+  policy_engine: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Policy-Detected Prompt Injection',
+    severity: 'high',
+  }),
+});
+
+const ENGINE_PRIORITY = Object.freeze([
+  'prompt_rebuff',
+  'agentic_threat_shield',
+  'mcp_poisoning_detector',
+  'injection_scanner',
+  'pii_scanner',
+  'entropy_analyzer',
+  'loop_breaker',
+  'intent_drift',
+  'intent_throttle',
+  'canary_tool_trap',
+  'shadow_os',
+  'omni_shield',
+  'experimental_sandbox',
+  'swarm_protocol',
+  'policy_engine',
+  'neural_injection_classifier',
+]);
+
+function normalizeEngineName(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || 'unknown';
+}
+
+function normalizeReasonList(event = {}) {
+  if (Array.isArray(event.reasons)) {
+    const out = [];
+    for (let i = 0; i < event.reasons.length && out.length < MAX_REASON_ITEMS; i += 1) {
+      const normalized = String(event.reasons[i] || '')
+        .toLowerCase()
+        .slice(0, MAX_REASON_CHARS);
+      if (normalized) {
+        out.push(normalized);
+      }
+    }
+    return out;
+  }
+  if (event.reason !== undefined) {
+    const reason = String(event.reason || '')
+      .toLowerCase()
+      .slice(0, MAX_REASON_CHARS);
+    return reason ? [reason] : [];
+  }
+  return [];
+}
+
+function inferEngineCandidates(event = {}) {
+  const candidates = new Set();
+  const decision = String(event.decision || '')
+    .toLowerCase()
+    .slice(0, MAX_DECISION_CHARS);
+  const reasons = normalizeReasonList(event);
+  const joinedReasons = reasons.join(',').slice(0, MAX_JOINED_REASON_CHARS);
+
+  if (event.engine) {
+    candidates.add(normalizeEngineName(event.engine));
+  }
+  if (decision.includes('prompt_rebuff')) {
+    candidates.add('prompt_rebuff');
+  }
+  if (decision.includes('agentic')) {
+    candidates.add('agentic_threat_shield');
+  }
+  if (decision.includes('mcp_poisoning')) {
+    candidates.add('mcp_poisoning_detector');
+  }
+  if (decision.includes('loop')) {
+    candidates.add('loop_breaker');
+  }
+  if (decision.includes('shadow_os')) {
+    candidates.add('shadow_os');
+  }
+  if (decision.includes('omni_shield')) {
+    candidates.add('omni_shield');
+  }
+  if (decision.includes('sandbox')) {
+    candidates.add('experimental_sandbox');
+  }
+  if (decision.includes('swarm')) {
+    candidates.add('swarm_protocol');
+  }
+  if (decision.includes('entropy')) {
+    candidates.add('entropy_analyzer');
+  }
+  if (decision.includes('canary')) {
+    candidates.add('canary_tool_trap');
+  }
+
+  if (reasons.some((item) => item.startsWith('injection:') || item.includes('prompt_injection'))) {
+    candidates.add('injection_scanner');
+  }
+  if (reasons.some((item) => item.startsWith('prompt_rebuff:'))) {
+    candidates.add('prompt_rebuff');
+  }
+  if (reasons.some((item) => item.startsWith('mcp_poisoning:'))) {
+    candidates.add('mcp_poisoning_detector');
+  }
+  if (reasons.some((item) => item.startsWith('agentic:'))) {
+    candidates.add('agentic_threat_shield');
+  }
+  if (reasons.some((item) => item.startsWith('pii:') || item.includes('egress_pii'))) {
+    candidates.add('pii_scanner');
+  }
+  if (reasons.some((item) => item.includes('entropy'))) {
+    candidates.add('entropy_analyzer');
+  }
+  if (reasons.some((item) => item.startsWith('intent_drift:'))) {
+    candidates.add('intent_drift');
+  }
+  if (reasons.some((item) => item.startsWith('intent_throttle:'))) {
+    candidates.add('intent_throttle');
+  }
+  if (joinedReasons.includes('canary_tool')) {
+    candidates.add('canary_tool_trap');
+  }
+  if (joinedReasons.includes('policy:') || joinedReasons.includes('prompt_injection_detected')) {
+    candidates.add('policy_engine');
+  }
+
+  return Array.from(candidates);
+}
+
+function pickPrimaryEngine(candidates = []) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return 'unknown';
+  }
+  const normalized = candidates.map((item) => normalizeEngineName(item));
+  for (const preferred of ENGINE_PRIORITY) {
+    if (normalized.includes(preferred)) {
+      return preferred;
+    }
+  }
+  return normalized.sort((a, b) => a.localeCompare(b))[0] || 'unknown';
+}
+
+function classifyEngine(engineName) {
+  const normalized = normalizeEngineName(engineName);
+  const mapped = ENGINE_TECHNIQUE_MAP[normalized];
+  if (!mapped) {
+    return {
+      ...UNMAPPED_CLASSIFICATION,
+      engine: normalized,
+    };
+  }
+  return {
+    mapping_version: MAPPING_VERSION,
+    engine: normalized,
+    technique_id: mapped.technique_id,
+    tactic: mapped.tactic,
+    name: mapped.name,
+    severity: mapped.severity,
+  };
+}
+
+function classifyEvent(event = {}) {
+  if (event && event.atlas && typeof event.atlas === 'object') {
+    const techniqueId = String(event.atlas.technique_id || '');
+    if (techniqueId) {
+      return {
+        mapping_version: String(event.atlas.mapping_version || MAPPING_VERSION),
+        engine: normalizeEngineName(event.atlas.engine || event.engine || 'unknown'),
+        technique_id: techniqueId,
+        tactic: String(event.atlas.tactic || 'UNMAPPED'),
+        name: String(event.atlas.name || 'Unmapped Sentinel Detection'),
+        severity: String(event.atlas.severity || 'low'),
+      };
+    }
+  }
+
+  const candidates = inferEngineCandidates(event);
+  const primaryEngine = pickPrimaryEngine(candidates);
+  return classifyEngine(primaryEngine);
+}
+
+function aggregateByTechnique(events = []) {
+  const bucket = new Map();
+  for (const event of events) {
+    const classification = classifyEvent(event);
+    const key = classification.technique_id || 'UNMAPPED';
+    const existing = bucket.get(key) || {
+      technique_id: key,
+      tactic: classification.tactic || 'UNMAPPED',
+      name: classification.name || 'Unmapped Sentinel Detection',
+      severity: classification.severity || 'low',
+      count: 0,
+      engines: new Set(),
+    };
+    existing.count += 1;
+    existing.engines.add(classification.engine || 'unknown');
+    bucket.set(key, existing);
+  }
+
+  return Array.from(bucket.values())
+    .map((item) => ({
+      technique_id: item.technique_id,
+      tactic: item.tactic,
+      name: item.name,
+      severity: item.severity,
+      count: item.count,
+      engines: Array.from(item.engines).sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count;
+      }
+      return String(left.technique_id).localeCompare(String(right.technique_id));
+    });
+}
+
+function summarizeAtlas(events = [], options = {}) {
+  const safeTop = Math.max(1, Math.floor(Number(options.topLimit || 10)));
+  const techniques = aggregateByTechnique(events);
+  const total = events.length;
+  const unmapped = techniques
+    .filter((item) => item.technique_id === 'UNMAPPED')
+    .reduce((sum, item) => sum + Number(item.count || 0), 0);
+  return {
+    mapping_version: MAPPING_VERSION,
+    total_events: total,
+    mapped_events: Math.max(0, total - unmapped),
+    unmapped_events: unmapped,
+    top_techniques: techniques.slice(0, safeTop),
+  };
+}
+
+function exportNavigatorPayload(events = [], options = {}) {
+  const techniques = aggregateByTechnique(events);
+  const payload = {
+    schema_version: 'sentinel.atlas.navigator.v1',
+    mapping_version: MAPPING_VERSION,
+    total_events: events.length,
+    techniques,
+  };
+  if (options && options.source && typeof options.source === 'object') {
+    payload.source = {
+      audit_path: String(options.source.audit_path || ''),
+      limit: Number.isFinite(Number(options.source.limit)) ? Number(options.source.limit) : undefined,
+    };
+  }
+  return payload;
+}
+
+class AtlasTracker {
+  classifyEngine(engineName) {
+    return classifyEngine(engineName);
+  }
+
+  classifyEvent(event) {
+    return classifyEvent(event);
+  }
+
+  aggregateByTechnique(events) {
+    return aggregateByTechnique(events);
+  }
+
+  summarize(events, options = {}) {
+    return summarizeAtlas(events, options);
+  }
+
+  exportNavigatorPayload(events, options = {}) {
+    return exportNavigatorPayload(events, options);
+  }
+}
+
+module.exports = {
+  MAPPING_VERSION,
+  ENGINE_TECHNIQUE_MAP,
+  UNMAPPED_CLASSIFICATION,
+  AtlasTracker,
+  classifyEngine,
+  classifyEvent,
+  aggregateByTechnique,
+  summarizeAtlas,
+  exportNavigatorPayload,
+};

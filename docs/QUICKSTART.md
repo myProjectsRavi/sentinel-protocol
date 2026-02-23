@@ -181,6 +181,62 @@ rules:
     action: block
 ```
 
+### 7.1 Opt-in: Agentic Threat Shield + Prompt Rebuff
+
+Default posture is disabled + monitor-first. Enable in monitor, then promote to block after audit evidence.
+
+```yaml
+runtime:
+  agentic_threat_shield:
+    enabled: true
+    mode: monitor # monitor | block
+    max_tool_call_depth: 10
+    max_agent_delegations: 5
+    max_analysis_nodes: 4096
+    max_tool_calls_analyzed: 1024
+    detect_cycles: true
+    verify_identity_tokens: false
+
+  prompt_rebuff:
+    enabled: true
+    mode: monitor # monitor | block
+    sensitivity: balanced # permissive | balanced | paranoid
+    warn_threshold: 0.65
+    block_threshold: 0.85
+    max_body_chars: 8192
+    max_response_chars: 8192
+```
+
+Behavior:
+- `monitor`: forwards request and adds warning/diagnostic headers.
+- `block` + global `mode: enforce`: returns `403` on qualifying violations.
+
+### 7.2 Optional: Output schema validation (monitor-first)
+
+Use this to detect structured-response drift and exfiltration via unexpected fields.
+
+```yaml
+runtime:
+  output_schema_validator:
+    enabled: true
+    mode: monitor # monitor | block
+    default_schema: chat_response_minimal
+    schemas:
+      chat_response_minimal:
+        type: object
+        required: [id, choices]
+        additionalProperties: false
+        properties:
+          id:
+            type: string
+          choices:
+            type: array
+```
+
+When promoted to `mode: block` with global `mode: enforce`, schema mismatches return:
+- `502`
+- `x-sentinel-blocked-by: output_schema_validator`
+
 ## 8. Optional semantic scanner
 
 Semantic NER runs locally and is disabled by default.

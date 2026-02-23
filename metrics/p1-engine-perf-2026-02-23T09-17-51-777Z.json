@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-02-23T09:17:51.874Z",
+  "thresholds_path": "/Users/ravitejanekkalapu/Documents/sentinel-protocol/metrics/p1-engine-perf-thresholds.json",
+  "warmup_iterations": 1500,
+  "measure_iterations": 10000,
+  "thresholds": {
+    "warmup_iterations": 1500,
+    "measure_iterations": 10000,
+    "modules": {
+      "atlas_tracker": {
+        "max_p95_ms": 0.6
+      },
+      "aibom_generator": {
+        "max_p95_ms": 1.2
+      },
+      "security_posture": {
+        "max_p95_ms": 0.8
+      },
+      "owasp_mapper": {
+        "max_p95_ms": 1
+      }
+    },
+    "global": {
+      "max_sum_p95_ms": 2
+    }
+  },
+  "results": {
+    "atlas_tracker": {
+      "name": "atlas_tracker",
+      "iterations": 10000,
+      "mean_ms": 0.000977,
+      "p50_ms": 0.000875,
+      "p95_ms": 0.000959,
+      "p99_ms": 0.002041,
+      "min_ms": 0.00075,
+      "max_ms": 0.050958
+    },
+    "aibom_generator": {
+      "name": "aibom_generator",
+      "iterations": 10000,
+      "mean_ms": 0.001947,
+      "p50_ms": 0.001708,
+      "p95_ms": 0.002458,
+      "p99_ms": 0.004208,
+      "min_ms": 0.001333,
+      "max_ms": 0.06425
+    },
+    "security_posture": {
+      "name": "security_posture",
+      "iterations": 10000,
+      "mean_ms": 0.001874,
+      "p50_ms": 0.00175,
+      "p95_ms": 0.002208,
+      "p99_ms": 0.002416,
+      "min_ms": 0.0015,
+      "max_ms": 0.036167
+    },
+    "owasp_mapper": {
+      "name": "owasp_mapper",
+      "iterations": 10000,
+      "mean_ms": 0.001545,
+      "p50_ms": 0.001458,
+      "p95_ms": 0.001833,
+      "p99_ms": 0.002042,
+      "min_ms": 0.00125,
+      "max_ms": 0.057791
+    }
+  },
+  "combined": {
+    "p95_sum_ms": 0.007458,
+    "max_p95_sum_ms": 2
+  },
+  "status": "pass",
+  "failures": []
+}

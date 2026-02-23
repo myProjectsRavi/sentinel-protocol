@@ -1,0 +1,21 @@
+{
+  "warmup_iterations": 1500,
+  "measure_iterations": 10000,
+  "modules": {
+    "atlas_tracker": {
+      "max_p95_ms": 0.6
+    },
+    "aibom_generator": {
+      "max_p95_ms": 1.2
+    },
+    "security_posture": {
+      "max_p95_ms": 0.8
+    },
+    "owasp_mapper": {
+      "max_p95_ms": 1.0
+    }
+  },
+  "global": {
+    "max_sum_p95_ms": 2.0
+  }
+}

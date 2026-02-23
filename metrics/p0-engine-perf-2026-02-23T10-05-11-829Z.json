@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-02-23T10:05:11.942Z",
+  "thresholds_path": "/Users/ravitejanekkalapu/Documents/sentinel-protocol/metrics/p0-engine-perf-thresholds.json",
+  "warmup_iterations": 1500,
+  "measure_iterations": 8000,
+  "thresholds": {
+    "warmup_iterations": 1500,
+    "measure_iterations": 8000,
+    "engines": {
+      "agentic_threat_shield": {
+        "max_p95_ms": 0.5
+      },
+      "mcp_poisoning_detector": {
+        "max_p95_ms": 0.6
+      },
+      "prompt_rebuff_engine": {
+        "max_p95_ms": 0.2
+      }
+    },
+    "global": {
+      "max_sum_p95_ms": 1.1
+    }
+  },
+  "results": {
+    "agentic_threat_shield": {
+      "name": "agentic_threat_shield",
+      "iterations": 8000,
+      "mean_ms": 0.004027,
+      "p50_ms": 0.003209,
+      "p95_ms": 0.007917,
+      "p99_ms": 0.020083,
+      "min_ms": 0.002875,
+      "max_ms": 0.312542
+    },
+    "mcp_poisoning_detector": {
+      "name": "mcp_poisoning_detector",
+      "iterations": 8000,
+      "mean_ms": 0.005338,
+      "p50_ms": 0.004333,
+      "p95_ms": 0.00575,
+      "p99_ms": 0.011,
+      "min_ms": 0.003958,
+      "max_ms": 0.369125
+    },
+    "prompt_rebuff_engine": {
+      "name": "prompt_rebuff_engine",
+      "iterations": 8000,
+      "mean_ms": 0.000347,
+      "p50_ms": 0.000333,
+      "p95_ms": 0.000375,
+      "p99_ms": 0.000417,
+      "min_ms": 0.00025,
+      "max_ms": 0.028958
+    }
+  },
+  "combined": {
+    "p95_sum_ms": 0.014042,
+    "max_p95_sum_ms": 1.1
+  },
+  "status": "pass",
+  "failures": []
+}

@@ -38,9 +38,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:coverage:gate
+      - run: npm run perf:p0:gate
+      - run: npm run perf:p1:gate
       - run: npm run benchmark -- --duration 3 --connections 16 --pipelining 1
       - run: npm run benchmark:gate
       - run: npm run ci:bootstrap:npx
+      - run: node ./cli/sentinel.js aibom export --format json --out aibom.json
       - run: npm run sbom:cyclonedx > sbom.cyclonedx.json
       - run: npm run sbom:spdx > sbom.spdx.json
       - uses: actions/upload-artifact@v4
@@ -49,6 +52,9 @@ jobs:
           path: |
             sbom.cyclonedx.json
             sbom.spdx.json
+            aibom.json
+            metrics/p0-engine-perf-*.json
+            metrics/p1-engine-perf-*.json
 
   docker-build:
     runs-on: ubuntu-latest

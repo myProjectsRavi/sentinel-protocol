@@ -63,7 +63,7 @@ function attachProvenanceInterceptors({ server, res, correlationId, providerRef 
   };
 }
 
-function createTelemetryFinalizer({ server, requestStart, requestSpan }) {
+function createTelemetryFinalizer({ server, requestStart, requestSpan, onFinalize }) {
   let requestFinalized = false;
   return ({ decision, status, providerName, error }) => {
     if (requestFinalized) {
@@ -86,6 +86,9 @@ function createTelemetryFinalizer({ server, requestStart, requestSpan }) {
       server.telemetry.addUpstreamError(attrs);
     }
     server.telemetry.endSpan(requestSpan, attrs, error);
+    if (typeof onFinalize === 'function') {
+      onFinalize({ decision, status, providerName, error, latencyMs, attrs });
+    }
   };
 }
 

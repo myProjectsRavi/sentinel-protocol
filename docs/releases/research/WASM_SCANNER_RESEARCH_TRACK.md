@@ -66,3 +66,8 @@ Evaluate a WebAssembly scanner engine for PII/injection workloads with strict se
   - record mismatch telemetry
   - mark request as research-observed only
 
+## Cross-Track Dependency Note
+
+- Differential privacy research is tracked separately in:
+  - `docs/releases/research/DIFFERENTIAL_PRIVACY_RESEARCH_TRACK.md`
+- Promotion of either WASM or differential privacy paths must not introduce semantic drift in core policy enforcement.

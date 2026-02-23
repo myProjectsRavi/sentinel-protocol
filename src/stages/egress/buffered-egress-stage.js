@@ -68,6 +68,8 @@ async function runBufferedEgressAndFinalizeStage({
   let currentCanaryTriggered = canaryTriggered;
   let currentParallaxDecision = parallaxDecision;
   let currentCognitiveRollbackDecision = cognitiveRollbackDecision;
+  let outputClassifierResult = null;
+  let outputSchemaValidation = null;
 
   if (
     !replayedFromVcr &&
@@ -260,6 +262,13 @@ async function runBufferedEgressAndFinalizeStage({
     currentCanaryTriggered = canaryDetectStageExecution.result;
     if (currentCanaryTriggered.triggered) {
       server.stats.canary_tool_triggered += 1;
+      if (server.promptRebuff?.isEnabled()) {
+        server.promptRebuff.recordCanaryTrigger({
+          headers: req.headers || {},
+          correlationId,
+          toolName: currentCanaryTriggered.toolName,
+        });
+      }
       warnings.push('canary_tool_triggered');
       server.stats.warnings_total += 1;
       res.setHeader('x-sentinel-canary-tool-triggered', 'true');
@@ -515,6 +524,187 @@ async function runBufferedEgressAndFinalizeStage({
     }
   }
 
+  const upstreamContentType = upstream.responseHeaders?.['content-type'];
+
+  const outputClassifierStageExecution = await runOrchestratedStage(
+    'output_classifier',
+    async () =>
+      server.outputClassifier.classifyBuffer({
+        bodyBuffer: responseBodyForClient,
+        contentType: upstreamContentType,
+        effectiveMode,
+      }),
+    routedProvider
+  );
+  if (outputClassifierStageExecution.handled) {
+    return { handled: true };
+  }
+  outputClassifierResult = outputClassifierStageExecution.result;
+  if (outputClassifierResult?.enabled && outputClassifierResult.shouldWarn) {
+    server.stats.output_classifier_detected += 1;
+    for (const category of outputClassifierResult.warnedBy || []) {
+      const counterKey = `output_classifier_${String(category)}_detected`;
+      if (Object.prototype.hasOwnProperty.call(server.stats, counterKey)) {
+        server.stats[counterKey] += 1;
+      }
+    }
+    warnings.push(...(outputClassifierResult.reasons || []));
+    server.stats.warnings_total += outputClassifierResult.reasons?.length || 0;
+    if (warnings.length > 0) {
+      res.setHeader('x-sentinel-warning', warnings.join(','));
+    }
+    res.setHeader('x-sentinel-output-classifier', outputClassifierResult.shouldBlock ? 'block' : 'warn');
+    if (Array.isArray(outputClassifierResult.warnedBy) && outputClassifierResult.warnedBy.length > 0) {
+      res.setHeader(
+        'x-sentinel-output-classifier-categories',
+        outputClassifierResult.warnedBy.join(',')
+      );
+    }
+    if (outputClassifierResult.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.output_classifier_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'output_classifier');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_output_classifier',
+        reasons: outputClassifierResult.reasons || ['output_classifier_high_risk'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        output_classifier_categories: outputClassifierResult.warnedBy || [],
+        output_classifier_blocked_categories: outputClassifierResult.blockedBy || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 403,
+        providerName: routedProvider,
+      });
+      res.status(403).json({
+        error: 'OUTPUT_CLASSIFIER_BLOCKED',
+        reason: 'output_classifier_high_risk',
+        categories: outputClassifierResult.blockedBy || outputClassifierResult.warnedBy || [],
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
+  const outputSchemaStageExecution = await runOrchestratedStage(
+    'output_schema_validator',
+    async () =>
+      server.outputSchemaValidator.validateBuffer({
+        headers: req.headers || {},
+        bodyBuffer: responseBodyForClient,
+        contentType: upstreamContentType,
+        effectiveMode,
+      }),
+    routedProvider
+  );
+  if (outputSchemaStageExecution.handled) {
+    return { handled: true };
+  }
+  outputSchemaValidation = outputSchemaStageExecution.result;
+  if (outputSchemaValidation?.enabled && outputSchemaValidation.applied && !outputSchemaValidation.valid) {
+    server.stats.output_schema_validator_detected += 1;
+    warnings.push(...(outputSchemaValidation.reasons || []));
+    server.stats.warnings_total += outputSchemaValidation.reasons?.length || 0;
+    if (warnings.length > 0) {
+      res.setHeader('x-sentinel-warning', warnings.join(','));
+    }
+    res.setHeader('x-sentinel-output-schema-validator', 'invalid');
+    if (outputSchemaValidation.schemaName) {
+      res.setHeader('x-sentinel-output-schema-name', outputSchemaValidation.schemaName);
+    }
+    res.setHeader(
+      'x-sentinel-output-schema-mismatch-count',
+      String((outputSchemaValidation.mismatches || []).length)
+    );
+
+    if (outputSchemaValidation.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.output_schema_validator_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'output_schema_validator');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 502,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_output_schema_validator',
+        reasons: outputSchemaValidation.reasons || ['output_schema_validation_failed'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 502,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        output_schema_name: outputSchemaValidation.schemaName || undefined,
+        output_schema_mismatch_count: (outputSchemaValidation.mismatches || []).length,
+        output_schema_extra_fields: outputSchemaValidation.extraFields || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 502,
+        providerName: routedProvider,
+      });
+      res.status(502).json({
+        error: 'OUTPUT_SCHEMA_VALIDATION_FAILED',
+        reason: 'output_schema_validation_failed',
+        schema: outputSchemaValidation.schemaName || null,
+        mismatch_count: (outputSchemaValidation.mismatches || []).length,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
   let budgetCharge = null;
   try {
     const budgetRecordStageExecution = await runOrchestratedStage(
@@ -549,6 +739,14 @@ async function runBufferedEgressAndFinalizeStage({
   } catch {
     warnings.push('budget_record_error');
     server.stats.warnings_total += 1;
+  }
+
+  if (server.aibom && typeof server.aibom.recordResponse === 'function') {
+    server.aibom.recordResponse({
+      provider: routedProvider,
+      headers: upstream.responseHeaders || {},
+      bodyBuffer: responseBodyForClient,
+    });
   }
 
   server.auditLogger.write({
@@ -600,6 +798,12 @@ async function runBufferedEgressAndFinalizeStage({
     sandbox_detected: Boolean(sandboxDecision?.detected),
     sandbox_findings: sandboxDecision?.findings,
     pii_vault_detokenized: vaultEgress.replacements || 0,
+    output_classifier_categories: outputClassifierResult?.warnedBy || [],
+    output_classifier_blocked_categories: outputClassifierResult?.blockedBy || [],
+    output_schema_name: outputSchemaValidation?.schemaName || undefined,
+    output_schema_valid: outputSchemaValidation?.applied ? outputSchemaValidation.valid : undefined,
+    output_schema_mismatch_count: outputSchemaValidation?.mismatches?.length || 0,
+    output_schema_extra_fields: outputSchemaValidation?.extraFields || [],
   });
 
   if (upstream.status < 400) {

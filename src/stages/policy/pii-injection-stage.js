@@ -54,6 +54,30 @@ function extractClientIp(req) {
   return '';
 }
 
+function isMcpLikeRequest({ req, parsedPath, bodyJson }) {
+  const headers = req?.headers || {};
+  if (typeof headers['x-sentinel-mcp-server-id'] === 'string' && headers['x-sentinel-mcp-server-id'].trim()) {
+    return true;
+  }
+  const pathname = String(parsedPath?.pathname || '').toLowerCase();
+  if (pathname.startsWith('/mcp')) {
+    return true;
+  }
+  if (!bodyJson || typeof bodyJson !== 'object' || Array.isArray(bodyJson)) {
+    return false;
+  }
+  if (Array.isArray(bodyJson.tools) && bodyJson.tools.length > 0) {
+    return true;
+  }
+  if (bodyJson.tool_arguments && typeof bodyJson.tool_arguments === 'object' && !Array.isArray(bodyJson.tool_arguments)) {
+    return true;
+  }
+  if (bodyJson.arguments && typeof bodyJson.arguments === 'object' && !Array.isArray(bodyJson.arguments)) {
+    return true;
+  }
+  return false;
+}
+
 async function runInjectionAndPolicyStage({
   server,
   req,
@@ -119,6 +143,237 @@ async function runInjectionAndPolicyStage({
     }
     injectionResult = mergeInjectionResults(baseInjection, neuralResult, server.config.injection?.neural || {});
   }
+  const injectionScore = Number(injectionResult?.score || 0);
+
+  let rebuffDecision = null;
+  if (server.promptRebuff?.isEnabled()) {
+    try {
+      rebuffDecision = server.promptRebuff.evaluate({
+        headers: req.headers || {},
+        correlationId,
+        bodyText,
+        injectionResult,
+        effectiveMode,
+      });
+    } catch (error) {
+      rebuffDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        score: 0,
+        reason: 'prompt_rebuff_error',
+        error: String(error.message || error),
+      };
+      server.stats.prompt_rebuff_errors += 1;
+      warnings.push('prompt_rebuff:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (rebuffDecision?.enabled && server.promptRebuff.observability) {
+      res.setHeader('x-sentinel-prompt-rebuff', String(rebuffDecision.reason || 'clean'));
+      if (Number.isFinite(Number(rebuffDecision.score))) {
+        res.setHeader('x-sentinel-prompt-rebuff-score', String(rebuffDecision.score));
+      }
+    }
+
+    if (rebuffDecision?.detected) {
+      server.stats.prompt_rebuff_detected += 1;
+      warnings.push(`prompt_rebuff:${rebuffDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+
+    if (rebuffDecision?.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.policy_blocked += 1;
+      server.stats.prompt_rebuff_blocked += 1;
+      res.setHeader('x-sentinel-blocked-by', 'prompt_rebuff');
+      const diagnostics = {
+        errorSource: 'sentinel',
+        upstreamError: false,
+        provider,
+        retryCount: 0,
+        circuitState: server.circuitBreakers.getProviderState(breakerKey).state,
+        correlationId,
+      };
+      responseHeaderDiagnostics(res, diagnostics);
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_prompt_rebuff',
+        reasons: [String(rebuffDecision.reason || 'prompt_rebuff_high_confidence')],
+        pii_types: [],
+        redactions: 0,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: rawBody.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider,
+        prompt_rebuff_score: rebuffDecision.score,
+        prompt_rebuff_heuristic_score: rebuffDecision.heuristicScore,
+        prompt_rebuff_neural_score: rebuffDecision.neuralScore,
+        prompt_rebuff_canary_signal: rebuffDecision.canarySignal?.value,
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_policy',
+        status: 403,
+        providerName: provider,
+      });
+      res.status(403).json({
+        error: 'PROMPT_REBUFF_BLOCKED',
+        reason: rebuffDecision.reason,
+        score: rebuffDecision.score,
+        correlation_id: correlationId,
+      });
+      return {
+        handled: true,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore,
+        shadowDecision: null,
+      };
+    }
+  }
+
+  let mcpPoisoningDecision = null;
+  if (server.mcpPoisoningDetector?.isEnabled() && isMcpLikeRequest({ req, parsedPath, bodyJson })) {
+    try {
+      mcpPoisoningDecision = server.mcpPoisoningDetector.inspect({
+        bodyJson,
+        toolArgs: bodyJson?.tool_arguments || bodyJson?.arguments || {},
+        serverId: req.headers?.['x-sentinel-mcp-server-id'] || provider,
+        serverConfig: {
+          provider,
+          path: parsedPath.pathname,
+          target: req.headers?.['x-sentinel-target'],
+        },
+        effectiveMode,
+      });
+    } catch (error) {
+      mcpPoisoningDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        findings: [],
+        reason: 'mcp_poisoning_error',
+        error: String(error.message || error),
+      };
+      warnings.push('mcp_poisoning:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (mcpPoisoningDecision?.enabled && server.mcpPoisoningDetector.observability) {
+      res.setHeader(
+        'x-sentinel-mcp-poisoning',
+        mcpPoisoningDecision.detected ? String(mcpPoisoningDecision.reason || 'detected') : 'clean'
+      );
+      if (mcpPoisoningDecision?.drift?.drifted) {
+        res.setHeader('x-sentinel-mcp-config-drift', 'true');
+      }
+    }
+
+    if (mcpPoisoningDecision?.detected) {
+      server.stats.mcp_poisoning_detected += 1;
+      if (mcpPoisoningDecision?.drift?.drifted) {
+        server.stats.mcp_config_drift += 1;
+      }
+      warnings.push(`mcp_poisoning:${mcpPoisoningDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+
+    const sanitizedArgs = mcpPoisoningDecision?.sanitizedArguments;
+    if (
+      sanitizedArgs &&
+      bodyJson &&
+      typeof bodyJson === 'object' &&
+      !Array.isArray(bodyJson)
+    ) {
+      let nextBodyJson = bodyJson;
+      if (bodyJson.tool_arguments && typeof bodyJson.tool_arguments === 'object' && !Array.isArray(bodyJson.tool_arguments)) {
+        nextBodyJson = {
+          ...bodyJson,
+          tool_arguments: sanitizedArgs,
+        };
+      } else if (bodyJson.arguments && typeof bodyJson.arguments === 'object' && !Array.isArray(bodyJson.arguments)) {
+        nextBodyJson = {
+          ...bodyJson,
+          arguments: sanitizedArgs,
+        };
+      }
+      if (nextBodyJson !== bodyJson) {
+        bodyJson = nextBodyJson;
+        bodyText = JSON.stringify(bodyJson);
+      }
+    }
+
+    if (mcpPoisoningDecision?.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.policy_blocked += 1;
+      server.stats.mcp_poisoning_blocked += 1;
+      res.setHeader('x-sentinel-blocked-by', 'mcp_poisoning');
+      const diagnostics = {
+        errorSource: 'sentinel',
+        upstreamError: false,
+        provider,
+        retryCount: 0,
+        circuitState: server.circuitBreakers.getProviderState(breakerKey).state,
+        correlationId,
+      };
+      responseHeaderDiagnostics(res, diagnostics);
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_mcp_poisoning',
+        reasons: [String(mcpPoisoningDecision.reason || 'mcp_poisoning_detected')],
+        pii_types: [],
+        redactions: 0,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: rawBody.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider,
+        mcp_poisoning_findings: (mcpPoisoningDecision.findings || []).map((finding) => finding.code),
+        mcp_config_drift: mcpPoisoningDecision?.drift?.drifted === true,
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_policy',
+        status: 403,
+        providerName: provider,
+      });
+      res.status(403).json({
+        error: 'MCP_POISONING_DETECTED',
+        reason: mcpPoisoningDecision.reason || 'mcp_poisoning_detected',
+        findings: (mcpPoisoningDecision.findings || []).map((finding) => finding.code),
+        correlation_id: correlationId,
+      });
+      return {
+        handled: true,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore,
+        shadowDecision: null,
+      };
+    }
+  }
 
   let providerHostname;
   try {
@@ -145,7 +400,7 @@ async function runInjectionAndPolicyStage({
       bodyJson,
       precomputedLocalScan,
       precomputedInjection,
-      injectionScore: 0,
+      injectionScore,
       shadowDecision: null,
     };
   }
@@ -165,15 +420,15 @@ async function runInjectionAndPolicyStage({
   });
   applyRateLimitHeaders(res, policyDecision.rateLimit);
 
-  const injectionScore = Number(policyDecision.injection?.score || 0);
-  if (injectionScore > 0) {
+  const policyInjectionScore = Number(policyDecision.injection?.score || 0);
+  if (policyInjectionScore > 0) {
     server.stats.injection_detected += 1;
   }
 
-  if (server.autoImmune.isEnabled() && injectionScore > 0) {
+  if (server.autoImmune.isEnabled() && policyInjectionScore > 0) {
     const learning = server.autoImmune.learn({
       text: bodyText,
-      score: injectionScore,
+      score: policyInjectionScore,
       source: policyDecision.reason || 'injection_score',
     });
     if (learning.learned) {
@@ -263,7 +518,7 @@ async function runInjectionAndPolicyStage({
           bodyJson,
           precomputedLocalScan,
           precomputedInjection,
-          injectionScore,
+          injectionScore: policyInjectionScore,
           shadowDecision,
         };
       }
@@ -279,7 +534,7 @@ async function runInjectionAndPolicyStage({
           provider,
           effectiveMode,
           wantsStream,
-          injectionScore,
+          injectionScore: policyInjectionScore,
           correlationId,
           requestStart,
           requestBytes: rawBody.length,
@@ -296,7 +551,7 @@ async function runInjectionAndPolicyStage({
             bodyJson,
             precomputedLocalScan,
             precomputedInjection,
-            injectionScore,
+            injectionScore: policyInjectionScore,
             shadowDecision,
           };
         }
@@ -370,7 +625,7 @@ async function runInjectionAndPolicyStage({
           reason: policyDecision.reason,
           rule: policyDecision.rule,
           message: policyDecision.message,
-          injection_score: injectionScore || undefined,
+          injection_score: policyInjectionScore || undefined,
           correlation_id: correlationId,
         });
       }
@@ -380,14 +635,14 @@ async function runInjectionAndPolicyStage({
         bodyJson,
         precomputedLocalScan,
         precomputedInjection,
-        injectionScore,
+        injectionScore: policyInjectionScore,
         shadowDecision,
       };
     }
 
     warnings.push(`policy:${policyDecision.rule || 'blocked-rule'}`);
     if (policyDecision.reason === 'prompt_injection_detected') {
-      warnings.push(`injection:${injectionScore.toFixed(3)}`);
+      warnings.push(`injection:${policyInjectionScore.toFixed(3)}`);
     } else if (policyDecision.reason === 'rate_limit_exceeded') {
       warnings.push(`rate_limit:${policyDecision.rule || 'policy-rate-limit'}`);
     }
@@ -400,7 +655,7 @@ async function runInjectionAndPolicyStage({
     bodyJson,
     precomputedLocalScan,
     precomputedInjection,
-    injectionScore,
+    injectionScore: policyInjectionScore,
     shadowDecision,
   };
 }

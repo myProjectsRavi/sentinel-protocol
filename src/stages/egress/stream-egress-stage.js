@@ -1,6 +1,7 @@
 const logger = require('../../utils/logger');
 const { SSERedactionTransform } = require('../../egress/sse-redaction-transform');
 const { ProvenanceSigner } = require('../../security/provenance-signer');
+const { StringDecoder } = require('string_decoder');
 
 function terminateStream({ upstreamBodyStream, streamOut, res, code }) {
   setImmediate(() => {
@@ -24,6 +25,8 @@ function buildStreamEgressAuditFields({
   streamEntropyFindings,
   streamEntropyMode,
   streamEntropyProjectedRedaction,
+  outputClassifierCategories,
+  outputClassifierBlocked,
 }) {
   return {
     egress_pii_types: Array.from(streamEgressTypes).sort(),
@@ -32,6 +35,8 @@ function buildStreamEgressAuditFields({
     egress_entropy_findings: streamEntropyFindings,
     egress_entropy_mode: streamEntropyMode || undefined,
     egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
+    output_classifier_categories: Array.from(outputClassifierCategories || []).sort(),
+    output_classifier_blocked: outputClassifierBlocked === true ? true : undefined,
   };
 }
 
@@ -82,6 +87,11 @@ async function runStreamEgressStage({
   const streamEntropyFindings = [];
   let streamEntropyProjectedRedaction = null;
   let streamEntropyMode = null;
+  let streamTerminatedForClassifier = false;
+  let streamOutputClassifierDetected = false;
+  const streamOutputClassifierCategories = new Set();
+  const classifierDecoder = new StringDecoder('utf8');
+  let classifierWindow = '';
   const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
   const streamProof = server.provenanceSigner.createStreamContext({
     statusCode: upstream.status,
@@ -209,10 +219,74 @@ async function runStreamEgressStage({
     }
   }
 
+  const evaluateOutputClassifierChunk = (decodedChunk) => {
+    if (!server.outputClassifier?.isEnabled?.() || !decodedChunk || streamTerminatedForClassifier) {
+      return;
+    }
+    classifierWindow += decodedChunk;
+    const maxChars = Number(server.outputClassifier?.config?.maxScanChars || 8192);
+    if (classifierWindow.length > maxChars) {
+      classifierWindow = classifierWindow.slice(-maxChars);
+    }
+
+    const decision = server.outputClassifier.classifyText(classifierWindow, {
+      effectiveMode,
+    });
+    if (!decision?.enabled || decision.warnedBy?.length === 0) {
+      return;
+    }
+
+    if (!streamOutputClassifierDetected) {
+      streamOutputClassifierDetected = true;
+      server.stats.output_classifier_detected += 1;
+      warnings.push('output_classifier:stream_detected');
+      server.stats.warnings_total += 1;
+    }
+    for (const category of decision.warnedBy) {
+      if (!streamOutputClassifierCategories.has(category)) {
+        streamOutputClassifierCategories.add(category);
+        const counterKey = `output_classifier_${String(category)}_detected`;
+        if (Object.prototype.hasOwnProperty.call(server.stats, counterKey)) {
+          server.stats[counterKey] += 1;
+        }
+      }
+    }
+
+    if (!res.headersSent) {
+      res.setHeader('x-sentinel-output-classifier', decision.shouldBlock ? 'block' : 'warn');
+      res.setHeader(
+        'x-sentinel-output-classifier-categories',
+        Array.from(streamOutputClassifierCategories).sort().join(',')
+      );
+    }
+
+    if (decision.shouldBlock && !streamTerminatedForClassifier) {
+      streamTerminatedForClassifier = true;
+      server.stats.blocked_total += 1;
+      server.stats.output_classifier_blocked += 1;
+      warnings.push('output_classifier_stream_blocked');
+      server.stats.warnings_total += 1;
+      if (!res.headersSent) {
+        res.setHeader('x-sentinel-blocked-by', 'output_classifier');
+        res.setHeader('x-sentinel-egress-action', 'stream_terminate');
+      }
+      terminateStream({
+        upstreamBodyStream: upstream.bodyStream,
+        streamOut,
+        res,
+        code: 'EGRESS_STREAM_BLOCKED',
+      });
+    }
+  };
+
   streamOut.on('data', (chunk) => {
     streamedBytes += chunk.length;
     if (streamProof) {
       streamProof.update(chunk);
+    }
+    const decoded = classifierDecoder.write(chunk);
+    if (decoded) {
+      evaluateOutputClassifierChunk(decoded);
     }
   });
 
@@ -300,6 +374,10 @@ async function runStreamEgressStage({
   });
 
   streamOut.on('end', async () => {
+    const trailing = classifierDecoder.end();
+    if (trailing) {
+      evaluateOutputClassifierChunk(trailing);
+    }
     if (canAddProofTrailers) {
       const proof = streamProof.finalize();
       if (proof) {
@@ -324,6 +402,8 @@ async function runStreamEgressStage({
         streamEntropyFindings,
         streamEntropyMode,
         streamEntropyProjectedRedaction,
+        outputClassifierCategories: streamOutputClassifierCategories,
+        outputClassifierBlocked: streamTerminatedForClassifier,
       }),
     });
     server.writeStatus();
@@ -337,11 +417,19 @@ async function runStreamEgressStage({
   streamOut.on('error', (error) => {
     void (async () => {
       const budgetCharge = await finalizeStreamBudget();
-      if ((streamTerminatedForPII || streamTerminatedForEntropy) && String(error.message || '') === 'EGRESS_STREAM_BLOCKED') {
+      if (
+        (streamTerminatedForPII || streamTerminatedForEntropy || streamTerminatedForClassifier) &&
+        String(error.message || '') === 'EGRESS_STREAM_BLOCKED'
+      ) {
+        const blockReason = streamTerminatedForClassifier
+          ? 'output_classifier_stream_blocked'
+          : streamTerminatedForEntropy
+            ? 'egress_entropy_stream_blocked'
+            : 'egress_stream_blocked';
         server.auditLogger.write({
           ...buildStreamAuditPayload({
             decision: 'blocked_egress_stream',
-            reasons: [streamTerminatedForEntropy ? 'egress_entropy_stream_blocked' : 'egress_stream_blocked'],
+            reasons: [blockReason],
             responseStatus: 499,
             responseBytes: streamedBytes,
             budgetCharge,
@@ -353,6 +441,8 @@ async function runStreamEgressStage({
             streamEntropyFindings,
             streamEntropyMode,
             streamEntropyProjectedRedaction,
+            outputClassifierCategories: streamOutputClassifierCategories,
+            outputClassifierBlocked: streamTerminatedForClassifier,
           }),
         });
         server.writeStatus();

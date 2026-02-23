@@ -49,6 +49,15 @@
 - Gate status:
   - `passed`
 
+## P1 Module Micro-Perf Gate
+
+- Threshold config:
+  - `metrics/p1-engine-perf-thresholds.json`
+- Gate command:
+  - `npm run perf:p1:gate`
+- SLO target:
+  - combined p95 across P1 modules (`atlas`, `aibom`, `posture`, `owasp mapper`) stays under `2.0 ms` on runner profile.
+
 ## Reliability Evidence
 
 - Versioned reliability reports:
@@ -79,6 +88,15 @@
 - Dependency audit:
   - `npm audit --omit=dev --audit-level=high` passed (`0 vulnerabilities`)
 
+## Posture Evidence Format Extension
+
+Future release evidence pages will include posture snapshots from:
+
+- `GET /_sentinel/health` (`posture.overall`, `posture.categories`, thresholds)
+- `sentinel posture --json --audit-path <path>`
+
+Posture is advisory-only and does not alter enforcement decisions.
+
 ## Repro Commands
 
 ```bash
@@ -93,4 +111,3 @@ npm run benchmark:gate
 ls -1 metrics/reliability-*.json | wc -l
 shasum -a 256 metrics/reliability-*.json
 ```
-

@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-02-23T08:37:32.523Z",
+  "benchmark": {
+    "duration_seconds": 3,
+    "connections": 16,
+    "pipelining": 1,
+    "upstream_latency_ms": 25
+  },
+  "direct": {
+    "requests_per_sec": 560.67,
+    "throughput_bytes_per_sec": 137365.34,
+    "latency_ms": {
+      "avg": 27.83,
+      "p50": 27,
+      "p95": 33,
+      "p99": 34,
+      "max": 36
+    }
+  },
+  "sentinel": {
+    "requests_per_sec": 503.67,
+    "throughput_bytes_per_sec": 276949.34,
+    "latency_ms": {
+      "avg": 31.01,
+      "p50": 30,
+      "p95": 34,
+      "p99": 76,
+      "max": 82
+    }
+  },
+  "overhead": {
+    "p95_ms": 1,
+    "p95_percent": 3.03,
+    "requests_per_sec_delta": -57
+  }
+}

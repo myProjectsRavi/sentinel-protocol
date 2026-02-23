@@ -208,6 +208,11 @@ runtime:
     port: 8788
     auth_token: ""
     allow_remote: false
+  posture_scoring:
+    enabled: true
+    include_counters: true
+    warn_threshold: 70
+    critical_threshold: 50
   websocket:
     enabled: true
     mode: monitor # monitor | enforce
@@ -233,6 +238,96 @@ runtime:
     max_recent: 5
     max_keys: 2048
     key_header: x-sentinel-agent-id
+  agentic_threat_shield:
+    enabled: false
+    mode: monitor # monitor | block
+    max_tool_call_depth: 10
+    max_agent_delegations: 5
+    max_analysis_nodes: 4096
+    max_tool_calls_analyzed: 1024
+    block_on_analysis_truncation: false
+    detect_cycles: true
+    verify_identity_tokens: false
+    identity_token_header: x-sentinel-agent-token
+    agent_id_header: x-sentinel-agent-id
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    hmac_secret: ""
+    ttl_ms: 900000
+    max_sessions: 5000
+    max_graph_edges_per_session: 256
+    observability: true
+  mcp_poisoning:
+    enabled: false
+    mode: monitor # monitor | block
+    description_threshold: 0.65
+    max_description_scan_bytes: 8192
+    max_argument_bytes: 65536
+    max_tools: 64
+    max_drift_snapshot_bytes: 131072
+    block_on_config_drift: false
+    detect_config_drift: true
+    drift_ttl_ms: 3600000
+    max_server_entries: 2000
+    sanitize_arguments: true
+    strip_non_printable: true
+    observability: true
+  prompt_rebuff:
+    enabled: false
+    mode: monitor # monitor | block
+    sensitivity: balanced # permissive | balanced | paranoid
+    heuristic_weight: 0.55
+    neural_weight: 0.35
+    canary_weight: 0.25
+    warn_threshold: 0.65
+    block_threshold: 0.85
+    max_body_chars: 8192
+    max_response_chars: 8192
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    ttl_ms: 900000
+    max_sessions: 5000
+    canary_tool_name: fetch_admin_passwords
+    observability: true
+  output_classifier:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_chars: 8192
+    categories:
+      toxicity:
+        enabled: true
+        warn_threshold: 0.45
+        block_threshold: 0.8
+      code_execution:
+        enabled: true
+        warn_threshold: 0.4
+        block_threshold: 0.75
+      hallucination:
+        enabled: true
+        warn_threshold: 0.5
+        block_threshold: 0.85
+      unauthorized_disclosure:
+        enabled: true
+        warn_threshold: 0.4
+        block_threshold: 0.7
+  output_schema_validator:
+    enabled: false
+    mode: monitor # monitor | block
+    default_schema: ""
+    schema_header: x-sentinel-output-schema
+    max_body_bytes: 1048576
+    schemas: {}
+  agent_observability:
+    enabled: false
+    max_events_per_request: 32
+    max_field_length: 160
+  differential_privacy:
+    enabled: false
+    epsilon_budget: 1.0
+    epsilon_per_call: 0.1
+    sensitivity: 1.0
+    max_simulation_calls: 1000
+    max_vector_length: 8192
   auto_immune:
     enabled: false
     mode: monitor # monitor | block
