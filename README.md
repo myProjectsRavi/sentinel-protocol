@@ -14,6 +14,24 @@ It sits between your app and model providers and gives you deterministic control
 
 If you are shipping AI features locally every day, Sentinel helps you ship faster with fewer security incidents and less operational chaos.
 
+## 90-Second Setup (Copy/Paste)
+
+If you want the fastest reliable path (without global install assumptions), run:
+
+```bash
+npx --yes --package sentinel-protocol sentinel init --force
+npx --yes --package sentinel-protocol sentinel doctor
+npx --yes --package sentinel-protocol sentinel start --dashboard
+```
+
+Then verify:
+
+```bash
+curl -sS http://127.0.0.1:8787/_sentinel/health
+```
+
+That is enough to start routing local SDK traffic through Sentinel.
+
 ## Executive Summary (Enterprise)
 
 Sentinel Protocol is a local AI governance perimeter that reduces four enterprise risks immediately:
@@ -25,7 +43,7 @@ Sentinel Protocol is a local AI governance perimeter that reduces four enterpris
 
 Deployment model is simple:
 
-- start local (`npx sentinel-protocol init && npx sentinel-protocol start`)
+- start local (`npx --yes --package sentinel-protocol sentinel init && npx --yes --package sentinel-protocol sentinel start`)
 - roll out monitor-first
 - enforce incrementally with explicit config and no silent behavior shifts
 
@@ -61,6 +79,14 @@ Operational model:
 - deterministic policy modes (`monitor`, `warn`, `enforce`)
 - config-as-contract (strict validation, migration, unknown-key rejection)
 - local-first runtime with optional precision/fallback providers
+
+Design principles:
+
+- default-safe posture (monitor-first for new/high-risk controls)
+- no silent behavior changes (config-driven and explicit)
+- deterministic responses and headers for debugging and auditability
+- bounded memory/state for long-running local and enterprise workloads
+- performance gates in CI so protection does not become operational drag
 
 ## Why Sentinel Exists
 
@@ -100,6 +126,21 @@ Most projects do one or two of these. Sentinel combines all of them in one local
 
 This is a governance perimeter, not just another model wrapper.
 
+## Complete Feature Map (Current)
+
+| Layer | Major Capabilities |
+|---|---|
+| Ingress risk controls | PII scan (`local` / `rapidapi` / `hybrid`), heuristic + neural injection scan, prompt rebuff correlation, policy engine |
+| Agentic and MCP controls | agentic threat shield (depth/delegation/identity), MCP poisoning detector (schema, description poisoning, config drift) |
+| Egress risk controls | output classifier (toxicity/code/hallucination/disclosure), structured output schema validator, entropy analyzer, SSE safeguards |
+| Governance intelligence | MITRE ATLAS mapping, OWASP compliance mapper, security posture scoring, AIBOM generator |
+| Privacy and trust | two-way vault detokenization, differential privacy research track (advisory), provenance/policy signing |
+| Reliability and cost | retry, circuit breaker, failover, loop breaker, intent throttle/drift, rate limiter, budget controls |
+| Transport hardening | DNS rebinding defenses, header scrubbing, websocket interception (policy parity with HTTP), stream guards |
+| Developer proof system | red-team (JSON + HTML), CI coverage gate, benchmark regression gate, SBOM (CycloneDX + SPDX), reliability reports |
+
+All of this runs local-first, with zero required paid infrastructure.
+
 ## Daily Developer Impact
 
 Sentinel improves local developer workflow immediately:
@@ -114,10 +155,18 @@ You can run it on your laptop in minutes and keep your current SDK/app code with
 
 ## Quick Start (Primary Path: npx)
 
+Recommended command style (works even without global install):
+
+```bash
+npx --yes --package sentinel-protocol sentinel <command>
+```
+
+Examples below use this pattern directly.
+
 ### 1. Initialize config
 
 ```bash
-npx sentinel-protocol init
+npx --yes --package sentinel-protocol sentinel init --force
 ```
 
 This creates `~/.sentinel/sentinel.yaml`.
@@ -125,13 +174,13 @@ This creates `~/.sentinel/sentinel.yaml`.
 ### 2. Validate readiness
 
 ```bash
-npx sentinel-protocol doctor
+npx --yes --package sentinel-protocol sentinel doctor
 ```
 
 ### 3. Start Sentinel
 
 ```bash
-npx sentinel-protocol start --dashboard
+npx --yes --package sentinel-protocol sentinel start --dashboard
 ```
 
 By default Sentinel runs at:
@@ -146,6 +195,12 @@ Dashboard (when enabled):
 http://127.0.0.1:8788
 ```
 
+Dashboard defaults:
+
+- localhost-only binding by default (`127.0.0.1`)
+- optional production auth token: `runtime.dashboard.auth_token`
+- if `runtime.dashboard.allow_remote=true`, auth token is mandatory
+
 ### 4. Route requests through Sentinel
 
 Set your SDK base URL to Sentinel and specify provider target with headers:
@@ -157,6 +212,22 @@ Health check:
 
 ```bash
 curl -sS http://127.0.0.1:8787/_sentinel/health
+```
+
+### 5. Fast SDK wiring pattern (minimal app change)
+
+Point your SDK to Sentinel as base URL and send `x-sentinel-target`.
+
+OpenAI JS example:
+
+```js
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  apiKey: 'sk-sentinel-local',
+  baseURL: 'http://127.0.0.1:8787/v1',
+  defaultHeaders: { 'x-sentinel-target': 'openai' },
+});
 ```
 
 ## Quick Start (Secondary Ops Path: Docker)
