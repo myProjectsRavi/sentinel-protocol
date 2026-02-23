@@ -13,6 +13,10 @@ const { PolicyBundle } = require('../src/governance/policy-bundle');
 const { RedTeamEngine } = require('../src/governance/red-team');
 const { renderRedTeamHtmlReport } = require('../src/governance/red-team-html-report');
 const { ComplianceEngine } = require('../src/governance/compliance-engine');
+const { EvidenceVault } = require('../src/governance/evidence-vault');
+const { ThreatPropagationGraph } = require('../src/governance/threat-propagation-graph');
+const { AttackCorpusEvolver } = require('../src/governance/attack-corpus-evolver');
+const { ForensicDebugger } = require('../src/governance/forensic-debugger');
 const { AtlasTracker } = require('../src/governance/atlas-tracker');
 const { AIBOMGenerator } = require('../src/governance/aibom-generator');
 const { computeSecurityPosture } = require('../src/governance/security-posture');
@@ -36,6 +40,24 @@ const { DEFAULT_CONFIG_PATH, AUDIT_LOG_PATH, STATUS_FILE_PATH } = require('../sr
 const program = new Command();
 
 program.name('sentinel').description('Sentinel Protocol CLI').version('1.0.0');
+
+function loadAuditEvents(auditPath, limit) {
+  const compliance = new ComplianceEngine({
+    auditPath,
+  });
+  const normalizedLimit = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : 200000;
+  return compliance.loadEventsWithMeta({ limit: normalizedLimit });
+}
+
+function emitOutput(payload, outPath) {
+  if (outPath) {
+    const absolute = path.resolve(outPath);
+    fs.writeFileSync(absolute, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    return absolute;
+  }
+  console.log(JSON.stringify(payload, null, 2));
+  return null;
+}
 
 program
   .command('init')
@@ -623,6 +645,238 @@ complianceCommand
       }
     } catch (error) {
       console.error(`OWASP LLM report failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+complianceCommand
+  .command('evidence-vault')
+  .description('Build deterministic compliance evidence packet from audit logs')
+  .option('--framework <name>', 'soc2 | iso27001 | eu-ai-act', 'soc2')
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--out <path>', 'Write evidence packet JSON to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const { events } = loadAuditEvents(options.auditPath, options.limit);
+      const vault = new EvidenceVault({
+        ...(loaded.config.runtime?.evidence_vault || {}),
+        enabled: true,
+      });
+      for (const event of events) {
+        vault.append({
+          timestamp: event.timestamp,
+          control: event?.atlas?.engine || event.provider || 'unknown',
+          outcome: event.decision || 'observed',
+          details: {
+            reason: event.reasons?.[0] || event.reason || 'n/a',
+            provider: event.provider || 'unknown',
+            status: event.response_status,
+          },
+        });
+      }
+      const payload = vault.exportPacket(options.framework || 'soc2');
+      payload.source = {
+        audit_path: options.auditPath,
+        events_considered: events.length,
+      };
+      const written = emitOutput(payload, options.out);
+      if (written) {
+        console.log(`Evidence packet written: ${written}`);
+      }
+    } catch (error) {
+      console.error(`Evidence packet generation failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const threatCommand = program.command('threat').description('Threat graph and corpus evolution utilities');
+
+threatCommand
+  .command('graph')
+  .description('Generate cross-agent threat propagation graph from audit logs')
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--format <format>', 'json | mermaid | dot', 'json')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--out <path>', 'Write report to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const { events } = loadAuditEvents(options.auditPath, options.limit);
+      const graph = new ThreatPropagationGraph({
+        ...(loaded.config.runtime?.threat_graph || {}),
+        enabled: true,
+      });
+      for (const event of events) {
+        graph.ingest(event);
+      }
+      const format = String(options.format || 'json').toLowerCase();
+      if (!['json', 'mermaid', 'dot'].includes(format)) {
+        throw new Error('Invalid --format value. Use json, mermaid, or dot.');
+      }
+      const output = graph.export(format);
+      if (options.out) {
+        const outPath = path.resolve(options.out);
+        const serialized = typeof output === 'string' ? output : `${JSON.stringify(output, null, 2)}\n`;
+        fs.writeFileSync(outPath, serialized, 'utf8');
+        console.log(`Threat graph written: ${outPath}`);
+      } else if (typeof output === 'string') {
+        console.log(output);
+      } else {
+        console.log(JSON.stringify(output, null, 2));
+      }
+    } catch (error) {
+      console.error(`Threat graph generation failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+threatCommand
+  .command('evolve-corpus')
+  .description('Derive sanitized attack corpus candidates from blocked audit events')
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--include-monitor', 'Include monitor decisions in candidate corpus')
+  .option('--out <path>', 'Write evolved fixture pack JSON to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const { events } = loadAuditEvents(options.auditPath, options.limit);
+      const evolver = new AttackCorpusEvolver({
+        ...(loaded.config.runtime?.attack_corpus_evolver || {}),
+        enabled: true,
+        include_monitor_decisions: options.includeMonitor === true
+          ? true
+          : loaded.config.runtime?.attack_corpus_evolver?.include_monitor_decisions === true,
+      });
+      for (const event of events) {
+        evolver.ingestAuditEvent(event);
+      }
+      const pack = evolver.exportFixturePack();
+      pack.source = {
+        audit_path: options.auditPath,
+        events_considered: events.length,
+      };
+      const written = emitOutput(pack, options.out);
+      if (written) {
+        console.log(`Evolved attack corpus written: ${written}`);
+      }
+    } catch (error) {
+      console.error(`Attack corpus evolution failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+const forensicCommand = program.command('forensic').description('Replay-safe forensic debugging utilities');
+
+forensicCommand
+  .command('capture')
+  .description('Capture replay-safe forensic snapshot from request/decision files')
+  .requiredOption('--request <path>', 'Request JSON path')
+  .requiredOption('--decision <path>', 'Decision JSON path')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--summary-only', 'Store summary-only snapshot payload')
+  .option('--out <path>', 'Write snapshot JSON to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const requestPayload = JSON.parse(fs.readFileSync(path.resolve(options.request), 'utf8'));
+      const decisionPayload = JSON.parse(fs.readFileSync(path.resolve(options.decision), 'utf8'));
+      const debuggerEngine = new ForensicDebugger({
+        ...(loaded.config.runtime?.forensic_debugger || {}),
+        enabled: true,
+      });
+      const snapshot = debuggerEngine.capture({
+        request: requestPayload,
+        decision: decisionPayload,
+        configVersion: loaded.config.version,
+        summaryOnly: options.summaryOnly === true,
+      });
+      const written = emitOutput(snapshot, options.out);
+      if (written) {
+        console.log(`Forensic snapshot written: ${written}`);
+      }
+    } catch (error) {
+      console.error(`Forensic capture failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+forensicCommand
+  .command('replay')
+  .description('Replay snapshot with optional what-if threshold overrides')
+  .requiredOption('--snapshot <path>', 'Snapshot JSON path')
+  .option('--overrides <path>', 'JSON file with what-if overrides')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--out <path>', 'Write replay report JSON to path')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const snapshot = JSON.parse(fs.readFileSync(path.resolve(options.snapshot), 'utf8'));
+      const overrides = options.overrides
+        ? JSON.parse(fs.readFileSync(path.resolve(options.overrides), 'utf8'))
+        : {};
+      const debuggerEngine = new ForensicDebugger({
+        ...(loaded.config.runtime?.forensic_debugger || {}),
+        enabled: true,
+      });
+
+      const evaluators = [
+        {
+          name: 'injection_threshold_probe',
+          run({ decision = {}, overrides: localOverrides = {} }) {
+            const score = Number(decision.injection_score || decision.prompt_rebuff_score || 0);
+            const threshold = Number(
+              localOverrides.injection_threshold
+                ?? loaded.config.injection?.threshold
+                ?? 0.8
+            );
+            return {
+              blocked: score >= threshold,
+              score,
+              threshold,
+            };
+          },
+        },
+      ];
+      const replay = debuggerEngine.replay(snapshot, evaluators, overrides);
+      const replayDecision = replay.results[0]?.result || {};
+      const diff = debuggerEngine.diff(snapshot.decision || {}, replayDecision);
+      const payload = {
+        snapshot_id: snapshot.id || null,
+        replay,
+        diff,
+      };
+      const written = emitOutput(payload, options.out);
+      if (written) {
+        console.log(`Forensic replay report written: ${written}`);
+      }
+    } catch (error) {
+      console.error(`Forensic replay failed: ${error.message}`);
       process.exitCode = 1;
     }
   });

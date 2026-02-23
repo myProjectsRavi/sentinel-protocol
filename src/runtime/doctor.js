@@ -83,6 +83,7 @@ function runDoctorChecks(config, env = process.env) {
   const epistemicAnchor = config?.runtime?.epistemic_anchor || {};
   const dashboard = config?.runtime?.dashboard || {};
   const budget = config?.runtime?.budget || {};
+  const budgetAutopilot = config?.runtime?.budget_autopilot || {};
   const upstream = config?.runtime?.upstream || {};
   const autoImmune = config?.runtime?.auto_immune || {};
   const mesh = upstream.resilience_mesh || {};
@@ -584,6 +585,38 @@ function runDoctorChecks(config, env = process.env) {
         Number(budget.input_cost_per_1k_tokens) > 0 || Number(budget.output_cost_per_1k_tokens) > 0
           ? 'Budget token pricing is configured.'
           : 'Budget enabled with zero token pricing. Accounting will track tokens but estimated spend will remain $0.',
+    });
+  }
+
+  if (budgetAutopilot.enabled === true) {
+    checks.push({
+      id: 'budget-autopilot-mode',
+      status: ['monitor', 'active'].includes(String(budgetAutopilot.mode || '').toLowerCase()) ? 'pass' : 'fail',
+      message:
+        ['monitor', 'active'].includes(String(budgetAutopilot.mode || '').toLowerCase())
+          ? `Budget autopilot enabled in '${String(budgetAutopilot.mode || 'monitor')}' mode.`
+          : `Budget autopilot mode '${String(budgetAutopilot.mode || '')}' is invalid.`,
+    });
+    checks.push({
+      id: 'budget-autopilot-weights',
+      status:
+        Number.isFinite(Number(budgetAutopilot.cost_weight))
+        && Number.isFinite(Number(budgetAutopilot.latency_weight))
+        && Number(budgetAutopilot.cost_weight) >= 0
+        && Number(budgetAutopilot.cost_weight) <= 1
+        && Number(budgetAutopilot.latency_weight) >= 0
+        && Number(budgetAutopilot.latency_weight) <= 1
+          ? 'pass'
+          : 'warn',
+      message:
+        Number.isFinite(Number(budgetAutopilot.cost_weight))
+        && Number.isFinite(Number(budgetAutopilot.latency_weight))
+        && Number(budgetAutopilot.cost_weight) >= 0
+        && Number(budgetAutopilot.cost_weight) <= 1
+        && Number(budgetAutopilot.latency_weight) >= 0
+        && Number(budgetAutopilot.latency_weight) <= 1
+          ? `Budget autopilot weights cost=${Number(budgetAutopilot.cost_weight)} latency=${Number(budgetAutopilot.latency_weight)}`
+          : 'Budget autopilot weights should be in range [0,1].',
     });
   }
 

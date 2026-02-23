@@ -144,11 +144,40 @@ export interface EmbeddedScanResult {
   };
 }
 
+export interface EmbeddedSecureFetchOptions {
+  method?: string;
+  headers?: Record<string, string> | Array<[string, string]>;
+  body?: unknown;
+  fetchImpl?: (url: string, options?: unknown) => Promise<unknown>;
+  [key: string]: unknown;
+}
+
+export interface EmbeddedLangChainCallback {
+  handleLLMStart(llm: unknown, prompts?: string[], runId?: string): Promise<void>;
+  handleLLMEnd(output: unknown, runId?: string): Promise<void>;
+  handleLLMError(error: unknown, runId?: string): Promise<void>;
+}
+
+export interface EmbeddedLlamaIndexCallback {
+  onStart(meta?: Record<string, unknown>): Promise<void>;
+  onComplete(meta?: Record<string, unknown>): Promise<void>;
+  onError(error: unknown, meta?: Record<string, unknown>): Promise<void>;
+}
+
+export interface EmbeddedFrameworkCallbacks {
+  langchainCallback(): EmbeddedLangChainCallback;
+  llamaIndexCallback(): EmbeddedLlamaIndexCallback;
+}
+
 export interface EmbeddedSentinel {
   app: SentinelExpressApp;
   server: SentinelServerInstance;
   use(plugin: SentinelPlugin): EmbeddedSentinel;
   middleware(): SentinelMiddleware;
+  secureFetch(url: string, options?: EmbeddedSecureFetchOptions): Promise<unknown>;
+  frameworkCallbacks(): EmbeddedFrameworkCallbacks;
+  langchainCallback(): EmbeddedLangChainCallback;
+  llamaIndexCallback(): EmbeddedLlamaIndexCallback;
   start(): HttpServer;
   stop(): Promise<void>;
   scan(payload: unknown, requestHeaders?: Record<string, string>): Promise<EmbeddedScanResult>;

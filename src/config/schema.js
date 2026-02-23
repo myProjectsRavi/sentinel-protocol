@@ -1,4 +1,5 @@
 const os = require('os');
+const { compileRules } = require('../policy/semantic-firewall-dsl');
 
 const VALID_MODES = new Set(['monitor', 'warn', 'enforce']);
 const VALID_ACTIONS = new Set(['allow', 'block', 'warn']);
@@ -32,6 +33,16 @@ const RUNTIME_KEYS = new Set([
   'agentic_threat_shield',
   'mcp_poisoning',
   'mcp_shadow',
+  'memory_poisoning',
+  'cascade_isolator',
+  'agent_identity_federation',
+  'tool_use_anomaly',
+  'semantic_firewall_dsl',
+  'budget_autopilot',
+  'evidence_vault',
+  'threat_graph',
+  'attack_corpus_evolver',
+  'forensic_debugger',
   'prompt_rebuff',
   'output_classifier',
   'output_schema_validator',
@@ -328,6 +339,115 @@ const MCP_SHADOW_KEYS = new Set([
   'observability',
 ]);
 const MCP_SHADOW_MODES = new Set(['monitor', 'block']);
+const MEMORY_POISONING_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_content_chars',
+  'ttl_ms',
+  'max_sessions',
+  'max_writes_per_session',
+  'detect_contradictions',
+  'block_on_poisoning',
+  'block_on_contradiction',
+  'quarantine_on_detect',
+  'policy_anchors',
+  'observability',
+]);
+const MEMORY_POISONING_MODES = new Set(['monitor', 'block']);
+const CASCADE_ISOLATOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_sessions',
+  'max_nodes',
+  'max_edges',
+  'max_downstream_agents',
+  'max_influence_ratio',
+  'anomaly_threshold',
+  'block_on_threshold',
+  'observability',
+]);
+const CASCADE_ISOLATOR_MODES = new Set(['monitor', 'block']);
+const AGENT_IDENTITY_FEDERATION_KEYS = new Set([
+  'enabled',
+  'mode',
+  'token_header',
+  'agent_id_header',
+  'correlation_header',
+  'hmac_secret',
+  'ttl_ms',
+  'max_chain_depth',
+  'max_replay_entries',
+  'block_on_invalid_token',
+  'block_on_capability_widen',
+  'block_on_replay',
+  'observability',
+]);
+const AGENT_IDENTITY_FEDERATION_MODES = new Set(['monitor', 'block']);
+const TOOL_USE_ANOMALY_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_agents',
+  'max_tools_per_agent',
+  'warmup_events',
+  'z_score_threshold',
+  'sequence_threshold',
+  'block_on_anomaly',
+  'observability',
+]);
+const TOOL_USE_ANOMALY_MODES = new Set(['monitor', 'block']);
+const SEMANTIC_FIREWALL_DSL_KEYS = new Set([
+  'enabled',
+  'rules',
+  'max_rules',
+  'observability',
+]);
+const BUDGET_AUTOPILOT_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_providers',
+  'min_samples',
+  'cost_weight',
+  'latency_weight',
+  'warn_budget_ratio',
+  'sla_p95_ms',
+  'horizon_hours',
+  'observability',
+]);
+const BUDGET_AUTOPILOT_MODES = new Set(['monitor', 'active']);
+const EVIDENCE_VAULT_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_entries',
+  'retention_days',
+  'file_path',
+  'observability',
+]);
+const EVIDENCE_VAULT_MODES = new Set(['monitor', 'active']);
+const THREAT_GRAPH_KEYS = new Set([
+  'enabled',
+  'max_events',
+  'window_ms',
+  'risk_decay',
+  'observability',
+]);
+const ATTACK_CORPUS_EVOLVER_KEYS = new Set([
+  'enabled',
+  'max_candidates',
+  'max_prompt_chars',
+  'max_families',
+  'include_monitor_decisions',
+  'observability',
+]);
+const FORENSIC_DEBUGGER_KEYS = new Set([
+  'enabled',
+  'max_snapshots',
+  'redact_fields',
+  'default_summary_only',
+  'observability',
+]);
 const PROMPT_REBUFF_KEYS = new Set([
   'enabled',
   'mode',
@@ -1334,6 +1454,141 @@ function applyDefaults(config) {
   mcpShadow.name_similarity_distance = Number(mcpShadow.name_similarity_distance ?? 1);
   mcpShadow.max_name_candidates = Number(mcpShadow.max_name_candidates ?? 128);
   mcpShadow.observability = mcpShadow.observability !== false;
+
+  normalized.runtime.memory_poisoning = normalized.runtime.memory_poisoning || {};
+  const memoryPoisoning = normalized.runtime.memory_poisoning;
+  memoryPoisoning.enabled = memoryPoisoning.enabled === true;
+  memoryPoisoning.mode = MEMORY_POISONING_MODES.has(String(memoryPoisoning.mode || '').toLowerCase())
+    ? String(memoryPoisoning.mode).toLowerCase()
+    : 'monitor';
+  memoryPoisoning.max_content_chars = Number(memoryPoisoning.max_content_chars ?? 32768);
+  memoryPoisoning.ttl_ms = Number(memoryPoisoning.ttl_ms ?? 6 * 3600000);
+  memoryPoisoning.max_sessions = Number(memoryPoisoning.max_sessions ?? 5000);
+  memoryPoisoning.max_writes_per_session = Number(memoryPoisoning.max_writes_per_session ?? 128);
+  memoryPoisoning.detect_contradictions = memoryPoisoning.detect_contradictions !== false;
+  memoryPoisoning.block_on_poisoning = memoryPoisoning.block_on_poisoning === true;
+  memoryPoisoning.block_on_contradiction = memoryPoisoning.block_on_contradiction === true;
+  memoryPoisoning.quarantine_on_detect = memoryPoisoning.quarantine_on_detect !== false;
+  memoryPoisoning.policy_anchors = Array.isArray(memoryPoisoning.policy_anchors)
+    ? memoryPoisoning.policy_anchors.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  memoryPoisoning.observability = memoryPoisoning.observability !== false;
+
+  normalized.runtime.cascade_isolator = normalized.runtime.cascade_isolator || {};
+  const cascadeIsolator = normalized.runtime.cascade_isolator;
+  cascadeIsolator.enabled = cascadeIsolator.enabled === true;
+  cascadeIsolator.mode = CASCADE_ISOLATOR_MODES.has(String(cascadeIsolator.mode || '').toLowerCase())
+    ? String(cascadeIsolator.mode).toLowerCase()
+    : 'monitor';
+  cascadeIsolator.ttl_ms = Number(cascadeIsolator.ttl_ms ?? 6 * 3600000);
+  cascadeIsolator.max_sessions = Number(cascadeIsolator.max_sessions ?? 5000);
+  cascadeIsolator.max_nodes = Number(cascadeIsolator.max_nodes ?? 512);
+  cascadeIsolator.max_edges = Number(cascadeIsolator.max_edges ?? 2048);
+  cascadeIsolator.max_downstream_agents = Number(cascadeIsolator.max_downstream_agents ?? 16);
+  cascadeIsolator.max_influence_ratio = Number(cascadeIsolator.max_influence_ratio ?? 0.6);
+  cascadeIsolator.anomaly_threshold = Number(cascadeIsolator.anomaly_threshold ?? 0.75);
+  cascadeIsolator.block_on_threshold = cascadeIsolator.block_on_threshold === true;
+  cascadeIsolator.observability = cascadeIsolator.observability !== false;
+
+  normalized.runtime.agent_identity_federation = normalized.runtime.agent_identity_federation || {};
+  const agentIdentityFederation = normalized.runtime.agent_identity_federation;
+  agentIdentityFederation.enabled = agentIdentityFederation.enabled === true;
+  agentIdentityFederation.mode = AGENT_IDENTITY_FEDERATION_MODES.has(String(agentIdentityFederation.mode || '').toLowerCase())
+    ? String(agentIdentityFederation.mode).toLowerCase()
+    : 'monitor';
+  agentIdentityFederation.token_header = String(agentIdentityFederation.token_header || 'x-sentinel-agent-token').toLowerCase();
+  agentIdentityFederation.agent_id_header = String(agentIdentityFederation.agent_id_header || 'x-sentinel-agent-id').toLowerCase();
+  agentIdentityFederation.correlation_header = String(
+    agentIdentityFederation.correlation_header || 'x-sentinel-correlation-id'
+  ).toLowerCase();
+  agentIdentityFederation.hmac_secret = String(
+    agentIdentityFederation.hmac_secret || process.env.SENTINEL_AGENT_IDENTITY_HMAC || ''
+  );
+  agentIdentityFederation.ttl_ms = Number(agentIdentityFederation.ttl_ms ?? 900000);
+  agentIdentityFederation.max_chain_depth = Number(agentIdentityFederation.max_chain_depth ?? 8);
+  agentIdentityFederation.max_replay_entries = Number(agentIdentityFederation.max_replay_entries ?? 10000);
+  agentIdentityFederation.block_on_invalid_token = agentIdentityFederation.block_on_invalid_token === true;
+  agentIdentityFederation.block_on_capability_widen = agentIdentityFederation.block_on_capability_widen === true;
+  agentIdentityFederation.block_on_replay = agentIdentityFederation.block_on_replay === true;
+  agentIdentityFederation.observability = agentIdentityFederation.observability !== false;
+
+  normalized.runtime.tool_use_anomaly = normalized.runtime.tool_use_anomaly || {};
+  const toolUseAnomaly = normalized.runtime.tool_use_anomaly;
+  toolUseAnomaly.enabled = toolUseAnomaly.enabled === true;
+  toolUseAnomaly.mode = TOOL_USE_ANOMALY_MODES.has(String(toolUseAnomaly.mode || '').toLowerCase())
+    ? String(toolUseAnomaly.mode).toLowerCase()
+    : 'monitor';
+  toolUseAnomaly.ttl_ms = Number(toolUseAnomaly.ttl_ms ?? 6 * 3600000);
+  toolUseAnomaly.max_agents = Number(toolUseAnomaly.max_agents ?? 5000);
+  toolUseAnomaly.max_tools_per_agent = Number(toolUseAnomaly.max_tools_per_agent ?? 256);
+  toolUseAnomaly.warmup_events = Number(toolUseAnomaly.warmup_events ?? 20);
+  toolUseAnomaly.z_score_threshold = Number(toolUseAnomaly.z_score_threshold ?? 3);
+  toolUseAnomaly.sequence_threshold = Number(toolUseAnomaly.sequence_threshold ?? 2);
+  toolUseAnomaly.block_on_anomaly = toolUseAnomaly.block_on_anomaly === true;
+  toolUseAnomaly.observability = toolUseAnomaly.observability !== false;
+
+  normalized.runtime.semantic_firewall_dsl = normalized.runtime.semantic_firewall_dsl || {};
+  const semanticFirewallDsl = normalized.runtime.semantic_firewall_dsl;
+  semanticFirewallDsl.enabled = semanticFirewallDsl.enabled === true;
+  semanticFirewallDsl.rules = Array.isArray(semanticFirewallDsl.rules)
+    ? semanticFirewallDsl.rules.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  semanticFirewallDsl.max_rules = Number(semanticFirewallDsl.max_rules ?? 128);
+  semanticFirewallDsl.observability = semanticFirewallDsl.observability !== false;
+
+  normalized.runtime.budget_autopilot = normalized.runtime.budget_autopilot || {};
+  const budgetAutopilot = normalized.runtime.budget_autopilot;
+  budgetAutopilot.enabled = budgetAutopilot.enabled === true;
+  budgetAutopilot.mode = BUDGET_AUTOPILOT_MODES.has(String(budgetAutopilot.mode || '').toLowerCase())
+    ? String(budgetAutopilot.mode).toLowerCase()
+    : 'monitor';
+  budgetAutopilot.ttl_ms = Number(budgetAutopilot.ttl_ms ?? 24 * 3600000);
+  budgetAutopilot.max_providers = Number(budgetAutopilot.max_providers ?? 256);
+  budgetAutopilot.min_samples = Number(budgetAutopilot.min_samples ?? 8);
+  budgetAutopilot.cost_weight = Number(budgetAutopilot.cost_weight ?? 0.6);
+  budgetAutopilot.latency_weight = Number(budgetAutopilot.latency_weight ?? 0.4);
+  budgetAutopilot.warn_budget_ratio = Number(budgetAutopilot.warn_budget_ratio ?? 0.2);
+  budgetAutopilot.sla_p95_ms = Number(budgetAutopilot.sla_p95_ms ?? 2000);
+  budgetAutopilot.horizon_hours = Number(budgetAutopilot.horizon_hours ?? 24);
+  budgetAutopilot.observability = budgetAutopilot.observability !== false;
+
+  normalized.runtime.evidence_vault = normalized.runtime.evidence_vault || {};
+  const evidenceVault = normalized.runtime.evidence_vault;
+  evidenceVault.enabled = evidenceVault.enabled === true;
+  evidenceVault.mode = EVIDENCE_VAULT_MODES.has(String(evidenceVault.mode || '').toLowerCase())
+    ? String(evidenceVault.mode).toLowerCase()
+    : 'monitor';
+  evidenceVault.max_entries = Number(evidenceVault.max_entries ?? 100000);
+  evidenceVault.retention_days = Number(evidenceVault.retention_days ?? 90);
+  evidenceVault.file_path = String(evidenceVault.file_path || '');
+  evidenceVault.observability = evidenceVault.observability !== false;
+
+  normalized.runtime.threat_graph = normalized.runtime.threat_graph || {};
+  const threatGraph = normalized.runtime.threat_graph;
+  threatGraph.enabled = threatGraph.enabled === true;
+  threatGraph.max_events = Number(threatGraph.max_events ?? 20000);
+  threatGraph.window_ms = Number(threatGraph.window_ms ?? 24 * 3600000);
+  threatGraph.risk_decay = Number(threatGraph.risk_decay ?? 0.8);
+  threatGraph.observability = threatGraph.observability !== false;
+
+  normalized.runtime.attack_corpus_evolver = normalized.runtime.attack_corpus_evolver || {};
+  const attackCorpusEvolver = normalized.runtime.attack_corpus_evolver;
+  attackCorpusEvolver.enabled = attackCorpusEvolver.enabled === true;
+  attackCorpusEvolver.max_candidates = Number(attackCorpusEvolver.max_candidates ?? 10000);
+  attackCorpusEvolver.max_prompt_chars = Number(attackCorpusEvolver.max_prompt_chars ?? 2048);
+  attackCorpusEvolver.max_families = Number(attackCorpusEvolver.max_families ?? 256);
+  attackCorpusEvolver.include_monitor_decisions = attackCorpusEvolver.include_monitor_decisions === true;
+  attackCorpusEvolver.observability = attackCorpusEvolver.observability !== false;
+
+  normalized.runtime.forensic_debugger = normalized.runtime.forensic_debugger || {};
+  const forensicDebugger = normalized.runtime.forensic_debugger;
+  forensicDebugger.enabled = forensicDebugger.enabled === true;
+  forensicDebugger.max_snapshots = Number(forensicDebugger.max_snapshots ?? 5000);
+  forensicDebugger.redact_fields = Array.isArray(forensicDebugger.redact_fields)
+    ? forensicDebugger.redact_fields.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['headers.authorization', 'headers.x-api-key', 'body.api_key', 'body.password'];
+  forensicDebugger.default_summary_only = forensicDebugger.default_summary_only !== false;
+  forensicDebugger.observability = forensicDebugger.observability !== false;
 
   normalized.runtime.prompt_rebuff = normalized.runtime.prompt_rebuff || {};
   const promptRebuff = normalized.runtime.prompt_rebuff;
@@ -3023,6 +3278,529 @@ function validateConfigShape(config) {
     assertType(
       typeof mcpShadow.observability === 'boolean',
       '`runtime.mcp_shadow.observability` must be boolean',
+      details
+    );
+  }
+
+  const memoryPoisoning = runtime.memory_poisoning || {};
+  if (runtime.memory_poisoning !== undefined) {
+    assertNoUnknownKeys(memoryPoisoning, MEMORY_POISONING_KEYS, 'runtime.memory_poisoning', details);
+    assertType(
+      typeof memoryPoisoning.enabled === 'boolean',
+      '`runtime.memory_poisoning.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MEMORY_POISONING_MODES.has(String(memoryPoisoning.mode)),
+      '`runtime.memory_poisoning.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryPoisoning.max_content_chars) && memoryPoisoning.max_content_chars > 0,
+      '`runtime.memory_poisoning.max_content_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryPoisoning.ttl_ms) && memoryPoisoning.ttl_ms > 0,
+      '`runtime.memory_poisoning.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryPoisoning.max_sessions) && memoryPoisoning.max_sessions > 0,
+      '`runtime.memory_poisoning.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryPoisoning.max_writes_per_session) && memoryPoisoning.max_writes_per_session > 0,
+      '`runtime.memory_poisoning.max_writes_per_session` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof memoryPoisoning.detect_contradictions === 'boolean',
+      '`runtime.memory_poisoning.detect_contradictions` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryPoisoning.block_on_poisoning === 'boolean',
+      '`runtime.memory_poisoning.block_on_poisoning` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryPoisoning.block_on_contradiction === 'boolean',
+      '`runtime.memory_poisoning.block_on_contradiction` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryPoisoning.quarantine_on_detect === 'boolean',
+      '`runtime.memory_poisoning.quarantine_on_detect` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(memoryPoisoning.policy_anchors),
+      '`runtime.memory_poisoning.policy_anchors` must be array',
+      details
+    );
+    if (Array.isArray(memoryPoisoning.policy_anchors)) {
+      memoryPoisoning.policy_anchors.forEach((anchor, idx) => {
+        assertType(
+          typeof anchor === 'string' && anchor.length > 0,
+          `runtime.memory_poisoning.policy_anchors[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof memoryPoisoning.observability === 'boolean',
+      '`runtime.memory_poisoning.observability` must be boolean',
+      details
+    );
+  }
+
+  const cascadeIsolator = runtime.cascade_isolator || {};
+  if (runtime.cascade_isolator !== undefined) {
+    assertNoUnknownKeys(cascadeIsolator, CASCADE_ISOLATOR_KEYS, 'runtime.cascade_isolator', details);
+    assertType(
+      typeof cascadeIsolator.enabled === 'boolean',
+      '`runtime.cascade_isolator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      CASCADE_ISOLATOR_MODES.has(String(cascadeIsolator.mode)),
+      '`runtime.cascade_isolator.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(cascadeIsolator.ttl_ms) && cascadeIsolator.ttl_ms > 0,
+      '`runtime.cascade_isolator.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(cascadeIsolator.max_sessions) && cascadeIsolator.max_sessions > 0,
+      '`runtime.cascade_isolator.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(cascadeIsolator.max_nodes) && cascadeIsolator.max_nodes > 0,
+      '`runtime.cascade_isolator.max_nodes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(cascadeIsolator.max_edges) && cascadeIsolator.max_edges > 0,
+      '`runtime.cascade_isolator.max_edges` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(cascadeIsolator.max_downstream_agents) && cascadeIsolator.max_downstream_agents > 0,
+      '`runtime.cascade_isolator.max_downstream_agents` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(cascadeIsolator.max_influence_ratio)) &&
+        Number(cascadeIsolator.max_influence_ratio) >= 0 &&
+        Number(cascadeIsolator.max_influence_ratio) <= 1,
+      '`runtime.cascade_isolator.max_influence_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(cascadeIsolator.anomaly_threshold)) &&
+        Number(cascadeIsolator.anomaly_threshold) >= 0 &&
+        Number(cascadeIsolator.anomaly_threshold) <= 1,
+      '`runtime.cascade_isolator.anomaly_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      typeof cascadeIsolator.block_on_threshold === 'boolean',
+      '`runtime.cascade_isolator.block_on_threshold` must be boolean',
+      details
+    );
+    assertType(
+      typeof cascadeIsolator.observability === 'boolean',
+      '`runtime.cascade_isolator.observability` must be boolean',
+      details
+    );
+  }
+
+  const agentIdentityFederation = runtime.agent_identity_federation || {};
+  if (runtime.agent_identity_federation !== undefined) {
+    assertNoUnknownKeys(
+      agentIdentityFederation,
+      AGENT_IDENTITY_FEDERATION_KEYS,
+      'runtime.agent_identity_federation',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.enabled === 'boolean',
+      '`runtime.agent_identity_federation.enabled` must be boolean',
+      details
+    );
+    assertType(
+      AGENT_IDENTITY_FEDERATION_MODES.has(String(agentIdentityFederation.mode)),
+      '`runtime.agent_identity_federation.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.token_header === 'string' && agentIdentityFederation.token_header.length > 0,
+      '`runtime.agent_identity_federation.token_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.agent_id_header === 'string' && agentIdentityFederation.agent_id_header.length > 0,
+      '`runtime.agent_identity_federation.agent_id_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.correlation_header === 'string' && agentIdentityFederation.correlation_header.length > 0,
+      '`runtime.agent_identity_federation.correlation_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.hmac_secret === 'string',
+      '`runtime.agent_identity_federation.hmac_secret` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(agentIdentityFederation.ttl_ms) && agentIdentityFederation.ttl_ms > 0,
+      '`runtime.agent_identity_federation.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agentIdentityFederation.max_chain_depth) && agentIdentityFederation.max_chain_depth > 0,
+      '`runtime.agent_identity_federation.max_chain_depth` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(agentIdentityFederation.max_replay_entries) && agentIdentityFederation.max_replay_entries > 0,
+      '`runtime.agent_identity_federation.max_replay_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.block_on_invalid_token === 'boolean',
+      '`runtime.agent_identity_federation.block_on_invalid_token` must be boolean',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.block_on_capability_widen === 'boolean',
+      '`runtime.agent_identity_federation.block_on_capability_widen` must be boolean',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.block_on_replay === 'boolean',
+      '`runtime.agent_identity_federation.block_on_replay` must be boolean',
+      details
+    );
+    assertType(
+      typeof agentIdentityFederation.observability === 'boolean',
+      '`runtime.agent_identity_federation.observability` must be boolean',
+      details
+    );
+  }
+
+  const toolUseAnomaly = runtime.tool_use_anomaly || {};
+  if (runtime.tool_use_anomaly !== undefined) {
+    assertNoUnknownKeys(toolUseAnomaly, TOOL_USE_ANOMALY_KEYS, 'runtime.tool_use_anomaly', details);
+    assertType(
+      typeof toolUseAnomaly.enabled === 'boolean',
+      '`runtime.tool_use_anomaly.enabled` must be boolean',
+      details
+    );
+    assertType(
+      TOOL_USE_ANOMALY_MODES.has(String(toolUseAnomaly.mode)),
+      '`runtime.tool_use_anomaly.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(toolUseAnomaly.ttl_ms) && toolUseAnomaly.ttl_ms > 0,
+      '`runtime.tool_use_anomaly.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolUseAnomaly.max_agents) && toolUseAnomaly.max_agents > 0,
+      '`runtime.tool_use_anomaly.max_agents` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolUseAnomaly.max_tools_per_agent) && toolUseAnomaly.max_tools_per_agent > 0,
+      '`runtime.tool_use_anomaly.max_tools_per_agent` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolUseAnomaly.warmup_events) && toolUseAnomaly.warmup_events > 0,
+      '`runtime.tool_use_anomaly.warmup_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(toolUseAnomaly.z_score_threshold)) && Number(toolUseAnomaly.z_score_threshold) >= 0,
+      '`runtime.tool_use_anomaly.z_score_threshold` must be number >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolUseAnomaly.sequence_threshold) && toolUseAnomaly.sequence_threshold > 0,
+      '`runtime.tool_use_anomaly.sequence_threshold` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof toolUseAnomaly.block_on_anomaly === 'boolean',
+      '`runtime.tool_use_anomaly.block_on_anomaly` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolUseAnomaly.observability === 'boolean',
+      '`runtime.tool_use_anomaly.observability` must be boolean',
+      details
+    );
+  }
+
+  const semanticFirewallDsl = runtime.semantic_firewall_dsl || {};
+  if (runtime.semantic_firewall_dsl !== undefined) {
+    assertNoUnknownKeys(semanticFirewallDsl, SEMANTIC_FIREWALL_DSL_KEYS, 'runtime.semantic_firewall_dsl', details);
+    assertType(
+      typeof semanticFirewallDsl.enabled === 'boolean',
+      '`runtime.semantic_firewall_dsl.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(semanticFirewallDsl.rules),
+      '`runtime.semantic_firewall_dsl.rules` must be array',
+      details
+    );
+    if (Array.isArray(semanticFirewallDsl.rules)) {
+      semanticFirewallDsl.rules.forEach((rule, idx) => {
+        assertType(
+          typeof rule === 'string' && rule.length > 0,
+          `runtime.semantic_firewall_dsl.rules[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(semanticFirewallDsl.max_rules) && semanticFirewallDsl.max_rules > 0,
+      '`runtime.semantic_firewall_dsl.max_rules` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof semanticFirewallDsl.observability === 'boolean',
+      '`runtime.semantic_firewall_dsl.observability` must be boolean',
+      details
+    );
+    if (semanticFirewallDsl.enabled === true && Array.isArray(semanticFirewallDsl.rules)) {
+      try {
+        compileRules(semanticFirewallDsl.rules, {
+          maxRules: semanticFirewallDsl.max_rules,
+        });
+      } catch (error) {
+        details.push(`runtime.semantic_firewall_dsl.rules invalid: ${error.message}`);
+      }
+    }
+  }
+
+  const budgetAutopilot = runtime.budget_autopilot || {};
+  if (runtime.budget_autopilot !== undefined) {
+    assertNoUnknownKeys(budgetAutopilot, BUDGET_AUTOPILOT_KEYS, 'runtime.budget_autopilot', details);
+    assertType(
+      typeof budgetAutopilot.enabled === 'boolean',
+      '`runtime.budget_autopilot.enabled` must be boolean',
+      details
+    );
+    assertType(
+      BUDGET_AUTOPILOT_MODES.has(String(budgetAutopilot.mode)),
+      '`runtime.budget_autopilot.mode` must be monitor|active',
+      details
+    );
+    assertType(
+      Number.isInteger(budgetAutopilot.ttl_ms) && budgetAutopilot.ttl_ms > 0,
+      '`runtime.budget_autopilot.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(budgetAutopilot.max_providers) && budgetAutopilot.max_providers > 0,
+      '`runtime.budget_autopilot.max_providers` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(budgetAutopilot.min_samples) && budgetAutopilot.min_samples > 0,
+      '`runtime.budget_autopilot.min_samples` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budgetAutopilot.cost_weight)) &&
+        Number(budgetAutopilot.cost_weight) >= 0 &&
+        Number(budgetAutopilot.cost_weight) <= 1,
+      '`runtime.budget_autopilot.cost_weight` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budgetAutopilot.latency_weight)) &&
+        Number(budgetAutopilot.latency_weight) >= 0 &&
+        Number(budgetAutopilot.latency_weight) <= 1,
+      '`runtime.budget_autopilot.latency_weight` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budgetAutopilot.warn_budget_ratio)) &&
+        Number(budgetAutopilot.warn_budget_ratio) >= 0 &&
+        Number(budgetAutopilot.warn_budget_ratio) <= 1,
+      '`runtime.budget_autopilot.warn_budget_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budgetAutopilot.sla_p95_ms)) && Number(budgetAutopilot.sla_p95_ms) > 0,
+      '`runtime.budget_autopilot.sla_p95_ms` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(budgetAutopilot.horizon_hours)) && Number(budgetAutopilot.horizon_hours) > 0,
+      '`runtime.budget_autopilot.horizon_hours` must be number > 0',
+      details
+    );
+    assertType(
+      typeof budgetAutopilot.observability === 'boolean',
+      '`runtime.budget_autopilot.observability` must be boolean',
+      details
+    );
+  }
+
+  const evidenceVault = runtime.evidence_vault || {};
+  if (runtime.evidence_vault !== undefined) {
+    assertNoUnknownKeys(evidenceVault, EVIDENCE_VAULT_KEYS, 'runtime.evidence_vault', details);
+    assertType(
+      typeof evidenceVault.enabled === 'boolean',
+      '`runtime.evidence_vault.enabled` must be boolean',
+      details
+    );
+    assertType(
+      EVIDENCE_VAULT_MODES.has(String(evidenceVault.mode)),
+      '`runtime.evidence_vault.mode` must be monitor|active',
+      details
+    );
+    assertType(
+      Number.isInteger(evidenceVault.max_entries) && evidenceVault.max_entries > 0,
+      '`runtime.evidence_vault.max_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(evidenceVault.retention_days) && evidenceVault.retention_days > 0,
+      '`runtime.evidence_vault.retention_days` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof evidenceVault.file_path === 'string',
+      '`runtime.evidence_vault.file_path` must be string',
+      details
+    );
+    assertType(
+      typeof evidenceVault.observability === 'boolean',
+      '`runtime.evidence_vault.observability` must be boolean',
+      details
+    );
+  }
+
+  const threatGraph = runtime.threat_graph || {};
+  if (runtime.threat_graph !== undefined) {
+    assertNoUnknownKeys(threatGraph, THREAT_GRAPH_KEYS, 'runtime.threat_graph', details);
+    assertType(
+      typeof threatGraph.enabled === 'boolean',
+      '`runtime.threat_graph.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(threatGraph.max_events) && threatGraph.max_events > 0,
+      '`runtime.threat_graph.max_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatGraph.window_ms) && threatGraph.window_ms > 0,
+      '`runtime.threat_graph.window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(threatGraph.risk_decay)) &&
+        Number(threatGraph.risk_decay) >= 0 &&
+        Number(threatGraph.risk_decay) <= 1,
+      '`runtime.threat_graph.risk_decay` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      typeof threatGraph.observability === 'boolean',
+      '`runtime.threat_graph.observability` must be boolean',
+      details
+    );
+  }
+
+  const attackCorpusEvolver = runtime.attack_corpus_evolver || {};
+  if (runtime.attack_corpus_evolver !== undefined) {
+    assertNoUnknownKeys(
+      attackCorpusEvolver,
+      ATTACK_CORPUS_EVOLVER_KEYS,
+      'runtime.attack_corpus_evolver',
+      details
+    );
+    assertType(
+      typeof attackCorpusEvolver.enabled === 'boolean',
+      '`runtime.attack_corpus_evolver.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(attackCorpusEvolver.max_candidates) && attackCorpusEvolver.max_candidates > 0,
+      '`runtime.attack_corpus_evolver.max_candidates` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(attackCorpusEvolver.max_prompt_chars) && attackCorpusEvolver.max_prompt_chars > 0,
+      '`runtime.attack_corpus_evolver.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(attackCorpusEvolver.max_families) && attackCorpusEvolver.max_families > 0,
+      '`runtime.attack_corpus_evolver.max_families` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof attackCorpusEvolver.include_monitor_decisions === 'boolean',
+      '`runtime.attack_corpus_evolver.include_monitor_decisions` must be boolean',
+      details
+    );
+    assertType(
+      typeof attackCorpusEvolver.observability === 'boolean',
+      '`runtime.attack_corpus_evolver.observability` must be boolean',
+      details
+    );
+  }
+
+  const forensicDebugger = runtime.forensic_debugger || {};
+  if (runtime.forensic_debugger !== undefined) {
+    assertNoUnknownKeys(forensicDebugger, FORENSIC_DEBUGGER_KEYS, 'runtime.forensic_debugger', details);
+    assertType(
+      typeof forensicDebugger.enabled === 'boolean',
+      '`runtime.forensic_debugger.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(forensicDebugger.max_snapshots) && forensicDebugger.max_snapshots > 0,
+      '`runtime.forensic_debugger.max_snapshots` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(forensicDebugger.redact_fields),
+      '`runtime.forensic_debugger.redact_fields` must be array',
+      details
+    );
+    if (Array.isArray(forensicDebugger.redact_fields)) {
+      forensicDebugger.redact_fields.forEach((field, idx) => {
+        assertType(
+          typeof field === 'string' && field.length > 0,
+          `runtime.forensic_debugger.redact_fields[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof forensicDebugger.default_summary_only === 'boolean',
+      '`runtime.forensic_debugger.default_summary_only` must be boolean',
+      details
+    );
+    assertType(
+      typeof forensicDebugger.observability === 'boolean',
+      '`runtime.forensic_debugger.observability` must be boolean',
       details
     );
   }

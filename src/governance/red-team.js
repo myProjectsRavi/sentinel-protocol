@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const { request } = require('undici');
 const {
   loadAdversarialFixturePack,
@@ -227,8 +228,16 @@ function exfilVariants(seed, idx) {
   ];
 }
 
-function buildInjectionCatalog(maxCases = DEFAULT_MAX_INJECTION_CASES) {
+function buildInjectionCatalog(maxCases = DEFAULT_MAX_INJECTION_CASES, extraFixtures = []) {
   const catalog = [];
+  for (const fixture of Array.isArray(extraFixtures) ? extraFixtures : []) {
+    catalog.push(
+      createCatalogItem(fixture.prompt, fixture.vector || fixture.family || 'evolved', {
+        id: fixture.id,
+        family: fixture.family || 'evolved',
+      })
+    );
+  }
   const adversarialFixtures = loadAdversarialFixturePack();
   for (const fixture of adversarialFixtures) {
     catalog.push(
@@ -380,13 +389,35 @@ class RedTeamEngine {
       2000
     );
     this.maxExfilCases = normalizePositiveInt(config.maxExfilCases, DEFAULT_MAX_EXFIL_CASES, 1, 2000);
+    this.evolvedFixturePath = String(config.evolvedFixturePath || '').trim();
+  }
+
+  loadEvolvedFixtures() {
+    if (!this.evolvedFixturePath) {
+      return [];
+    }
+    if (!fs.existsSync(this.evolvedFixturePath)) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.evolvedFixturePath, 'utf8'));
+      const prompts = Array.isArray(parsed?.prompts) ? parsed.prompts : [];
+      return prompts.map((item) => ({
+        id: item.id,
+        family: item.family || 'evolved',
+        vector: item.family || 'evolved',
+        prompt: item.prompt,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   async runInjectionCampaign(cases = buildInjectionCatalog(DEFAULT_MAX_INJECTION_CASES)) {
     const results = [];
     const normalizedCases = normalizeCaseCatalog(
       cases,
-      () => buildInjectionCatalog(this.maxInjectionCases)
+      () => buildInjectionCatalog(this.maxInjectionCases, this.loadEvolvedFixtures())
     ).slice(0, this.maxInjectionCases);
     for (const testCase of normalizedCases) {
       const response = await postJson(`${this.baseUrl}${this.targetPath}`, {

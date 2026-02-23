@@ -527,6 +527,13 @@ async function runInjectionAndPolicyStage({
     injectionResult,
   });
   applyRateLimitHeaders(res, policyDecision.rateLimit);
+  if (policyDecision.dsl_matched) {
+    server.stats.semantic_dsl_matched += 1;
+    if (policyDecision.action !== 'allow') {
+      warnings.push(`semantic_dsl:${policyDecision.rule || 'matched'}`);
+      server.stats.warnings_total += 1;
+    }
+  }
 
   const policyInjectionScore = Number(policyDecision.injection?.score || 0);
   if (policyInjectionScore > 0) {

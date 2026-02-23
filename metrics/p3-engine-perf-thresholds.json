@@ -1,0 +1,24 @@
+{
+  "warmup_iterations": 2000,
+  "measure_iterations": 12000,
+  "modules": {
+    "memory_poisoning_sentinel": {
+      "max_p95_ms": 0.8
+    },
+    "cascade_isolator": {
+      "max_p95_ms": 0.8
+    },
+    "agent_identity_federation": {
+      "max_p95_ms": 0.8
+    },
+    "tool_use_anomaly": {
+      "max_p95_ms": 1.0
+    },
+    "semantic_firewall_dsl": {
+      "max_p95_ms": 0.8
+    }
+  },
+  "global": {
+    "max_sum_p95_ms": 2.0
+  }
+}

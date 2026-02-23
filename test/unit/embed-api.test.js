@@ -101,4 +101,34 @@ describe('createSentinel embed API', () => {
     expect(Array.isArray(result.pii.findings)).toBe(true);
     expect(result.provider.providerMode).toBe('local');
   });
+
+  test('middleware path enforces same policy decisions as proxy mode', async () => {
+    const config = baseConfig();
+    config.mode = 'enforce';
+    config.rules = [
+      {
+        name: 'block-forbidden',
+        match: {
+          method: 'POST',
+          body_contains: 'forbidden',
+        },
+        action: 'block',
+        message: 'blocked',
+      },
+    ];
+    const embedded = createSentinel(config);
+    expect(typeof embedded.middleware()).toBe('function');
+    const decision = embedded.server.policyEngine.check({
+      method: 'POST',
+      hostname: 'api.openai.com',
+      pathname: '/v1/chat/completions',
+      bodyText: JSON.stringify({ messages: [{ role: 'user', content: 'forbidden content' }] }),
+      bodyJson: { messages: [{ role: 'user', content: 'forbidden content' }] },
+      requestBytes: 64,
+      headers: { 'x-sentinel-target': 'openai' },
+      provider: 'openai',
+    });
+    expect(decision.matched).toBe(true);
+    expect(decision.action).toBe('block');
+  });
 });

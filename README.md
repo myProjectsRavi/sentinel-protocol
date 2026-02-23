@@ -334,6 +334,10 @@ sentinel red-team run --url http://127.0.0.1:8787 --target openai --report html 
 
 ```bash
 sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
+sentinel compliance evidence-vault --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./evidence-packet.json
+sentinel threat graph --audit-path ~/.sentinel/audit.jsonl --format json --out ./threat-graph.json
+sentinel threat evolve-corpus --audit-path ~/.sentinel/audit.jsonl --out ./evolved-corpus.json
+sentinel forensic replay --snapshot ./snapshot.json --overrides ./what-if.json --out ./forensic-replay.json
 ```
 
 ### 4. Validate Reliability Under Chaos

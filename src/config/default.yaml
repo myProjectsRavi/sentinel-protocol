@@ -290,6 +290,99 @@ runtime:
     name_similarity_distance: 1
     max_name_candidates: 128
     observability: true
+  memory_poisoning:
+    enabled: false
+    mode: monitor # monitor | block
+    max_content_chars: 32768
+    ttl_ms: 21600000
+    max_sessions: 5000
+    max_writes_per_session: 128
+    detect_contradictions: true
+    block_on_poisoning: false
+    block_on_contradiction: false
+    quarantine_on_detect: true
+    policy_anchors: []
+    observability: true
+  cascade_isolator:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 21600000
+    max_sessions: 5000
+    max_nodes: 512
+    max_edges: 2048
+    max_downstream_agents: 16
+    max_influence_ratio: 0.6
+    anomaly_threshold: 0.75
+    block_on_threshold: false
+    observability: true
+  agent_identity_federation:
+    enabled: false
+    mode: monitor # monitor | block
+    token_header: x-sentinel-agent-token
+    agent_id_header: x-sentinel-agent-id
+    correlation_header: x-sentinel-correlation-id
+    hmac_secret: ""
+    ttl_ms: 900000
+    max_chain_depth: 8
+    max_replay_entries: 10000
+    block_on_invalid_token: false
+    block_on_capability_widen: false
+    block_on_replay: false
+    observability: true
+  tool_use_anomaly:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 21600000
+    max_agents: 5000
+    max_tools_per_agent: 256
+    warmup_events: 20
+    z_score_threshold: 3
+    sequence_threshold: 2
+    block_on_anomaly: false
+    observability: true
+  semantic_firewall_dsl:
+    enabled: false
+    rules: []
+    max_rules: 128
+    observability: true
+  budget_autopilot:
+    enabled: false
+    mode: monitor # monitor | active
+    ttl_ms: 86400000
+    max_providers: 256
+    min_samples: 8
+    cost_weight: 0.6
+    latency_weight: 0.4
+    warn_budget_ratio: 0.2
+    sla_p95_ms: 2000
+    horizon_hours: 24
+    observability: true
+  evidence_vault:
+    enabled: false
+    mode: monitor # monitor | active
+    max_entries: 100000
+    retention_days: 90
+    file_path: ""
+    observability: true
+  threat_graph:
+    enabled: false
+    max_events: 20000
+    window_ms: 86400000
+    risk_decay: 0.8
+    observability: true
+  attack_corpus_evolver:
+    enabled: false
+    max_candidates: 10000
+    max_prompt_chars: 2048
+    max_families: 256
+    include_monitor_decisions: false
+    observability: true
+  forensic_debugger:
+    enabled: false
+    max_snapshots: 5000
+    redact_fields: [headers.authorization, headers.x-api-key, body.api_key, body.password]
+    default_summary_only: true
+    observability: true
   prompt_rebuff:
     enabled: false
     mode: monitor # monitor | block

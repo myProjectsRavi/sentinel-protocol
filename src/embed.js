@@ -1,5 +1,8 @@
 const { validateConfigShape } = require('./config/schema');
 const { SentinelServer } = require('./server');
+const { createMiddleware } = require('./embed/middleware');
+const { secureFetch: runSecureFetch } = require('./embed/secure-fetch');
+const { createFrameworkCallbacks } = require('./embed/framework-callbacks');
 
 function toSafeString(value) {
   if (typeof value === 'string') {
@@ -14,6 +17,7 @@ function toSafeString(value) {
 function createSentinel(config, options = {}) {
   const normalizedConfig = validateConfigShape(config || {});
   const server = new SentinelServer(normalizedConfig, options);
+  const frameworkCallbacks = createFrameworkCallbacks(server, options.framework || {});
 
   return {
     server,
@@ -23,7 +27,19 @@ function createSentinel(config, options = {}) {
       return this;
     },
     middleware() {
-      return server.app;
+      return createMiddleware(server);
+    },
+    async secureFetch(url, fetchOptions = {}) {
+      return runSecureFetch(server, url, fetchOptions);
+    },
+    frameworkCallbacks() {
+      return frameworkCallbacks;
+    },
+    langchainCallback() {
+      return frameworkCallbacks.langchainCallback();
+    },
+    llamaIndexCallback() {
+      return frameworkCallbacks.llamaIndexCallback();
     },
     start() {
       server.start();

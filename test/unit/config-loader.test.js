@@ -392,4 +392,25 @@ describe('config loader and migration', () => {
       })
     ).toThrow('`runtime.rate_limiter.ip_header` must be non-empty string');
   });
+
+  test('fails loudly on invalid semantic firewall DSL syntax', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.semantic_firewall_dsl = {
+      enabled: true,
+      rules: ['BLOCK WHEN request.method === "POST"'],
+      max_rules: 8,
+      observability: true,
+    };
+    writeYamlConfig(configPath, base);
+
+    expect(() =>
+      loadAndValidateConfig({
+        configPath,
+        allowMigration: false,
+        writeMigrated: false,
+      })
+    ).toThrow(/runtime\.semantic_firewall_dsl\.rules invalid/);
+  });
 });

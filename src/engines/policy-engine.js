@@ -1,4 +1,5 @@
 const { InjectionScanner } = require('./injection-scanner');
+const { compileRules } = require('../policy/semantic-firewall-dsl');
 
 const DEFAULT_RATE_LIMIT_KEY_HEADERS = ['x-sentinel-agent-id', 'x-sentinel-session-id'];
 const DEFAULT_RATE_LIMIT_FALLBACK_HEADERS = [
@@ -98,6 +99,24 @@ class PolicyEngine {
     this.injectionScanner = new InjectionScanner({
       maxScanBytes: this.injectionConfig.max_scan_bytes,
     });
+    this.semanticDslConfig =
+      config.runtime?.semantic_firewall_dsl && typeof config.runtime.semantic_firewall_dsl === 'object'
+        ? config.runtime.semantic_firewall_dsl
+        : {};
+    this.semanticDslRules = [];
+    this.semanticDslEnabled = this.semanticDslConfig.enabled === true;
+    if (this.semanticDslEnabled) {
+      const rules = Array.isArray(this.semanticDslConfig.rules) ? this.semanticDslConfig.rules : [];
+      if (rules.length > 0) {
+        try {
+          this.semanticDslRules = compileRules(rules, {
+            maxRules: this.semanticDslConfig.max_rules,
+          });
+        } catch (error) {
+          throw new Error(`semantic_firewall_dsl_compile_error:${error.message}`);
+        }
+      }
+    }
   }
 
   isWhitelisted(hostname) {
@@ -208,6 +227,51 @@ class PolicyEngine {
     };
   }
 
+  evaluateSemanticDsl(context) {
+    if (!this.semanticDslEnabled || this.semanticDslRules.length === 0) {
+      return null;
+    }
+
+    const safeContext = {
+      request: {
+        method: String(context.method || '').toUpperCase(),
+        hostname: String(context.hostname || ''),
+        pathname: String(context.pathname || ''),
+        provider: String(context.provider || ''),
+        body_size_bytes: Number(context.requestBytes || 0),
+      },
+      injection: {
+        score: Number(context.injectionResult?.score || 0),
+      },
+    };
+
+    for (let idx = 0; idx < this.semanticDslRules.length; idx += 1) {
+      const rule = this.semanticDslRules[idx];
+      let matched = false;
+      try {
+        matched = rule.matches(safeContext) === true;
+      } catch {
+        matched = false;
+      }
+      if (!matched) {
+        continue;
+      }
+
+      const action = String(rule.action || 'allow').toLowerCase();
+      return {
+        matched: true,
+        action,
+        allowed: action !== 'block',
+        reason: action === 'block' ? 'semantic_dsl_block' : 'semantic_dsl_match',
+        rule: `dsl_rule_${idx + 1}`,
+        message: `Semantic DSL rule matched: ${idx + 1}`,
+        dsl_matched: true,
+        dsl_rule_index: idx,
+      };
+    }
+    return null;
+  }
+
   check(context) {
     const {
       method,
@@ -231,6 +295,23 @@ class PolicyEngine {
         action: 'allow',
         allowed: true,
         reason: 'whitelisted',
+        injection: injectionResult,
+        rateLimit: null,
+        dsl_matched: false,
+      };
+    }
+
+    const dslDecision = this.evaluateSemanticDsl({
+      method,
+      hostname,
+      pathname,
+      requestBytes,
+      provider,
+      injectionResult,
+    });
+    if (dslDecision) {
+      return {
+        ...dslDecision,
         injection: injectionResult,
         rateLimit: null,
       };
@@ -289,6 +370,7 @@ class PolicyEngine {
           message: rule.message || `Rate limit exceeded for rule: ${rule.name}`,
           injection: injectionResult,
           rateLimit,
+          dsl_matched: false,
         };
       }
 
@@ -308,6 +390,7 @@ class PolicyEngine {
         message: rule.message || `Policy rule matched: ${rule.name}`,
         injection: injectionResult,
         rateLimit: null,
+        dsl_matched: false,
       };
     }
 
@@ -318,6 +401,7 @@ class PolicyEngine {
       reason: 'no_matching_rule',
       injection: injectionResult,
       rateLimit: null,
+      dsl_matched: false,
     };
   }
 }

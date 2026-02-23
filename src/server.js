@@ -49,8 +49,17 @@ const { EpistemicAnchor } = require('./runtime/epistemic-anchor');
 const { AgenticThreatShield } = require('./security/agentic-threat-shield');
 const { MCPPoisoningDetector } = require('./security/mcp-poisoning-detector');
 const { MCPShadowDetector } = require('./security/mcp-shadow-detector');
+const { MemoryPoisoningSentinel } = require('./security/memory-poisoning-sentinel');
+const { CascadeIsolator } = require('./security/cascade-isolator');
+const { AgentIdentityFederation } = require('./security/agent-identity-federation');
+const { ToolUseAnomalyDetector } = require('./security/tool-use-anomaly');
 const { OutputClassifier } = require('./egress/output-classifier');
 const { OutputSchemaValidator } = require('./egress/output-schema-validator');
+const { BudgetAutopilot } = require('./optimizer/budget-autopilot');
+const { EvidenceVault } = require('./governance/evidence-vault');
+const { ThreatPropagationGraph } = require('./governance/threat-propagation-graph');
+const { AttackCorpusEvolver } = require('./governance/attack-corpus-evolver');
+const { ForensicDebugger } = require('./governance/forensic-debugger');
 const {
   initRequestEnvelope,
   attachProvenanceInterceptors,
@@ -176,6 +185,19 @@ class SentinelServer {
       mcp_shadow_schema_drift: 0,
       mcp_shadow_late_registration: 0,
       mcp_shadow_name_collision: 0,
+      memory_poisoning_detected: 0,
+      memory_poisoning_blocked: 0,
+      cascade_detected: 0,
+      cascade_blocked: 0,
+      agent_identity_detected: 0,
+      agent_identity_blocked: 0,
+      tool_use_anomaly_detected: 0,
+      tool_use_anomaly_blocked: 0,
+      semantic_dsl_matched: 0,
+      budget_autopilot_recommendations: 0,
+      evidence_vault_entries: 0,
+      threat_graph_events: 0,
+      attack_corpus_candidates: 0,
       auto_immune_matches: 0,
       auto_immune_blocked: 0,
       auto_immune_learned: 0,
@@ -295,8 +317,17 @@ class SentinelServer {
     this.promptRebuff = new PromptRebuffEngine(this.config.runtime?.prompt_rebuff || {});
     this.mcpPoisoningDetector = new MCPPoisoningDetector(this.config.runtime?.mcp_poisoning || {});
     this.mcpShadowDetector = new MCPShadowDetector(this.config.runtime?.mcp_shadow || {});
+    this.memoryPoisoningSentinel = new MemoryPoisoningSentinel(this.config.runtime?.memory_poisoning || {});
+    this.cascadeIsolator = new CascadeIsolator(this.config.runtime?.cascade_isolator || {});
+    this.agentIdentityFederation = new AgentIdentityFederation(this.config.runtime?.agent_identity_federation || {});
+    this.toolUseAnomalyDetector = new ToolUseAnomalyDetector(this.config.runtime?.tool_use_anomaly || {});
     this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
     this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
+    this.budgetAutopilot = new BudgetAutopilot(this.config.runtime?.budget_autopilot || {});
+    this.evidenceVault = new EvidenceVault(this.config.runtime?.evidence_vault || {});
+    this.threatPropagationGraph = new ThreatPropagationGraph(this.config.runtime?.threat_graph || {});
+    this.attackCorpusEvolver = new AttackCorpusEvolver(this.config.runtime?.attack_corpus_evolver || {});
+    this.forensicDebugger = new ForensicDebugger(this.config.runtime?.forensic_debugger || {});
     this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
       upstreamClient: this.upstreamClient,
       config: this.config,
@@ -345,6 +376,7 @@ class SentinelServer {
     this.lastStatusWriteError = null;
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
+    this.lastBudgetAutopilotRecommendation = null;
     this.pluginRegistry.registerAll(this.options.plugins || []);
     if (this.options.plugin) {
       this.pluginRegistry.register(this.options.plugin);
@@ -395,6 +427,23 @@ class SentinelServer {
 
   currentStatusPayload() {
     const budgetSnapshot = this.budgetStore.snapshot();
+    const budgetAutopilotConfig =
+      this.config.runtime?.budget_autopilot && typeof this.config.runtime.budget_autopilot === 'object'
+        ? this.config.runtime.budget_autopilot
+        : {};
+    const budgetAutopilotRecommendation = this.budgetAutopilot.isEnabled()
+      ? this.budgetAutopilot.recommend({
+          budgetRemainingUsd: Number(budgetSnapshot.remainingUsd || 0),
+          slaP95Ms: Number(budgetAutopilotConfig.sla_p95_ms || 2000),
+          horizonHours: Number(budgetAutopilotConfig.horizon_hours || 24),
+        })
+      : null;
+    const recommendationProvider = budgetAutopilotRecommendation?.recommendation || null;
+    if (recommendationProvider && recommendationProvider !== this.lastBudgetAutopilotRecommendation) {
+      this.stats.budget_autopilot_recommendations += 1;
+      this.lastBudgetAutopilotRecommendation = recommendationProvider;
+    }
+
     return {
       service_status: this.server ? 'running' : 'stopped',
       configured_mode: this.config.mode,
@@ -438,10 +487,30 @@ class SentinelServer {
       mcp_poisoning_mode: this.mcpPoisoningDetector.mode,
       mcp_shadow_enabled: this.mcpShadowDetector.isEnabled(),
       mcp_shadow_mode: this.mcpShadowDetector.mode,
+      memory_poisoning_enabled: this.memoryPoisoningSentinel.isEnabled(),
+      memory_poisoning_mode: this.memoryPoisoningSentinel.mode,
+      cascade_isolator_enabled: this.cascadeIsolator.isEnabled(),
+      cascade_isolator_mode: this.cascadeIsolator.mode,
+      agent_identity_federation_enabled: this.agentIdentityFederation.isEnabled(),
+      agent_identity_federation_mode: this.agentIdentityFederation.mode,
+      tool_use_anomaly_enabled: this.toolUseAnomalyDetector.isEnabled(),
+      tool_use_anomaly_mode: this.toolUseAnomalyDetector.mode,
+      semantic_firewall_dsl_enabled: this.config.runtime?.semantic_firewall_dsl?.enabled === true,
       prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
       prompt_rebuff_mode: this.promptRebuff.mode,
       output_classifier_enabled: this.outputClassifier.isEnabled(),
       output_schema_validator_enabled: this.outputSchemaValidator.isEnabled(),
+      budget_autopilot_enabled: this.budgetAutopilot.isEnabled(),
+      budget_autopilot_mode: this.budgetAutopilot.mode,
+      budget_autopilot_recommendation: budgetAutopilotRecommendation,
+      evidence_vault_enabled: this.evidenceVault.isEnabled(),
+      evidence_vault_stats: this.evidenceVault.getStats(),
+      threat_graph_enabled: this.threatPropagationGraph.isEnabled(),
+      attack_corpus_evolver_enabled: this.attackCorpusEvolver.isEnabled(),
+      forensic_debugger_enabled: this.forensicDebugger.isEnabled(),
+      forensic_debugger_snapshots: Array.isArray(this.forensicDebugger.snapshots)
+        ? this.forensicDebugger.snapshots.length
+        : 0,
       agent_observability_enabled: this.agentObservability.isEnabled(),
       shadow_os_enabled: this.shadowOS.isEnabled(),
       shadow_os_mode: this.shadowOS.mode,

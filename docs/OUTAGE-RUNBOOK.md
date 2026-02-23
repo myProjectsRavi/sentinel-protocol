@@ -49,6 +49,23 @@ Emergency pass-through while running:
 node ./cli/sentinel.js emergency-open on
 ```
 
+## Forensic Replay (Post-Incident)
+
+Capture and replay a request/decision pair with threshold overrides:
+
+```bash
+node ./cli/sentinel.js forensic capture --request ./incident-request.json --decision ./incident-decision.json --out ./snapshot.json
+node ./cli/sentinel.js forensic replay --snapshot ./snapshot.json --overrides ./what-if.json --out ./forensic-replay.json
+```
+
+Generate graph/corpus/evidence packets from audit stream:
+
+```bash
+node ./cli/sentinel.js threat graph --audit-path ~/.sentinel/audit.jsonl --format mermaid --out ./threat-graph.mmd
+node ./cli/sentinel.js threat evolve-corpus --audit-path ~/.sentinel/audit.jsonl --out ./evolved-corpus.json
+node ./cli/sentinel.js compliance evidence-vault --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./evidence-packet.json
+```
+
 ## Notes
 
 - Circuit breaker tracks only forwarded upstream outcomes.

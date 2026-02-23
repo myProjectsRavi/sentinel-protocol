@@ -163,6 +163,36 @@ class VCRStore {
     };
   }
 
+  async exportEntries(limit = 100) {
+    await this.ensureLoaded();
+    const max = Math.max(1, Math.min(Number(limit) || 100, this.maxEntries));
+    const entries = Array.from(this.replayIndex.values())
+      .slice(0, max)
+      .map((entry) => ({
+        version: Number(entry.version || 1),
+        signature: String(entry.signature || ''),
+        recorded_at: String(entry.recorded_at || ''),
+        request: {
+          provider: String(entry.request?.provider || 'unknown'),
+          method: String(entry.request?.method || 'GET'),
+          path_with_query: String(entry.request?.path_with_query || '/'),
+          body_sha256: String(entry.request?.body_sha256 || ''),
+          content_type: String(entry.request?.content_type || ''),
+          wants_stream: entry.request?.wants_stream === true,
+        },
+        response: {
+          status: Number(entry.response?.status || 0),
+          headers: sanitizeResponseHeaders(entry.response?.headers || {}),
+          body_sha256: sha256Hex(Buffer.from(String(entry.response?.body_base64 || ''), 'base64')),
+        },
+      }));
+    return {
+      loaded: this.loaded,
+      count: entries.length,
+      entries,
+    };
+  }
+
   record(requestMeta = {}, responseMeta = {}) {
     if (!this.enabled || this.mode !== 'record') {
       return;
