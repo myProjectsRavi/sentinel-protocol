@@ -327,7 +327,17 @@ const PROMPT_REBUFF_KEYS = new Set([
 ]);
 const PROMPT_REBUFF_MODES = new Set(['monitor', 'block']);
 const PROMPT_REBUFF_SENSITIVITIES = new Set(['permissive', 'balanced', 'paranoid']);
-const OUTPUT_CLASSIFIER_KEYS = new Set(['enabled', 'mode', 'max_scan_chars', 'categories']);
+const OUTPUT_CLASSIFIER_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_chars',
+  'context_window_chars',
+  'max_matches_per_rule',
+  'contextual_dampening',
+  'contextual_escalation',
+  'ngram_boost',
+  'categories',
+]);
 const OUTPUT_CLASSIFIER_MODES = new Set(['monitor', 'block']);
 const OUTPUT_CLASSIFIER_CATEGORIES_KEYS = new Set([
   'toxicity',
@@ -369,6 +379,10 @@ const DIFFERENTIAL_PRIVACY_KEYS = new Set([
   'sensitivity',
   'max_simulation_calls',
   'max_vector_length',
+  'persist_state',
+  'state_file',
+  'state_hmac_key',
+  'reset_on_tamper',
 ]);
 const PROVENANCE_KEYS = new Set([
   'enabled',
@@ -1310,6 +1324,11 @@ function applyDefaults(config) {
     ? String(outputClassifier.mode).toLowerCase()
     : 'monitor';
   outputClassifier.max_scan_chars = Number(outputClassifier.max_scan_chars ?? 8192);
+  outputClassifier.context_window_chars = Number(outputClassifier.context_window_chars ?? 64);
+  outputClassifier.max_matches_per_rule = Number(outputClassifier.max_matches_per_rule ?? 4);
+  outputClassifier.contextual_dampening = Number(outputClassifier.contextual_dampening ?? 0.55);
+  outputClassifier.contextual_escalation = Number(outputClassifier.contextual_escalation ?? 0.15);
+  outputClassifier.ngram_boost = Number(outputClassifier.ngram_boost ?? 0.2);
   outputClassifier.categories =
     outputClassifier.categories &&
     typeof outputClassifier.categories === 'object' &&
@@ -1379,6 +1398,10 @@ function applyDefaults(config) {
   differentialPrivacy.sensitivity = Number(differentialPrivacy.sensitivity ?? 1.0);
   differentialPrivacy.max_simulation_calls = Number(differentialPrivacy.max_simulation_calls ?? 1000);
   differentialPrivacy.max_vector_length = Number(differentialPrivacy.max_vector_length ?? 8192);
+  differentialPrivacy.persist_state = differentialPrivacy.persist_state === true;
+  differentialPrivacy.state_file = String(differentialPrivacy.state_file || '');
+  differentialPrivacy.state_hmac_key = String(differentialPrivacy.state_hmac_key || '');
+  differentialPrivacy.reset_on_tamper = differentialPrivacy.reset_on_tamper !== false;
 
   normalized.runtime.auto_immune = normalized.runtime.auto_immune || {};
   const autoImmune = normalized.runtime.auto_immune;
@@ -3001,6 +3024,41 @@ function validateConfigShape(config) {
       details
     );
     assertType(
+      Number.isInteger(outputClassifier.context_window_chars) &&
+        outputClassifier.context_window_chars >= 16 &&
+        outputClassifier.context_window_chars <= 4096,
+      '`runtime.output_classifier.context_window_chars` must be integer between 16 and 4096',
+      details
+    );
+    assertType(
+      Number.isInteger(outputClassifier.max_matches_per_rule) &&
+        outputClassifier.max_matches_per_rule >= 1 &&
+        outputClassifier.max_matches_per_rule <= 32,
+      '`runtime.output_classifier.max_matches_per_rule` must be integer between 1 and 32',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(outputClassifier.contextual_dampening)) &&
+        Number(outputClassifier.contextual_dampening) >= 0 &&
+        Number(outputClassifier.contextual_dampening) <= 1,
+      '`runtime.output_classifier.contextual_dampening` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(outputClassifier.contextual_escalation)) &&
+        Number(outputClassifier.contextual_escalation) >= 0 &&
+        Number(outputClassifier.contextual_escalation) <= 1,
+      '`runtime.output_classifier.contextual_escalation` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(outputClassifier.ngram_boost)) &&
+        Number(outputClassifier.ngram_boost) >= 0 &&
+        Number(outputClassifier.ngram_boost) <= 1,
+      '`runtime.output_classifier.ngram_boost` must be number between 0 and 1',
+      details
+    );
+    assertType(
       outputClassifier.categories &&
         typeof outputClassifier.categories === 'object' &&
         !Array.isArray(outputClassifier.categories),
@@ -3165,6 +3223,31 @@ function validateConfigShape(config) {
       Number.isInteger(differentialPrivacy.max_vector_length) &&
         differentialPrivacy.max_vector_length > 0,
       '`runtime.differential_privacy.max_vector_length` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof differentialPrivacy.persist_state === 'boolean',
+      '`runtime.differential_privacy.persist_state` must be boolean',
+      details
+    );
+    assertType(
+      typeof differentialPrivacy.state_file === 'string',
+      '`runtime.differential_privacy.state_file` must be string',
+      details
+    );
+    assertType(
+      typeof differentialPrivacy.state_hmac_key === 'string',
+      '`runtime.differential_privacy.state_hmac_key` must be string',
+      details
+    );
+    assertType(
+      typeof differentialPrivacy.reset_on_tamper === 'boolean',
+      '`runtime.differential_privacy.reset_on_tamper` must be boolean',
+      details
+    );
+    assertType(
+      differentialPrivacy.persist_state !== true || String(differentialPrivacy.state_file || '').trim().length > 0,
+      '`runtime.differential_privacy.state_file` must be non-empty when persist_state=true',
       details
     );
   }

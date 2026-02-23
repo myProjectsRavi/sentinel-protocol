@@ -1,3 +1,6 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { DifferentialPrivacyEngine } = require('../../src/privacy/differential-privacy');
 
 describe('differential privacy', () => {
@@ -78,5 +81,80 @@ describe('differential privacy', () => {
     expect(scalar.noisy).toBe(25);
     expect(vector.applied).toBe(false);
     expect(vector.noisy).toEqual([0.1, 0.2]);
+  });
+
+  test('persists budget state and restores across restarts', () => {
+    const stateFile = path.join(os.tmpdir(), `sentinel-dp-state-${Date.now()}-restore.json`);
+    const config = {
+      enabled: true,
+      epsilon_budget: 1,
+      epsilon_per_call: 0.2,
+      sensitivity: 1,
+      persist_state: true,
+      state_file: stateFile,
+      state_hmac_key: 'unit-test-key',
+    };
+
+    const first = new DifferentialPrivacyEngine(config, { rng: () => 0.75 });
+    first.noisify(10);
+    first.noisify(11);
+    const firstSnapshot = first.snapshot();
+    expect(fs.existsSync(stateFile)).toBe(true);
+
+    const second = new DifferentialPrivacyEngine(config, { rng: () => 0.75 });
+    const secondSnapshot = second.snapshot();
+    expect(secondSnapshot.calls).toBe(firstSnapshot.calls);
+    expect(secondSnapshot.epsilon_remaining).toBe(firstSnapshot.epsilon_remaining);
+    expect(secondSnapshot.state_persistence.loaded).toBe(true);
+  });
+
+  test('detects tampering and resets budget when reset_on_tamper is true', () => {
+    const stateFile = path.join(os.tmpdir(), `sentinel-dp-state-${Date.now()}-tamper-reset.json`);
+    const config = {
+      enabled: true,
+      epsilon_budget: 1,
+      epsilon_per_call: 0.2,
+      sensitivity: 1,
+      persist_state: true,
+      state_file: stateFile,
+      state_hmac_key: 'unit-test-key',
+      reset_on_tamper: true,
+    };
+
+    const engine = new DifferentialPrivacyEngine(config, { rng: () => 0.75 });
+    engine.noisify(10);
+
+    const tampered = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    tampered.state.remaining_epsilon = 999;
+    fs.writeFileSync(stateFile, `${JSON.stringify(tampered, null, 2)}\n`, 'utf8');
+
+    const reloaded = new DifferentialPrivacyEngine(config, { rng: () => 0.75 });
+    const snapshot = reloaded.snapshot();
+    expect(snapshot.calls).toBe(0);
+    expect(snapshot.epsilon_remaining).toBe(1);
+    expect(snapshot.state_persistence.tamper_detected).toBe(true);
+  });
+
+  test('throws on tampering when reset_on_tamper is false', () => {
+    const stateFile = path.join(os.tmpdir(), `sentinel-dp-state-${Date.now()}-tamper-throw.json`);
+    const config = {
+      enabled: true,
+      epsilon_budget: 1,
+      epsilon_per_call: 0.2,
+      sensitivity: 1,
+      persist_state: true,
+      state_file: stateFile,
+      state_hmac_key: 'unit-test-key',
+      reset_on_tamper: false,
+    };
+
+    const engine = new DifferentialPrivacyEngine(config, { rng: () => 0.75 });
+    engine.noisify(10);
+
+    const tampered = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    tampered.digest = '0000';
+    fs.writeFileSync(stateFile, `${JSON.stringify(tampered, null, 2)}\n`, 'utf8');
+
+    expect(() => new DifferentialPrivacyEngine(config, { rng: () => 0.75 })).toThrow();
   });
 });

@@ -7,8 +7,18 @@ const DEFAULT_MAX_BODY_BYTES = 128 * 1024;
 const DEFAULT_MAX_TRAVERSAL_DEPTH = 8;
 const DEFAULT_MAX_TRAVERSAL_NODES = 512;
 const DEFAULT_MAX_TOOLS_PER_RECORD = 64;
+const DEFAULT_MAX_DATASETS_PER_RECORD = 64;
+const DEFAULT_MAX_DATASET_VALUE_CHARS = 512;
 const DEFAULT_PRUNE_INTERVAL = 32;
 const DEFAULT_EXPORT_CACHE_TTL_MS = 5000;
+const DATASET_HEADER_KEYS = [
+  'x-sentinel-dataset-id',
+  'x-dataset-id',
+  'x-dataset-name',
+  'x-training-corpus',
+  'x-knowledge-base-id',
+];
+const DATASET_KEY_RE = /(dataset|corpus|training|knowledge|index|collection|source|file|document|retriev)/i;
 
 function normalizeId(value, options = {}) {
   const maxLength = clampPositiveInt(options.maxLength, 128, 8, 1024);
@@ -98,6 +108,80 @@ function parseBufferAsJson(bodyBuffer, maxBytes) {
   }
 }
 
+function serializeDatasetValue(value, maxChars) {
+  const safeMax = clampPositiveInt(maxChars, DEFAULT_MAX_DATASET_VALUE_CHARS, 32, 8192);
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.slice(0, safeMax);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    return String(serialized || '').slice(0, safeMax);
+  } catch {
+    return String(value).slice(0, safeMax);
+  }
+}
+
+function collectDatasetFingerprintsFromValue(value, options = {}) {
+  const maxDepth = clampPositiveInt(options.maxDepth, DEFAULT_MAX_TRAVERSAL_DEPTH, 1, 64);
+  const maxNodes = clampPositiveInt(options.maxNodes, DEFAULT_MAX_TRAVERSAL_NODES, 16, 100000);
+  const maxFingerprints = clampPositiveInt(options.maxFingerprints, DEFAULT_MAX_DATASETS_PER_RECORD, 1, 2048);
+  const maxValueChars = clampPositiveInt(options.maxValueChars, DEFAULT_MAX_DATASET_VALUE_CHARS, 32, 8192);
+
+  const fingerprints = new Set();
+  const visited = new WeakSet();
+  const stack = [{ node: value, depth: 0 }];
+  let visitedNodes = 0;
+
+  while (stack.length > 0 && visitedNodes < maxNodes && fingerprints.size < maxFingerprints) {
+    const current = stack.pop();
+    const node = current?.node;
+    const depth = Number(current?.depth || 0);
+    if (!node || typeof node !== 'object' || depth > maxDepth) {
+      continue;
+    }
+    if (visited.has(node)) {
+      continue;
+    }
+    visited.add(node);
+    visitedNodes += 1;
+
+    if (Array.isArray(node)) {
+      for (let i = node.length - 1; i >= 0; i -= 1) {
+        const item = node[i];
+        if (item && typeof item === 'object') {
+          stack.push({ node: item, depth: depth + 1 });
+        }
+      }
+      continue;
+    }
+
+    for (const [key, child] of Object.entries(node)) {
+      const keyName = String(key || '');
+      if (DATASET_KEY_RE.test(keyName)) {
+        const serialized = serializeDatasetValue(child, maxValueChars);
+        if (serialized) {
+          const safeKey = normalizeId(keyName, { lowerCase: true, maxLength: 64 }) || 'dataset';
+          fingerprints.add(`body:${safeKey}:${snippetHash(serialized, 24)}`);
+          if (fingerprints.size >= maxFingerprints) {
+            break;
+          }
+        }
+      }
+      if (child && typeof child === 'object' && depth < maxDepth) {
+        stack.push({ node: child, depth: depth + 1 });
+      }
+    }
+  }
+
+  return Array.from(fingerprints);
+}
+
 function extractModelFromHeaders(headers = {}) {
   const modelHeaders = [
     'x-openai-model',
@@ -142,6 +226,18 @@ class AIBOMGenerator {
       1,
       1024
     );
+    this.maxDatasetsPerRecord = clampPositiveInt(
+      options.maxDatasetsPerRecord,
+      DEFAULT_MAX_DATASETS_PER_RECORD,
+      1,
+      2048
+    );
+    this.maxDatasetValueChars = clampPositiveInt(
+      options.maxDatasetValueChars,
+      DEFAULT_MAX_DATASET_VALUE_CHARS,
+      32,
+      8192
+    );
     this.pruneInterval = clampPositiveInt(options.pruneInterval, DEFAULT_PRUNE_INTERVAL, 1, 10000);
     this.exportCacheTtlMs = clampPositiveInt(
       options.exportCacheTtlMs,
@@ -155,6 +251,7 @@ class AIBOMGenerator {
     this.models = new Map();
     this.tools = new Map();
     this.agents = new Map();
+    this.datasets = new Map();
     this.operationCount = 0;
     this.dirty = true;
     this.cachedExport = null;
@@ -190,6 +287,7 @@ class AIBOMGenerator {
     this.pruneMap(this.models, nowMs);
     this.pruneMap(this.tools, nowMs);
     this.pruneMap(this.agents, nowMs);
+    this.pruneMap(this.datasets, nowMs);
   }
 
   touchMutation() {
@@ -281,6 +379,33 @@ class AIBOMGenerator {
       });
     }
 
+    const datasetFingerprints = collectDatasetFingerprintsFromValue(body, {
+      maxDepth: this.maxTraversalDepth,
+      maxNodes: this.maxTraversalNodes,
+      maxFingerprints: this.maxDatasetsPerRecord,
+      maxValueChars: this.maxDatasetValueChars,
+    });
+    for (const fingerprint of datasetFingerprints) {
+      this.upsert(this.datasets, fingerprint, {
+        source: 'request_body_dataset',
+        lowerCase: false,
+      });
+    }
+    for (const headerName of DATASET_HEADER_KEYS) {
+      const headerValue = mapHeaderValue(headers, headerName);
+      const normalized = normalizeId(headerValue, {
+        lowerCase: false,
+        maxLength: this.maxDatasetValueChars,
+      });
+      if (normalized) {
+        this.upsert(this.datasets, `header:${headerName}:${snippetHash(normalized, 24)}`, {
+          source: 'request_header_dataset',
+          lowerCase: false,
+          count: false,
+        });
+      }
+    }
+
     const explicitAgent = normalizeId(
       mapHeaderValue(headers, 'x-sentinel-agent-id') ||
         mapHeaderValue(headers, 'x-agent-id') ||
@@ -325,6 +450,20 @@ class AIBOMGenerator {
         lowerCase: false,
       });
     }
+    for (const headerName of DATASET_HEADER_KEYS) {
+      const headerValue = mapHeaderValue(headers, headerName);
+      const normalized = normalizeId(headerValue, {
+        lowerCase: false,
+        maxLength: this.maxDatasetValueChars,
+      });
+      if (normalized) {
+        this.upsert(this.datasets, `header:${headerName}:${snippetHash(normalized, 24)}`, {
+          source: 'response_header_dataset',
+          lowerCase: false,
+          count: false,
+        });
+      }
+    }
 
     const parsedBody =
       body && typeof body === 'object' && !Array.isArray(body)
@@ -350,6 +489,19 @@ class AIBOMGenerator {
         this.upsert(this.tools, tool, {
           source: 'response_body',
           lowerCase: true,
+        });
+      }
+
+      const datasetFingerprints = collectDatasetFingerprintsFromValue(parsedBody, {
+        maxDepth: this.maxTraversalDepth,
+        maxNodes: this.maxTraversalNodes,
+        maxFingerprints: this.maxDatasetsPerRecord,
+        maxValueChars: this.maxDatasetValueChars,
+      });
+      for (const fingerprint of datasetFingerprints) {
+        this.upsert(this.datasets, fingerprint, {
+          source: 'response_body_dataset',
+          lowerCase: false,
         });
       }
     }
@@ -378,6 +530,7 @@ class AIBOMGenerator {
     const models = this.toSortedArray(this.models);
     const tools = this.toSortedArray(this.tools);
     const agents = this.toSortedArray(this.agents);
+    const datasets = this.toSortedArray(this.datasets);
     this.cachedExport = {
       schema_version: SCHEMA_VERSION,
       ttl_ms: this.ttlMs,
@@ -386,11 +539,13 @@ class AIBOMGenerator {
       models,
       tools,
       agents,
+      datasets,
       totals: {
         providers: providers.length,
         models: models.length,
         tools: tools.length,
         agents: agents.length,
+        datasets: datasets.length,
       },
     };
     this.dirty = false;
@@ -404,4 +559,5 @@ module.exports = {
   AIBOMGenerator,
   extractToolNamesFromValue,
   extractModelFromHeaders,
+  collectDatasetFingerprintsFromValue,
 };

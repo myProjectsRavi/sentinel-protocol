@@ -106,6 +106,34 @@ describe('AIBOMGenerator', () => {
     expect(serialized.includes(secretPrompt)).toBe(false);
   });
 
+  test('adds dataset lineage fingerprints without exposing raw dataset identifiers', () => {
+    const engine = new AIBOMGenerator();
+    const datasetId = 'finance_customers_2026_q1_sensitive';
+    const datasetUrl = 's3://private-bucket/training-corpus/finance-customers-2026-q1.parquet';
+
+    engine.recordRequest({
+      provider: 'openai',
+      headers: {
+        'x-sentinel-dataset-id': datasetId,
+      },
+      body: {
+        model: 'gpt-4o-mini',
+        dataset_id: datasetId,
+        retrieval: {
+          source_url: datasetUrl,
+        },
+      },
+    });
+
+    const artifact = engine.exportArtifact();
+    expect(Array.isArray(artifact.datasets)).toBe(true);
+    expect(artifact.totals.datasets).toBeGreaterThan(0);
+    const serialized = JSON.stringify(artifact);
+    expect(serialized.includes(datasetId)).toBe(false);
+    expect(serialized.includes(datasetUrl)).toBe(false);
+    expect(artifact.datasets.every((item) => String(item.id || '').includes(':'))).toBe(true);
+  });
+
   test('handles cyclic tool payloads without recursion failure', () => {
     const engine = new AIBOMGenerator({
       maxTraversalDepth: 6,

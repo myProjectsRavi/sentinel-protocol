@@ -41,6 +41,7 @@ describe('aibom export integration', () => {
       body: {
         model: 'gpt-4o-mini',
         tools: [{ function: { name: 'search_docs' } }],
+        dataset_id: 'tenant_dataset_alpha',
       },
     });
     sentinel.aibom.recordResponse({
@@ -50,12 +51,16 @@ describe('aibom export integration', () => {
       },
       body: {
         id: 'resp-1',
+        data_source: {
+          source_url: 'https://datasets.internal.local/tenant_dataset_alpha',
+        },
       },
     });
 
     const aibom = sentinel.currentStatusPayload().aibom;
     expect(aibom.totals.providers).toBeGreaterThan(0);
     expect(aibom.totals.models).toBeGreaterThan(0);
+    expect(aibom.totals.datasets).toBeGreaterThan(0);
   });
 
   test('aibom export command writes valid json artifact', () => {
@@ -98,5 +103,6 @@ describe('aibom export integration', () => {
     expect(payload.schema_version).toBe('sentinel.aibom.v1');
     expect(Array.isArray(payload.providers)).toBe(true);
     expect(Array.isArray(payload.models)).toBe(true);
+    expect(Array.isArray(payload.datasets)).toBe(true);
   });
 });

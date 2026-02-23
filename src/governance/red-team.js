@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { request } = require('undici');
 const {
   loadAdversarialFixturePack,
+  runAdversarialRobustnessSuite,
 } = require('./adversarial-robustness');
 
 const BLOCK_STATUS_CODES = new Set([403, 409, 429]);
@@ -444,6 +445,7 @@ class RedTeamEngine {
       this.runInjectionCampaign(),
       this.runExfiltrationCampaign(),
     ]);
+    const adversarialRobustness = runAdversarialRobustnessSuite(loadAdversarialFixturePack());
     const all = [...injection, ...exfiltration];
     const injectionSummary = summarizeCampaignResults(injection);
     const exfilSummary = summarizeCampaignResults(exfiltration);
@@ -467,6 +469,7 @@ class RedTeamEngine {
         injection: injectionSummary,
         exfiltration: exfilSummary,
       },
+      adversarial_robustness: adversarialRobustness,
       results: all,
     };
   }

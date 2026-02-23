@@ -333,6 +333,9 @@ privacyCommand
   .option('--out <path>', 'Write simulation report JSON to path')
   .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
   .option('--epsilon-per-call <value>', 'Override epsilon spend per call')
+  .option('--state-file <path>', 'Persist differential-privacy budget state to this file')
+  .option('--state-hmac-key <value>', 'Optional HMAC key for tamper-evident state envelope')
+  .option('--persist-state', 'Enable persistence even if config disables it')
   .action((options) => {
     try {
       let dpConfig = {};
@@ -350,6 +353,24 @@ privacyCommand
           epsilon_per_call: Number(options.epsilonPerCall),
         };
       }
+      if (options.stateFile) {
+        dpConfig = {
+          ...(dpConfig || {}),
+          state_file: String(options.stateFile),
+        };
+      }
+      if (options.stateHmacKey !== undefined) {
+        dpConfig = {
+          ...(dpConfig || {}),
+          state_hmac_key: String(options.stateHmacKey),
+        };
+      }
+      if (options.persistState === true || options.stateFile) {
+        dpConfig = {
+          ...(dpConfig || {}),
+          persist_state: true,
+        };
+      }
 
       const inputPath = path.resolve(options.in);
       const payload = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
@@ -358,6 +379,10 @@ privacyCommand
       report.source = {
         input: inputPath,
         config: fs.existsSync(options.config) ? path.resolve(options.config) : null,
+        state_file:
+          dpConfig && typeof dpConfig === 'object' && dpConfig.state_file
+            ? path.resolve(String(dpConfig.state_file))
+            : null,
       };
 
       if (options.out) {
@@ -560,8 +585,9 @@ complianceCommand
 
 complianceCommand
   .command('owasp-llm')
-  .description('Generate OWASP LLM Top 10 coverage report')
+  .description('Generate OWASP LLM compliance report (Top10 or extended profiles)')
   .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--profile <name>', 'llm-top10-2025 | llm-extended-2025', 'llm-top10-2025')
   .option('--report <format>', 'json|html', 'json')
   .option('--out <path>', 'Write report to path')
   .action((options) => {
@@ -575,11 +601,16 @@ complianceCommand
       if (!['json', 'html'].includes(format)) {
         throw new Error('Invalid --report value. Use json or html.');
       }
-      const report = generateOWASPComplianceReport(loaded.config);
+      const report = generateOWASPComplianceReport(loaded.config, {
+        profile: options.profile,
+      });
+      const defaultTitle = report?.profile?.id === 'llm-extended-2025'
+        ? 'Sentinel OWASP LLM Extended Compliance Report'
+        : 'Sentinel OWASP LLM Top 10 Compliance Report';
       const output =
         format === 'html'
           ? renderOWASPLLMHtmlReport(report, {
-              title: 'Sentinel OWASP LLM Top 10 Compliance Report',
+              title: defaultTitle,
             })
           : `${JSON.stringify(report, null, 2)}\n`;
 

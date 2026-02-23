@@ -76,6 +76,75 @@ const CATEGORY_PATTERNS = {
   ],
 };
 
+const CONTEXT_DAMPEN_PATTERNS = [
+  /\b(do not|don't|never|avoid|refuse|denied|blocked|example|quoted|literal|string)\b/i,
+  /\b(detection|scanner|security report|forbidden pattern)\b/i,
+];
+
+const CONTEXT_NEGATION_PATTERNS = [/\b(do not|don't|never|avoid|refuse|denied|blocked)\b/i];
+
+const CONTEXT_ESCALATE_PATTERNS = [
+  /\b(now|immediately|execute|run|bypass|override|reveal|dump|leak|exfiltrate|steal)\b/i,
+  /\b(ignore|disable|drop|delete|chmod|curl|wget)\b/i,
+];
+
+const NGRAM_RULES = {
+  toxicity: [
+    {
+      id: 'directive_plus_targeted_harm',
+      patterns: [/\bkill\s+yourself\b/i, /\b(you|yourself)\b/i],
+      negate: [/\b(do not|don't|never|avoid|quoted|example)\b/i],
+    },
+  ],
+  code_execution: [
+    {
+      id: 'command_plus_imperative',
+      patterns: [
+        /\b(rm\s+-rf|eval\s*\(|exec\s*\(|os\.system|drop\s+table|delete\s+from|chmod\s+777)\b/i,
+        /\b(run|execute|now|immediately|ignore|bypass|override)\b/i,
+      ],
+      negate: [/\b(do not|don't|never|avoid|quoted|example)\b/i],
+    },
+  ],
+  hallucination: [
+    {
+      id: 'suspicious_source_plus_certainty',
+      patterns: [
+        /https?:\/\/(?:[\w-]+\.)*(?:example|invalid|localhost|internal|local)(?:\/|\b)/i,
+        /\b(100%\s+accurate|absolutely verified|guaranteed factual)\b/i,
+      ],
+      negate: [/\b(sample|example|placeholder)\b/i],
+    },
+  ],
+  unauthorized_disclosure: [
+    {
+      id: 'prompt_marker_plus_leak_verb',
+      patterns: [
+        /\b(system\s+prompt|developer\s+message|internal\s+policy|x-sentinel-[a-z0-9_-]+)\b/i,
+        /\b(reveal|show|print|dump|expose|leak)\b/i,
+      ],
+      negate: [/\b(redact|mask|sanitized|blocked|deny|denied)\b/i],
+    },
+  ],
+};
+
+function toGlobalRegex(regex) {
+  const source = regex && regex.source ? regex.source : String(regex || '');
+  const flagsSet = new Set(String(regex && regex.flags ? regex.flags : '').split(''));
+  flagsSet.add('g');
+  return new RegExp(source, Array.from(flagsSet).join(''));
+}
+
+function containsAnyPattern(input, patterns = []) {
+  const text = String(input || '');
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeCategoryConfig(name, raw = {}) {
   const defaults = DEFAULT_CATEGORY_THRESHOLDS[name] || { warn: 0.5, block: 0.8 };
   const warn = clampProbability(raw.warn_threshold, defaults.warn);
@@ -103,23 +172,140 @@ function normalizeConfig(input = {}) {
     enabled: config.enabled === true,
     mode: normalizeMode(config.mode, 'monitor', ['monitor', 'block']),
     maxScanChars: clampPositiveInt(config.max_scan_chars, 8192, 256, 262144),
+    contextWindowChars: clampPositiveInt(config.context_window_chars, 64, 16, 4096),
+    maxMatchesPerRule: clampPositiveInt(config.max_matches_per_rule, 4, 1, 32),
+    contextualDampening: clampProbability(config.contextual_dampening, 0.55),
+    contextualEscalation: clampProbability(config.contextual_escalation, 0.15),
+    ngramBoost: clampProbability(config.ngram_boost, 0.2),
     categories,
   };
 }
 
-function scoreCategory(name, text) {
+function matchContextWindow(text, index, length, windowChars) {
+  const windowSize = Math.max(8, Number(windowChars || 64));
+  const start = Math.max(0, index - windowSize);
+  const end = Math.min(text.length, index + Math.max(1, length) + windowSize);
+  return text.slice(start, end);
+}
+
+function contextualMultiplier(contextWindow, config) {
+  const dampened = containsAnyPattern(contextWindow, CONTEXT_DAMPEN_PATTERNS);
+  const escalated = containsAnyPattern(contextWindow, CONTEXT_ESCALATE_PATTERNS);
+  const negated = containsAnyPattern(contextWindow, CONTEXT_NEGATION_PATTERNS);
+  const dampeningFactor = Math.max(0.2, Math.min(1, Number(config.contextualDampening || 0.55)));
+  if (dampened && escalated) {
+    // Preserve advisory phrasing like "do not run ..." from imperative escalation.
+    if (negated) {
+      return {
+        multiplier: dampeningFactor,
+        dampened: true,
+        escalated: false,
+      };
+    }
+    return {
+      multiplier: 1,
+      dampened: true,
+      escalated: true,
+    };
+  }
+  if (dampened) {
+    return {
+      multiplier: dampeningFactor,
+      dampened: true,
+      escalated: false,
+    };
+  }
+  if (escalated) {
+    const boost = Math.max(0, Math.min(1, Number(config.contextualEscalation || 0.15)));
+    return {
+      multiplier: 1 + boost,
+      dampened: false,
+      escalated: true,
+    };
+  }
+  return {
+    multiplier: 1,
+    dampened: false,
+    escalated: false,
+  };
+}
+
+function computeNgramBoost(name, text, config) {
+  const rules = NGRAM_RULES[name] || [];
+  const signals = [];
+  let boost = 0;
+  for (const rule of rules) {
+    const matched = Array.isArray(rule.patterns) && rule.patterns.every((pattern) => pattern.test(text));
+    if (!matched) {
+      continue;
+    }
+    const negated = Array.isArray(rule.negate) && rule.negate.length > 0 && rule.negate.some((pattern) => pattern.test(text));
+    if (negated) {
+      continue;
+    }
+    signals.push(rule.id);
+    boost += Number(config.ngramBoost || 0);
+  }
+  return {
+    boost: Number(Math.min(1, boost).toFixed(4)),
+    signals,
+  };
+}
+
+function scoreCategory(name, text, config) {
   const rules = CATEGORY_PATTERNS[name] || [];
   let score = 0;
   const matches = [];
+  const contextualSignals = [];
+  let dampenedMatches = 0;
+  let escalatedMatches = 0;
   for (const rule of rules) {
-    if (rule.pattern.test(text)) {
-      score += Number(rule.weight || 0);
+    const pattern = toGlobalRegex(rule.pattern);
+    let localCount = 0;
+    let found = false;
+    let execMatch;
+    while ((execMatch = pattern.exec(text)) !== null) {
+      found = true;
+      const contextWindow = matchContextWindow(
+        text,
+        Number(execMatch.index || 0),
+        String(execMatch[0] || '').length,
+        config.contextWindowChars
+      );
+      const context = contextualMultiplier(contextWindow, config);
+      if (context.dampened) {
+        dampenedMatches += 1;
+      }
+      if (context.escalated) {
+        escalatedMatches += 1;
+      }
+      const repetitionBoost = Math.min(0.12, localCount * 0.03);
+      const contribution = Number(rule.weight || 0) * context.multiplier + repetitionBoost;
+      score += contribution;
+      localCount += 1;
+      if (localCount >= config.maxMatchesPerRule) {
+        break;
+      }
+      if (String(execMatch[0] || '').length === 0) {
+        pattern.lastIndex += 1;
+      }
+    }
+    if (found) {
       matches.push(rule.id);
+      if (localCount > 1) {
+        contextualSignals.push(`${rule.id}:repeat:${localCount}`);
+      }
     }
   }
+  const ngram = computeNgramBoost(name, text, config);
+  score += ngram.boost;
   return {
     score: Math.min(1, Number(score.toFixed(4))),
     matches,
+    contextualSignals,
+    ngramSignals: ngram.signals,
+    dampenedMatches,
+    escalatedMatches,
   };
 }
 
@@ -167,7 +353,7 @@ class OutputClassifier {
         continue;
       }
 
-      const scored = scoreCategory(name, boundedText);
+      const scored = scoreCategory(name, boundedText, this.config);
       const warn = scored.score >= categoryConfig.warnThreshold;
       const block =
         scored.score >= categoryConfig.blockThreshold &&
@@ -180,6 +366,10 @@ class OutputClassifier {
         warn,
         block,
         matches: scored.matches,
+        contextual_signals: scored.contextualSignals,
+        ngram_signals: scored.ngramSignals,
+        dampened_matches: scored.dampenedMatches,
+        escalated_matches: scored.escalatedMatches,
       };
 
       if (warn) {

@@ -40,6 +40,7 @@ jobs:
       - run: npm run test:coverage:gate
       - run: npm run perf:p0:gate
       - run: npm run perf:p1:gate
+      - run: npm run perf:p2:gate
       - run: npm run benchmark -- --duration 3 --connections 16 --pipelining 1
       - run: npm run benchmark:gate
       - run: npm run ci:bootstrap:npx
@@ -55,6 +56,7 @@ jobs:
             aibom.json
             metrics/p0-engine-perf-*.json
             metrics/p1-engine-perf-*.json
+            metrics/p2-engine-perf-*.json
 
   docker-build:
     runs-on: ubuntu-latest

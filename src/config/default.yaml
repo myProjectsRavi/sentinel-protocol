@@ -293,6 +293,11 @@ runtime:
     enabled: false
     mode: monitor # monitor | block
     max_scan_chars: 8192
+    context_window_chars: 64
+    max_matches_per_rule: 4
+    contextual_dampening: 0.55
+    contextual_escalation: 0.15
+    ngram_boost: 0.2
     categories:
       toxicity:
         enabled: true
@@ -328,6 +333,10 @@ runtime:
     sensitivity: 1.0
     max_simulation_calls: 1000
     max_vector_length: 8192
+    persist_state: false
+    state_file: ""
+    state_hmac_key: ""
+    reset_on_tamper: true
   auto_immune:
     enabled: false
     mode: monitor # monitor | block

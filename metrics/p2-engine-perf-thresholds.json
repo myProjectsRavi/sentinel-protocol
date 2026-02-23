@@ -1,0 +1,24 @@
+{
+  "warmup_iterations": 2000,
+  "measure_iterations": 12000,
+  "modules": {
+    "output_classifier": {
+      "max_p95_ms": 0.4
+    },
+    "output_schema_validator": {
+      "max_p95_ms": 0.6
+    },
+    "adversarial_case_eval": {
+      "max_p95_ms": 0.55
+    },
+    "differential_privacy": {
+      "max_p95_ms": 0.15
+    },
+    "agent_observability": {
+      "max_p95_ms": 0.45
+    }
+  },
+  "global": {
+    "max_sum_p95_ms": 1.6
+  }
+}

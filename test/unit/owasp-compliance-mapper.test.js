@@ -1,5 +1,7 @@
 const {
+  PROFILE_EXTENDED_2025,
   OWASP_LLM_TOP10_MAP,
+  OWASP_LLM_EXTENDED_2025_MAP,
   generateOWASPComplianceReport,
   renderOWASPLLMHtmlReport,
 } = require('../../src/governance/owasp-compliance-mapper');
@@ -115,5 +117,29 @@ describe('owasp compliance mapper', () => {
     expect(first).toBe(second);
     expect(first.includes('<script>alert(1)</script>')).toBe(false);
     expect(first.includes('&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(true);
+  });
+
+  test('supports extended 2025 profile with LLM11-LLM15 risks', () => {
+    const keys = Object.keys(OWASP_LLM_EXTENDED_2025_MAP).sort((a, b) => a.localeCompare(b));
+    expect(keys.includes('LLM11')).toBe(true);
+    expect(keys.includes('LLM12')).toBe(true);
+    expect(keys.includes('LLM13')).toBe(true);
+    expect(keys.includes('LLM14')).toBe(true);
+    expect(keys.includes('LLM15')).toBe(true);
+
+    const report = generateOWASPComplianceReport(createConfig(), {
+      profile: PROFILE_EXTENDED_2025,
+    });
+    expect(report.profile.id).toBe('llm-extended-2025');
+    expect(report.risks.some((risk) => risk.code === 'LLM15')).toBe(true);
+    expect(report.summary.total).toBe(15);
+  });
+
+  test('throws for unsupported profile names', () => {
+    expect(() =>
+      generateOWASPComplianceReport(createConfig(), {
+        profile: 'unknown-profile',
+      })
+    ).toThrow(/Unsupported OWASP profile/);
   });
 });

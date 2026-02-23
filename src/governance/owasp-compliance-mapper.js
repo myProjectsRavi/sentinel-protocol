@@ -1,6 +1,9 @@
 const { escapeHtml } = require('./red-team-html-report');
 
+const PROFILE_TOP10_2025 = 'llm-top10-2025';
+const PROFILE_EXTENDED_2025 = 'llm-extended-2025';
 const SCHEMA_VERSION = 'sentinel.owasp.llm-top10.v1';
+const EXTENDED_SCHEMA_VERSION = 'sentinel.owasp.llm-extended-2025.v1';
 
 function getPath(source, path, fallback) {
   let current = source;
@@ -302,6 +305,185 @@ const OWASP_LLM_TOP10_MAP = Object.freeze({
   }),
 });
 
+const OWASP_LLM_EXTENDED_ADDITIONS = Object.freeze({
+  LLM11: Object.freeze({
+    title: 'Unbounded Consumption',
+    controls: Object.freeze([
+      Object.freeze({
+        id: 'rate_limiter',
+        config_key: 'runtime.rate_limiter.default_limit',
+        evaluate: (config) => {
+          const limit = Number(getPath(config, ['runtime', 'rate_limiter', 'default_limit'], 0));
+          return {
+            enabled: Number.isFinite(limit) && limit > 0,
+            enforce: Number.isFinite(limit) && limit > 0,
+          };
+        },
+      }),
+      Object.freeze({
+        id: 'budget_gate',
+        config_key: 'runtime.budget.enabled|runtime.budget.action',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'budget', 'enabled'], false) === true;
+          const action = normalizeComplianceMode(getPath(config, ['runtime', 'budget', 'action'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && action === 'block',
+          };
+        },
+      }),
+    ]),
+  }),
+  LLM12: Object.freeze({
+    title: 'Insecure Agentic Orchestration',
+    controls: Object.freeze([
+      Object.freeze({
+        id: 'agentic_threat_shield',
+        config_key: 'runtime.agentic_threat_shield.enabled|runtime.agentic_threat_shield.mode',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'agentic_threat_shield', 'enabled'], false) === true;
+          const mode = normalizeComplianceMode(getPath(config, ['runtime', 'agentic_threat_shield', 'mode'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && mode === 'block',
+          };
+        },
+      }),
+      Object.freeze({
+        id: 'mcp_poisoning',
+        config_key: 'runtime.mcp_poisoning.enabled|runtime.mcp_poisoning.mode',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'mcp_poisoning', 'enabled'], false) === true;
+          const mode = normalizeComplianceMode(getPath(config, ['runtime', 'mcp_poisoning', 'mode'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && mode === 'block',
+          };
+        },
+      }),
+    ]),
+  }),
+  LLM13: Object.freeze({
+    title: 'Insecure Retrieval and Context Integrity',
+    controls: Object.freeze([
+      Object.freeze({
+        id: 'intent_drift',
+        config_key: 'runtime.intent_drift.enabled|runtime.intent_drift.mode',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'intent_drift', 'enabled'], false) === true;
+          const mode = normalizeComplianceMode(getPath(config, ['runtime', 'intent_drift', 'mode'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && mode === 'block',
+          };
+        },
+      }),
+      Object.freeze({
+        id: 'parallax_validator',
+        config_key: 'runtime.parallax.enabled|runtime.parallax.mode',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'parallax', 'enabled'], false) === true;
+          const mode = normalizeComplianceMode(getPath(config, ['runtime', 'parallax', 'mode'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && mode === 'block',
+          };
+        },
+      }),
+    ]),
+  }),
+  LLM14: Object.freeze({
+    title: 'Privacy and Data Retention Risk',
+    controls: Object.freeze([
+      Object.freeze({
+        id: 'pii_vault',
+        config_key: 'runtime.pii_vault.enabled|runtime.pii_vault.mode',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'pii_vault', 'enabled'], false) === true;
+          const mode = normalizeComplianceMode(getPath(config, ['runtime', 'pii_vault', 'mode'], 'monitor'));
+          return {
+            enabled,
+            enforce: enabled && mode === 'active',
+          };
+        },
+      }),
+      Object.freeze({
+        id: 'differential_privacy',
+        config_key: 'runtime.differential_privacy.enabled',
+        evaluate: (config) => {
+          const enabled = getPath(config, ['runtime', 'differential_privacy', 'enabled'], false) === true;
+          return {
+            enabled,
+            enforce: enabled,
+          };
+        },
+      }),
+    ]),
+  }),
+  LLM15: Object.freeze({
+    title: 'Integrity and Provenance Gaps',
+    controls: Object.freeze([
+      Object.freeze({
+        id: 'provenance_signing',
+        config_key: 'runtime.provenance.enabled',
+        evaluate: enabledByPath(['runtime', 'provenance', 'enabled']),
+      }),
+      Object.freeze({
+        id: 'policy_bundle_signing',
+        config_key: 'runtime.policy_bundle.enabled',
+        evaluate: enabledByPath(['runtime', 'policy_bundle', 'enabled']),
+      }),
+    ]),
+  }),
+});
+
+const OWASP_LLM_EXTENDED_2025_MAP = Object.freeze({
+  ...OWASP_LLM_TOP10_MAP,
+  ...OWASP_LLM_EXTENDED_ADDITIONS,
+});
+
+const OWASP_PROFILE_DEFINITIONS = Object.freeze({
+  [PROFILE_TOP10_2025]: Object.freeze({
+    id: PROFILE_TOP10_2025,
+    title: 'OWASP LLM Top 10 (2025)',
+    schemaVersion: SCHEMA_VERSION,
+    risks: OWASP_LLM_TOP10_MAP,
+  }),
+  [PROFILE_EXTENDED_2025]: Object.freeze({
+    id: PROFILE_EXTENDED_2025,
+    title: 'OWASP LLM Extended (2025, LLM01-LLM15)',
+    schemaVersion: EXTENDED_SCHEMA_VERSION,
+    risks: OWASP_LLM_EXTENDED_2025_MAP,
+  }),
+});
+
+function normalizeProfileId(value) {
+  const normalized = String(value || PROFILE_TOP10_2025).trim().toLowerCase();
+  if (normalized === 'top10' || normalized === 'llm-top10' || normalized === 'llm-top10-2025') {
+    return PROFILE_TOP10_2025;
+  }
+  if (
+    normalized === 'extended' ||
+    normalized === 'llm-extended' ||
+    normalized === 'llm-extended-2025' ||
+    normalized === 'llm11-15'
+  ) {
+    return PROFILE_EXTENDED_2025;
+  }
+  return normalized;
+}
+
+function resolveProfileDefinition(value) {
+  const profileId = normalizeProfileId(value);
+  const definition = OWASP_PROFILE_DEFINITIONS[profileId];
+  if (!definition) {
+    throw new Error(
+      `Unsupported OWASP profile: ${value}. Supported profiles: ${PROFILE_TOP10_2025}, ${PROFILE_EXTENDED_2025}`
+    );
+  }
+  return definition;
+}
+
 function controlStatus(controlResult = {}) {
   if (controlResult.enforce === true) {
     return 'covered';
@@ -356,14 +538,19 @@ function summarizeRisks(risks = []) {
 }
 
 function generateOWASPComplianceReport(config = {}, options = {}) {
-  const sortedRiskCodes = Object.keys(OWASP_LLM_TOP10_MAP).sort((a, b) => a.localeCompare(b));
-  const risks = sortedRiskCodes.map((code) => evaluateRisk(config, code, OWASP_LLM_TOP10_MAP[code]));
+  const profile = resolveProfileDefinition(options.profile);
+  const sortedRiskCodes = Object.keys(profile.risks).sort((a, b) => a.localeCompare(b));
+  const risks = sortedRiskCodes.map((code) => evaluateRisk(config, code, profile.risks[code]));
   const summary = summarizeRisks(risks);
 
   return {
-    schema_version: SCHEMA_VERSION,
-    report_id: String(options.reportId || 'sentinel-owasp-llm-top10'),
+    schema_version: profile.schemaVersion,
+    report_id: String(options.reportId || `sentinel-owasp-${profile.id}`),
     generated_at: options.generatedAt || null,
+    profile: {
+      id: profile.id,
+      title: profile.title,
+    },
     risks,
     summary: {
       ...summary,
@@ -373,7 +560,10 @@ function generateOWASPComplianceReport(config = {}, options = {}) {
 }
 
 function renderOWASPLLMHtmlReport(report = {}, options = {}) {
-  const title = String(options.title || 'Sentinel OWASP LLM Top 10 Compliance Report');
+  const defaultTitle = report?.profile?.id === PROFILE_EXTENDED_2025
+    ? 'Sentinel OWASP LLM Extended Compliance Report'
+    : 'Sentinel OWASP LLM Top 10 Compliance Report';
+  const title = String(options.title || defaultTitle);
   const risks = Array.isArray(report.risks) ? report.risks : [];
   const rows = risks
     .map((risk) => {
@@ -407,7 +597,7 @@ function renderOWASPLLMHtmlReport(report = {}, options = {}) {
 <body>
   <div class="wrap">
     <h1>${escapeHtml(title)}</h1>
-    <div class="meta">schema_version=${escapeHtml(String(report.schema_version || SCHEMA_VERSION))} | deterministic=true | raw_payloads_exposed=false</div>
+    <div class="meta">schema_version=${escapeHtml(String(report.schema_version || SCHEMA_VERSION))} | profile=${escapeHtml(String(report?.profile?.id || PROFILE_TOP10_2025))} | deterministic=true | raw_payloads_exposed=false</div>
     <table>
       <thead>
         <tr>
@@ -425,8 +615,13 @@ function renderOWASPLLMHtmlReport(report = {}, options = {}) {
 }
 
 module.exports = {
+  PROFILE_TOP10_2025,
+  PROFILE_EXTENDED_2025,
   SCHEMA_VERSION,
+  EXTENDED_SCHEMA_VERSION,
   OWASP_LLM_TOP10_MAP,
+  OWASP_LLM_EXTENDED_2025_MAP,
+  OWASP_PROFILE_DEFINITIONS,
   generateOWASPComplianceReport,
   renderOWASPLLMHtmlReport,
 };

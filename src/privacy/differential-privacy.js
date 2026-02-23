@@ -1,4 +1,9 @@
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 const { clampPositiveInt } = require('../utils/primitives');
+
+const STATE_SCHEMA_VERSION = 'sentinel.dp.state.v1';
 
 function laplaceNoise(scale, rng = Math.random) {
   const safeScale = Number(scale);
@@ -17,6 +22,8 @@ function normalizeConfig(config = {}) {
   const epsilonBudget = Number(source.epsilon_budget ?? 1.0);
   const epsilonPerCall = Number(source.epsilon_per_call ?? 0.1);
   const sensitivity = Number(source.sensitivity ?? 1.0);
+  const stateFileRaw = String(source.state_file || '').trim();
+  const stateFile = stateFileRaw ? path.resolve(stateFileRaw) : '';
   return {
     enabled: source.enabled === true,
     epsilonBudget: Number.isFinite(epsilonBudget) && epsilonBudget > 0 ? epsilonBudget : 1.0,
@@ -24,7 +31,25 @@ function normalizeConfig(config = {}) {
     sensitivity: Number.isFinite(sensitivity) && sensitivity > 0 ? sensitivity : 1.0,
     maxSimulationCalls: clampPositiveInt(source.max_simulation_calls, 1000, 1, 1000000),
     maxVectorLength: clampPositiveInt(source.max_vector_length, 8192, 1, 200000),
+    persistState: source.persist_state === true,
+    stateFile,
+    stateHmacKey: String(source.state_hmac_key || ''),
+    resetOnTamper: source.reset_on_tamper !== false,
   };
+}
+
+function stableStateString(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return JSON.stringify({
+    schema_version: String(source.schema_version || STATE_SCHEMA_VERSION),
+    epsilon_budget: Number(source.epsilon_budget || 0),
+    epsilon_per_call: Number(source.epsilon_per_call || 0),
+    sensitivity: Number(source.sensitivity || 0),
+    max_simulation_calls: Number(source.max_simulation_calls || 0),
+    max_vector_length: Number(source.max_vector_length || 0),
+    remaining_epsilon: Number(source.remaining_epsilon || 0),
+    calls: Number(source.calls || 0),
+  });
 }
 
 class DifferentialPrivacyEngine {
@@ -33,10 +58,117 @@ class DifferentialPrivacyEngine {
     this.remainingEpsilon = this.config.epsilonBudget;
     this.calls = 0;
     this.rng = typeof options.rng === 'function' ? options.rng : Math.random;
+    this.now = typeof options.now === 'function' ? options.now : () => Date.now();
+    this.persistenceError = null;
+    this.tamperDetected = false;
+    this.stateLoaded = false;
+    if (this.config.persistState && this.config.stateFile) {
+      this.loadPersistedState();
+    }
   }
 
   isEnabled() {
     return this.config.enabled === true;
+  }
+
+  signStatePayload(statePayload = {}) {
+    const canonical = stableStateString(statePayload);
+    if (this.config.stateHmacKey) {
+      return crypto.createHmac('sha256', this.config.stateHmacKey).update(canonical, 'utf8').digest('hex');
+    }
+    return crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+  }
+
+  stateAlgorithm() {
+    return this.config.stateHmacKey ? 'hmac-sha256' : 'sha256';
+  }
+
+  buildStatePayload() {
+    return {
+      schema_version: STATE_SCHEMA_VERSION,
+      epsilon_budget: Number(this.config.epsilonBudget),
+      epsilon_per_call: Number(this.config.epsilonPerCall),
+      sensitivity: Number(this.config.sensitivity),
+      max_simulation_calls: Number(this.config.maxSimulationCalls),
+      max_vector_length: Number(this.config.maxVectorLength),
+      remaining_epsilon: Number(this.remainingEpsilon),
+      calls: Number(this.calls),
+    };
+  }
+
+  buildStateEnvelope() {
+    const state = this.buildStatePayload();
+    return {
+      schema_version: STATE_SCHEMA_VERSION,
+      algorithm: this.stateAlgorithm(),
+      updated_at: new Date(this.now()).toISOString(),
+      state,
+      digest: this.signStatePayload(state),
+    };
+  }
+
+  loadPersistedState() {
+    try {
+      if (!fs.existsSync(this.config.stateFile)) {
+        return;
+      }
+      const parsed = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('state_payload_invalid');
+      }
+      const state = parsed.state;
+      if (!state || typeof state !== 'object' || Array.isArray(state)) {
+        throw new Error('state_object_missing');
+      }
+
+      const expectedDigest = this.signStatePayload(state);
+      const providedDigest = String(parsed.digest || '');
+      if (!providedDigest || providedDigest !== expectedDigest) {
+        this.tamperDetected = true;
+        if (this.config.resetOnTamper) {
+          return;
+        }
+        throw new Error('state_digest_mismatch');
+      }
+
+      const nextCalls = Number(state.calls);
+      const nextRemaining = Number(state.remaining_epsilon);
+      if (!Number.isInteger(nextCalls) || nextCalls < 0) {
+        throw new Error('state_calls_invalid');
+      }
+      if (!Number.isFinite(nextRemaining) || nextRemaining < 0) {
+        throw new Error('state_remaining_invalid');
+      }
+
+      this.calls = Math.min(this.config.maxSimulationCalls, nextCalls);
+      this.remainingEpsilon = Math.max(0, Math.min(this.config.epsilonBudget, nextRemaining));
+      this.stateLoaded = true;
+    } catch (error) {
+      this.persistenceError = String(error.message || error);
+      if (this.config.resetOnTamper) {
+        this.calls = 0;
+        this.remainingEpsilon = this.config.epsilonBudget;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  persistState() {
+    if (!this.config.persistState || !this.config.stateFile) {
+      return;
+    }
+    try {
+      const dir = path.dirname(this.config.stateFile);
+      fs.mkdirSync(dir, { recursive: true });
+      const envelope = this.buildStateEnvelope();
+      const tmpPath = `${this.config.stateFile}.tmp-${process.pid}`;
+      fs.writeFileSync(tmpPath, `${JSON.stringify(envelope, null, 2)}\n`, 'utf8');
+      fs.renameSync(tmpPath, this.config.stateFile);
+      this.persistenceError = null;
+    } catch (error) {
+      this.persistenceError = String(error.message || error);
+    }
   }
 
   snapshot() {
@@ -48,6 +180,14 @@ class DifferentialPrivacyEngine {
       sensitivity: this.config.sensitivity,
       calls: this.calls,
       exhausted: this.remainingEpsilon <= 0 || this.calls >= this.config.maxSimulationCalls,
+      state_persistence: {
+        enabled: this.config.persistState,
+        state_file: this.config.stateFile || null,
+        algorithm: this.stateAlgorithm(),
+        loaded: this.stateLoaded,
+        tamper_detected: this.tamperDetected,
+        error: this.persistenceError || null,
+      },
     };
   }
 
@@ -76,6 +216,7 @@ class DifferentialPrivacyEngine {
 
     this.calls += 1;
     this.remainingEpsilon = Number(Math.max(0, this.remainingEpsilon - spend).toFixed(12));
+    this.persistState();
 
     return {
       consumed: spend,
@@ -224,6 +365,7 @@ class DifferentialPrivacyEngine {
 }
 
 module.exports = {
+  STATE_SCHEMA_VERSION,
   DifferentialPrivacyEngine,
   laplaceNoise,
   normalizeDifferentialPrivacyConfig: normalizeConfig,

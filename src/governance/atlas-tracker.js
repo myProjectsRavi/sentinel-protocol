@@ -44,6 +44,12 @@ const ENGINE_TECHNIQUE_MAP = Object.freeze({
     name: 'Tool and Context Poisoning',
     severity: 'high',
   }),
+  synthetic_poisoner: Object.freeze({
+    technique_id: 'AML.T0020.000',
+    tactic: 'Poisoning',
+    name: 'Synthetic Training Data Poisoning Signal',
+    severity: 'medium',
+  }),
   agentic_threat_shield: Object.freeze({
     technique_id: 'AML.T0016.000',
     tactic: 'Execution',
@@ -78,6 +84,24 @@ const ENGINE_TECHNIQUE_MAP = Object.freeze({
     technique_id: 'AML.T0044.000',
     tactic: 'Exfiltration',
     name: 'High-Entropy Secret Exfiltration',
+    severity: 'high',
+  }),
+  output_classifier: Object.freeze({
+    technique_id: 'AML.T0043.000',
+    tactic: 'Evasion',
+    name: 'Adversarial Output Evasion Signal',
+    severity: 'medium',
+  }),
+  adversarial_robustness: Object.freeze({
+    technique_id: 'AML.T0043.000',
+    tactic: 'Evasion',
+    name: 'Adversarial Prompt Evasion and Smuggling',
+    severity: 'medium',
+  }),
+  model_inversion_guard: Object.freeze({
+    technique_id: 'AML.T0049.000',
+    tactic: 'Exfiltration',
+    name: 'Model Inversion and Training Data Reconstruction',
     severity: 'high',
   }),
   shadow_os: Object.freeze({
@@ -116,8 +140,12 @@ const ENGINE_PRIORITY = Object.freeze([
   'prompt_rebuff',
   'agentic_threat_shield',
   'mcp_poisoning_detector',
+  'synthetic_poisoner',
+  'model_inversion_guard',
   'injection_scanner',
   'pii_scanner',
+  'output_classifier',
+  'adversarial_robustness',
   'entropy_analyzer',
   'loop_breaker',
   'intent_drift',
@@ -182,6 +210,18 @@ function inferEngineCandidates(event = {}) {
   if (decision.includes('mcp_poisoning')) {
     candidates.add('mcp_poisoning_detector');
   }
+  if (decision.includes('synthetic_poisoning')) {
+    candidates.add('synthetic_poisoner');
+  }
+  if (decision.includes('output_classifier')) {
+    candidates.add('output_classifier');
+  }
+  if (decision.includes('adversarial')) {
+    candidates.add('adversarial_robustness');
+  }
+  if (decision.includes('model_inversion')) {
+    candidates.add('model_inversion_guard');
+  }
   if (decision.includes('loop')) {
     candidates.add('loop_breaker');
   }
@@ -212,6 +252,18 @@ function inferEngineCandidates(event = {}) {
   }
   if (reasons.some((item) => item.startsWith('mcp_poisoning:'))) {
     candidates.add('mcp_poisoning_detector');
+  }
+  if (reasons.some((item) => item.startsWith('synthetic_poisoning:'))) {
+    candidates.add('synthetic_poisoner');
+  }
+  if (reasons.some((item) => item.startsWith('output_classifier:'))) {
+    candidates.add('output_classifier');
+  }
+  if (reasons.some((item) => item.includes('adversarial_example') || item.includes('evasion'))) {
+    candidates.add('adversarial_robustness');
+  }
+  if (reasons.some((item) => item.includes('model_inversion') || item.includes('embedding_reconstruction'))) {
+    candidates.add('model_inversion_guard');
   }
   if (reasons.some((item) => item.startsWith('agentic:'))) {
     candidates.add('agentic_threat_shield');

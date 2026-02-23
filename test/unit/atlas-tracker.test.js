@@ -81,4 +81,25 @@ describe('atlas tracker', () => {
       })
     );
   });
+
+  test('includes mappings for poisoning, adversarial evasion, and model inversion techniques', () => {
+    expect(classifyEngine('synthetic_poisoner').technique_id).toBe('AML.T0020.000');
+    expect(classifyEngine('output_classifier').technique_id).toBe('AML.T0043.000');
+    expect(classifyEngine('model_inversion_guard').technique_id).toBe('AML.T0049.000');
+  });
+
+  test('infers synthetic poisoning and model inversion from reasons payload', () => {
+    const tracker = new AtlasTracker();
+    const poisoning = tracker.classifyEvent({
+      decision: 'forwarded',
+      reasons: ['synthetic_poisoning:injected'],
+    });
+    expect(poisoning.technique_id).toBe('AML.T0020.000');
+
+    const inversion = tracker.classifyEvent({
+      decision: 'blocked_policy',
+      reasons: ['model_inversion_candidate_detected'],
+    });
+    expect(inversion.technique_id).toBe('AML.T0049.000');
+  });
 });
