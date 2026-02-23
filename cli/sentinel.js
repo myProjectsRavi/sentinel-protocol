@@ -17,8 +17,10 @@ const { EvidenceVault } = require('../src/governance/evidence-vault');
 const { ThreatPropagationGraph } = require('../src/governance/threat-propagation-graph');
 const { AttackCorpusEvolver } = require('../src/governance/attack-corpus-evolver');
 const { ForensicDebugger } = require('../src/governance/forensic-debugger');
+const { PolicyGradientAnalyzer } = require('../src/governance/policy-gradient-analyzer');
 const { AtlasTracker } = require('../src/governance/atlas-tracker');
 const { AIBOMGenerator } = require('../src/governance/aibom-generator');
+const { CapabilityIntrospection } = require('../src/governance/capability-introspection');
 const { computeSecurityPosture } = require('../src/governance/security-posture');
 const {
   generateOWASPComplianceReport,
@@ -256,6 +258,130 @@ program
       }
     } catch (error) {
       console.error(`Posture scoring failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('policy-gradient')
+  .description('Replay audit events against current/proposed thresholds to estimate security/disruption impact')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
+  .option('--limit <count>', 'Max JSONL events to inspect', '200000')
+  .option('--current-threshold <value>', 'Current injection threshold')
+  .option('--proposed-threshold <value>', 'Proposed injection threshold')
+  .option('--json', 'Output JSON')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const eventsWithMeta = loadAuditEvents(options.auditPath, options.limit);
+      const analyzer = new PolicyGradientAnalyzer({
+        ...(loaded.config.runtime?.policy_gradient_analyzer || {}),
+        enabled: true,
+      });
+      const report = analyzer.analyze({
+        events: eventsWithMeta.events || [],
+        current: {
+          injection_threshold:
+            options.currentThreshold !== undefined
+              ? Number(options.currentThreshold)
+              : loaded.config.runtime?.policy_gradient_analyzer?.current_injection_threshold,
+        },
+        proposed: {
+          injection_threshold:
+            options.proposedThreshold !== undefined
+              ? Number(options.proposedThreshold)
+              : loaded.config.runtime?.policy_gradient_analyzer?.proposed_injection_threshold,
+        },
+      });
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(`Evaluated events: ${report.evaluated_events}`);
+        console.log(`Current threshold: ${report.current_threshold}`);
+        console.log(`Proposed threshold: ${report.proposed_threshold}`);
+        console.log(`Current blocked: ${report.current_blocked}`);
+        console.log(`Proposed blocked: ${report.proposed_blocked}`);
+        console.log(`Delta blocked: ${report.delta_blocked}`);
+        console.log(`Flips to blocked: ${report.flips_to_blocked}`);
+        console.log(`Flips to allowed: ${report.flips_to_allowed}`);
+        console.log(`Recommendation: ${report.recommendation}`);
+      }
+    } catch (error) {
+      console.error(`Policy gradient analysis failed: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('capabilities')
+  .description('Emit capability snapshot and A2A-style agent card from current config (offline)')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--agent-id <id>', 'Agent card ID', 'sentinel-agent')
+  .option('--json', 'Output JSON')
+  .action((options) => {
+    try {
+      const loaded = loadAndValidateConfig({
+        configPath: options.config,
+        allowMigration: true,
+        writeMigrated: false,
+      });
+      const runtime = loaded.config.runtime || {};
+      const introspection = new CapabilityIntrospection({
+        ...(runtime.capability_introspection || {}),
+        enabled: true,
+      });
+      const pseudoServer = {
+        config: loaded.config,
+        computeEffectiveMode: () => loaded.config.mode,
+        agenticThreatShield: runtime.agentic_threat_shield || {},
+        a2aCardVerifier: runtime.a2a_card_verifier || {},
+        consensusProtocol: runtime.consensus_protocol || {},
+        crossTenantIsolator: runtime.cross_tenant_isolator || {},
+        coldStartAnalyzer: runtime.cold_start_analyzer || {},
+        mcpPoisoningDetector: runtime.mcp_poisoning || {},
+        mcpShadowDetector: runtime.mcp_shadow || {},
+        memoryPoisoningSentinel: runtime.memory_poisoning || {},
+        cascadeIsolator: runtime.cascade_isolator || {},
+        agentIdentityFederation: runtime.agent_identity_federation || {},
+        toolUseAnomalyDetector: runtime.tool_use_anomaly || {},
+        outputClassifier: runtime.output_classifier || {},
+        stegoExfilDetector: runtime.stego_exfil_detector || {},
+        reasoningTraceMonitor: runtime.reasoning_trace_monitor || {},
+        hallucinationTripwire: runtime.hallucination_tripwire || {},
+        semanticDriftCanary: runtime.semantic_drift_canary || {},
+        outputProvenanceSigner: runtime.output_provenance || {},
+        computeAttestation: runtime.compute_attestation || {},
+        provenanceSigner: runtime.provenance || {},
+        loopBreaker: runtime.loop_breaker || {},
+        omniShield: runtime.omni_shield || {},
+        experimentalSandbox: runtime.sandbox_experimental || {},
+        shadowOS: runtime.shadow_os || {},
+        epistemicAnchor: runtime.epistemic_anchor || {},
+        autoImmune: runtime.auto_immune || {},
+        canaryToolTrap: runtime.canary_tools || {},
+      };
+      const snapshot = introspection.snapshot(pseudoServer);
+      const card = introspection.exportAgentCard(pseudoServer, options.agentId);
+      const output = {
+        snapshot,
+        agent_card: card,
+      };
+
+      if (options.json) {
+        console.log(JSON.stringify(output, null, 2));
+      } else {
+        console.log(`Capability snapshot generated at ${snapshot.generated_at}`);
+        console.log(`Enabled engines: ${snapshot.engines.filter((item) => item.enabled).length}/${snapshot.engines.length}`);
+        console.log(`Agent card id: ${card.id}`);
+        console.log(`Capabilities: ${(card.capabilities || []).join(', ') || 'none'}`);
+      }
+    } catch (error) {
+      console.error(`Capability introspection failed: ${error.message}`);
       process.exitCode = 1;
     }
   });

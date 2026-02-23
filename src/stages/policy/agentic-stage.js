@@ -128,6 +128,93 @@ async function runAgenticStage({
       statsBlocked: 'tool_use_anomaly_blocked',
     });
   }
+  if (server.a2aCardVerifier?.isEnabled()) {
+    const a2aDecision = server.a2aCardVerifier.evaluate({
+      headers,
+      bodyJson,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'a2a_card_verifier',
+      decision: a2aDecision,
+      warningPrefix: 'a2a_card',
+      statsDetected: 'a2a_card_detected',
+      statsBlocked: 'a2a_card_blocked',
+    });
+    if (a2aDecision?.enabled && server.a2aCardVerifier.observability) {
+      res.setHeader('x-sentinel-a2a-card', a2aDecision.detected ? 'detected' : 'clean');
+      if (a2aDecision.agent_id) {
+        res.setHeader('x-sentinel-a2a-agent-id', String(a2aDecision.agent_id));
+      }
+    }
+  }
+  if (server.consensusProtocol?.isEnabled()) {
+    const consensusDecision = server.consensusProtocol.evaluate({
+      headers,
+      bodyJson,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'consensus_protocol',
+      decision: consensusDecision,
+      warningPrefix: 'consensus',
+      statsDetected: 'consensus_detected',
+      statsBlocked: 'consensus_blocked',
+    });
+    if (consensusDecision?.enabled && server.consensusProtocol.observability) {
+      res.setHeader('x-sentinel-consensus', consensusDecision.detected ? 'detected' : 'clean');
+      if (consensusDecision.quorum_required) {
+        res.setHeader('x-sentinel-consensus-required', String(consensusDecision.quorum_required));
+      }
+    }
+  }
+  let crossTenantDecision = null;
+  if (server.crossTenantIsolator?.isEnabled()) {
+    crossTenantDecision = server.crossTenantIsolator.evaluateIngress({
+      headers,
+      bodyJson,
+      correlationId,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'cross_tenant_isolator',
+      decision: crossTenantDecision,
+      warningPrefix: 'cross_tenant',
+      statsDetected: 'cross_tenant_detected',
+      statsBlocked: 'cross_tenant_blocked',
+    });
+    if (crossTenantDecision?.tenant_id) {
+      req.__sentinelTenantId = crossTenantDecision.tenant_id;
+      res.setHeader('x-sentinel-tenant-id', crossTenantDecision.tenant_id);
+    }
+    if (crossTenantDecision?.enabled && server.crossTenantIsolator.observability) {
+      res.setHeader('x-sentinel-cross-tenant', crossTenantDecision.detected ? 'detected' : 'clean');
+    }
+  }
+  if (server.coldStartAnalyzer?.isEnabled()) {
+    const coldStartDecision = server.coldStartAnalyzer.evaluate({
+      effectiveMode,
+      engineStates: {
+        semantic_cache: server.semanticCache?.isEnabled?.(),
+        intent_drift: server.intentDrift?.isEnabled?.(),
+        intent_throttle: server.intentThrottle?.isEnabled?.(),
+        agent_observability: server.agentObservability?.isEnabled?.(),
+      },
+    });
+    auxiliaryDecisions.push({
+      name: 'cold_start_analyzer',
+      decision: coldStartDecision,
+      warningPrefix: 'cold_start',
+      statsDetected: 'cold_start_detected',
+      statsBlocked: 'cold_start_blocked',
+    });
+    if (coldStartDecision?.enabled && server.coldStartAnalyzer.observability) {
+      res.setHeader(
+        'x-sentinel-cold-start',
+        coldStartDecision.detected ? `active:${Math.round(Number(coldStartDecision.progress || 0) * 100)}` : 'warm'
+      );
+    }
+  }
 
   if (server.agentObservability?.isEnabled?.() && agentObservabilityContext) {
     const toolCallCount = Number(decision?.toolCallCount || 0);
@@ -289,12 +376,14 @@ async function runAgenticStage({
     return {
       handled: true,
       agenticDecision: decision,
+      crossTenantDecision,
     };
   }
 
   return {
     handled: false,
     agenticDecision: decision,
+    crossTenantDecision,
   };
 }
 

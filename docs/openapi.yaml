@@ -46,6 +46,118 @@ paths:
                 additionalProperties: true
         '404':
           description: Provenance disabled.
+  /_sentinel/provenance/verify:
+    post:
+      summary: Verify output provenance envelope
+      operationId: verifyOutputProvenance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                envelope:
+                  type: string
+                output_sha256:
+                  type: string
+      responses:
+        '200':
+          description: Envelope is valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Envelope is invalid.
+        '404':
+          description: Output provenance disabled.
+  /_sentinel/capabilities:
+    get:
+      summary: Runtime capability snapshot
+      operationId: getCapabilities
+      responses:
+        '200':
+          description: Capability snapshot for current runtime.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Capability introspection disabled.
+  /_sentinel/attestation:
+    get:
+      summary: Runtime attestation envelope
+      operationId: getAttestation
+      responses:
+        '200':
+          description: Signed runtime attestation.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Attestation disabled.
+  /_sentinel/attestation/verify:
+    post:
+      summary: Verify runtime attestation envelope
+      operationId: verifyAttestation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                envelope:
+                  type: string
+      responses:
+        '200':
+          description: Attestation is valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Attestation invalid.
+        '404':
+          description: Attestation disabled.
+  /_sentinel/policy/gradient:
+    post:
+      summary: Evaluate policy threshold changes against historical events
+      operationId: analyzePolicyGradient
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                events:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                current:
+                  type: object
+                  additionalProperties: true
+                proposed:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Policy gradient report.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Policy gradient analyzer disabled.
   /_sentinel/swarm/public-key:
     get:
       summary: Swarm protocol public metadata

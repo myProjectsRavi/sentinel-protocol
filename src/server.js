@@ -47,6 +47,10 @@ const { ExperimentalSandbox } = require('./sandbox/experimental-sandbox');
 const { ShadowOS } = require('./sandbox/shadow-os');
 const { EpistemicAnchor } = require('./runtime/epistemic-anchor');
 const { AgenticThreatShield } = require('./security/agentic-threat-shield');
+const { A2ACardVerifier } = require('./security/a2a-card-verifier');
+const { ConsensusProtocol } = require('./security/consensus-protocol');
+const { CrossTenantIsolator } = require('./security/cross-tenant-isolator');
+const { ColdStartAnalyzer } = require('./security/cold-start-analyzer');
 const { MCPPoisoningDetector } = require('./security/mcp-poisoning-detector');
 const { MCPShadowDetector } = require('./security/mcp-shadow-detector');
 const { MemoryPoisoningSentinel } = require('./security/memory-poisoning-sentinel');
@@ -54,12 +58,20 @@ const { CascadeIsolator } = require('./security/cascade-isolator');
 const { AgentIdentityFederation } = require('./security/agent-identity-federation');
 const { ToolUseAnomalyDetector } = require('./security/tool-use-anomaly');
 const { OutputClassifier } = require('./egress/output-classifier');
+const { StegoExfilDetector } = require('./egress/stego-exfil-detector');
+const { ReasoningTraceMonitor } = require('./egress/reasoning-trace-monitor');
+const { HallucinationTripwire } = require('./egress/hallucination-tripwire');
+const { OutputProvenanceSigner, sha256Text } = require('./egress/output-provenance-signer');
 const { OutputSchemaValidator } = require('./egress/output-schema-validator');
+const { SemanticDriftCanary } = require('./security/semantic-drift-canary');
 const { BudgetAutopilot } = require('./optimizer/budget-autopilot');
 const { EvidenceVault } = require('./governance/evidence-vault');
 const { ThreatPropagationGraph } = require('./governance/threat-propagation-graph');
 const { AttackCorpusEvolver } = require('./governance/attack-corpus-evolver');
 const { ForensicDebugger } = require('./governance/forensic-debugger');
+const { PolicyGradientAnalyzer } = require('./governance/policy-gradient-analyzer');
+const { CapabilityIntrospection } = require('./governance/capability-introspection');
+const { ComputeAttestation } = require('./governance/compute-attestation');
 const {
   initRequestEnvelope,
   attachProvenanceInterceptors,
@@ -145,6 +157,16 @@ class SentinelServer {
       output_classifier_code_execution_detected: 0,
       output_classifier_hallucination_detected: 0,
       output_classifier_unauthorized_disclosure_detected: 0,
+      stego_exfil_detected: 0,
+      stego_exfil_blocked: 0,
+      reasoning_trace_detected: 0,
+      reasoning_trace_blocked: 0,
+      hallucination_tripwire_detected: 0,
+      hallucination_tripwire_blocked: 0,
+      semantic_drift_detected: 0,
+      semantic_drift_blocked: 0,
+      output_provenance_signed: 0,
+      compute_attestation_signed: 0,
       output_schema_validator_detected: 0,
       output_schema_validator_blocked: 0,
       omni_shield_detected: 0,
@@ -177,6 +199,15 @@ class SentinelServer {
       agentic_threat_errors: 0,
       agentic_analysis_truncated: 0,
       agentic_identity_invalid: 0,
+      a2a_card_detected: 0,
+      a2a_card_blocked: 0,
+      consensus_detected: 0,
+      consensus_blocked: 0,
+      cross_tenant_detected: 0,
+      cross_tenant_blocked: 0,
+      cross_tenant_leaks: 0,
+      cold_start_detected: 0,
+      cold_start_blocked: 0,
       mcp_poisoning_detected: 0,
       mcp_poisoning_blocked: 0,
       mcp_config_drift: 0,
@@ -198,6 +229,8 @@ class SentinelServer {
       evidence_vault_entries: 0,
       threat_graph_events: 0,
       attack_corpus_candidates: 0,
+      capability_snapshots: 0,
+      policy_gradient_runs: 0,
       auto_immune_matches: 0,
       auto_immune_blocked: 0,
       auto_immune_learned: 0,
@@ -339,6 +372,18 @@ class SentinelServer {
       embedText,
     });
     this.agenticThreatShield = new AgenticThreatShield(this.config.runtime?.agentic_threat_shield || {});
+    this.a2aCardVerifier = new A2ACardVerifier(this.config.runtime?.a2a_card_verifier || {});
+    this.consensusProtocol = new ConsensusProtocol(this.config.runtime?.consensus_protocol || {});
+    this.crossTenantIsolator = new CrossTenantIsolator(this.config.runtime?.cross_tenant_isolator || {});
+    this.coldStartAnalyzer = new ColdStartAnalyzer(this.config.runtime?.cold_start_analyzer || {});
+    this.stegoExfilDetector = new StegoExfilDetector(this.config.runtime?.stego_exfil_detector || {});
+    this.reasoningTraceMonitor = new ReasoningTraceMonitor(this.config.runtime?.reasoning_trace_monitor || {});
+    this.hallucinationTripwire = new HallucinationTripwire(this.config.runtime?.hallucination_tripwire || {});
+    this.semanticDriftCanary = new SemanticDriftCanary(this.config.runtime?.semantic_drift_canary || {});
+    this.outputProvenanceSigner = new OutputProvenanceSigner(this.config.runtime?.output_provenance || {});
+    this.computeAttestation = new ComputeAttestation(this.config.runtime?.compute_attestation || {});
+    this.capabilityIntrospection = new CapabilityIntrospection(this.config.runtime?.capability_introspection || {});
+    this.policyGradientAnalyzer = new PolicyGradientAnalyzer(this.config.runtime?.policy_gradient_analyzer || {});
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -459,6 +504,14 @@ class SentinelServer {
       loop_breaker_enabled: this.loopBreaker.enabled,
       agentic_threat_shield_enabled: this.agenticThreatShield.isEnabled(),
       agentic_threat_shield_mode: this.agenticThreatShield.mode,
+      a2a_card_verifier_enabled: this.a2aCardVerifier.isEnabled(),
+      a2a_card_verifier_mode: this.a2aCardVerifier.mode,
+      consensus_protocol_enabled: this.consensusProtocol.isEnabled(),
+      consensus_protocol_mode: this.consensusProtocol.mode,
+      cross_tenant_isolator_enabled: this.crossTenantIsolator.isEnabled(),
+      cross_tenant_isolator_mode: this.crossTenantIsolator.mode,
+      cold_start_analyzer_enabled: this.coldStartAnalyzer.isEnabled(),
+      cold_start_analyzer_mode: this.coldStartAnalyzer.mode,
       auto_immune_enabled: this.autoImmune.isEnabled(),
       auto_immune_mode: this.autoImmune.mode,
       auto_immune_stats: this.autoImmune.getStats(),
@@ -499,6 +552,16 @@ class SentinelServer {
       prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
       prompt_rebuff_mode: this.promptRebuff.mode,
       output_classifier_enabled: this.outputClassifier.isEnabled(),
+      stego_exfil_detector_enabled: this.stegoExfilDetector.isEnabled(),
+      stego_exfil_detector_mode: this.stegoExfilDetector.mode,
+      reasoning_trace_monitor_enabled: this.reasoningTraceMonitor.isEnabled(),
+      reasoning_trace_monitor_mode: this.reasoningTraceMonitor.mode,
+      hallucination_tripwire_enabled: this.hallucinationTripwire.isEnabled(),
+      hallucination_tripwire_mode: this.hallucinationTripwire.mode,
+      semantic_drift_canary_enabled: this.semanticDriftCanary.isEnabled(),
+      semantic_drift_canary_mode: this.semanticDriftCanary.mode,
+      output_provenance_enabled: this.outputProvenanceSigner.isEnabled(),
+      compute_attestation_enabled: this.computeAttestation.isEnabled(),
       output_schema_validator_enabled: this.outputSchemaValidator.isEnabled(),
       budget_autopilot_enabled: this.budgetAutopilot.isEnabled(),
       budget_autopilot_mode: this.budgetAutopilot.mode,
@@ -511,6 +574,8 @@ class SentinelServer {
       forensic_debugger_snapshots: Array.isArray(this.forensicDebugger.snapshots)
         ? this.forensicDebugger.snapshots.length
         : 0,
+      capability_introspection_enabled: this.capabilityIntrospection.isEnabled(),
+      policy_gradient_analyzer_enabled: this.policyGradientAnalyzer.isEnabled(),
       agent_observability_enabled: this.agentObservability.isEnabled(),
       shadow_os_enabled: this.shadowOS.isEnabled(),
       shadow_os_mode: this.shadowOS.mode,
@@ -704,30 +769,70 @@ class SentinelServer {
     return Buffer.from(String(body), 'utf8');
   }
 
+  getRuntimeConfigHash() {
+    const payload = {
+      version: this.config?.version,
+      mode: this.config?.mode,
+      runtime: this.config?.runtime || {},
+      rules: this.config?.rules || [],
+      pii: this.config?.pii || {},
+      injection: this.config?.injection || {},
+    };
+    return sha256Text(JSON.stringify(payload));
+  }
+
   applyBufferedProvenanceHeaders(res, { body, statusCode, provider, correlationId }) {
-    if (!this.provenanceSigner.isEnabled() || res.headersSent) {
-      return;
-    }
-    if (res.getHeader('x-sentinel-signature')) {
+    if (res.headersSent) {
       return;
     }
 
-    const proof = this.provenanceSigner.signBufferedResponse({
-      bodyBuffer: this.toResponseBodyBuffer(body),
-      statusCode,
-      provider,
-      correlationId,
-    });
-    if (!proof) {
-      res.setHeader('x-sentinel-signature-status', 'skipped');
-      return;
+    const responseBuffer = this.toResponseBodyBuffer(body);
+
+    if (this.provenanceSigner.isEnabled() && !res.getHeader('x-sentinel-signature')) {
+      const proof = this.provenanceSigner.signBufferedResponse({
+        bodyBuffer: responseBuffer,
+        statusCode,
+        provider,
+        correlationId,
+      });
+      if (!proof) {
+        res.setHeader('x-sentinel-signature-status', 'skipped');
+      } else {
+        const proofHeaders = ProvenanceSigner.proofHeaders(proof);
+        for (const [key, value] of Object.entries(proofHeaders)) {
+          res.setHeader(key, value);
+        }
+        res.setHeader('x-sentinel-signature-status', 'signed');
+      }
     }
 
-    const proofHeaders = ProvenanceSigner.proofHeaders(proof);
-    for (const [key, value] of Object.entries(proofHeaders)) {
-      res.setHeader(key, value);
+    if (this.outputProvenanceSigner?.isEnabled?.() && !res.getHeader('x-sentinel-provenance')) {
+      const envelope = this.outputProvenanceSigner.createEnvelope({
+        outputBuffer: responseBuffer,
+        statusCode,
+        provider,
+        correlationId,
+        modelId: String(res.getHeader('x-sentinel-model-id') || ''),
+        configHash: this.getRuntimeConfigHash(),
+      });
+      if (envelope?.envelope) {
+        res.setHeader('x-sentinel-provenance', envelope.envelope);
+        this.stats.output_provenance_signed += 1;
+      }
     }
-    res.setHeader('x-sentinel-signature-status', 'signed');
+
+    if (this.computeAttestation?.isEnabled?.() && !res.getHeader('x-sentinel-attestation')) {
+      const attestation = this.computeAttestation.create({
+        configHash: this.getRuntimeConfigHash(),
+        policyHash: sha256Text(JSON.stringify(this.config?.rules || [])),
+        correlationId,
+        provider,
+      });
+      if (attestation?.envelope) {
+        res.setHeader('x-sentinel-attestation', attestation.envelope);
+        this.stats.compute_attestation_signed += 1;
+      }
+    }
   }
 
   async maybeNormalizeBlockedLatency({ res, statusCode, requestStart }) {
@@ -979,6 +1084,27 @@ class SentinelServer {
       res.status(200).json(this.provenanceSigner.getPublicMetadata());
     });
 
+    this.app.post('/_sentinel/provenance/verify', (req, res) => {
+      if (!this.outputProvenanceSigner?.isEnabled?.() || this.outputProvenanceSigner.exposeVerifyEndpoint !== true) {
+        res.status(404).json({
+          error: 'OUTPUT_PROVENANCE_DISABLED',
+        });
+        return;
+      }
+
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const verification = this.outputProvenanceSigner.verifyEnvelope({
+        envelope: payload.envelope || '',
+        expectedOutputSha256: payload.output_sha256 || '',
+      });
+      res.status(verification.valid ? 200 : 400).json(verification);
+    });
+
     this.app.get('/_sentinel/swarm/public-key', (req, res) => {
       if (!this.swarmProtocol.isEnabled()) {
         res.status(404).json({
@@ -987,6 +1113,74 @@ class SentinelServer {
         return;
       }
       res.status(200).json(this.swarmProtocol.getPublicMetadata());
+    });
+
+    this.app.get('/_sentinel/capabilities', (req, res) => {
+      if (!this.capabilityIntrospection?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'CAPABILITY_INTROSPECTION_DISABLED',
+        });
+        return;
+      }
+      const snapshot = this.capabilityIntrospection.snapshot(this);
+      this.stats.capability_snapshots += 1;
+      res.status(200).json(snapshot);
+    });
+
+    this.app.get('/_sentinel/attestation', (req, res) => {
+      if (!this.computeAttestation?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'ATTESTATION_DISABLED',
+        });
+        return;
+      }
+      const report = this.computeAttestation.create({
+        configHash: this.getRuntimeConfigHash(),
+        policyHash: sha256Text(JSON.stringify(this.config?.rules || [])),
+        correlationId: String(req.headers?.['x-sentinel-correlation-id'] || ''),
+        provider: 'sentinel',
+      });
+      this.stats.compute_attestation_signed += report?.envelope ? 1 : 0;
+      res.status(200).json(report || { envelope: null });
+    });
+
+    this.app.post('/_sentinel/attestation/verify', (req, res) => {
+      if (!this.computeAttestation?.isEnabled?.() || this.computeAttestation.exposeVerifyEndpoint !== true) {
+        res.status(404).json({
+          error: 'ATTESTATION_DISABLED',
+        });
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const verification = this.computeAttestation.verify(String(payload.envelope || ''));
+      res.status(verification.valid ? 200 : 400).json(verification);
+    });
+
+    this.app.post('/_sentinel/policy/gradient', (req, res) => {
+      if (!this.policyGradientAnalyzer?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'POLICY_GRADIENT_ANALYZER_DISABLED',
+        });
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const report = this.policyGradientAnalyzer.analyze({
+        events: Array.isArray(payload.events) ? payload.events : [],
+        current: payload.current && typeof payload.current === 'object' ? payload.current : {},
+        proposed: payload.proposed && typeof payload.proposed === 'object' ? payload.proposed : {},
+      });
+      this.stats.policy_gradient_runs += 1;
+      res.status(200).json(report);
     });
 
     this.app.get('/_sentinel/metrics', (req, res) => {
@@ -1363,6 +1557,7 @@ class SentinelServer {
           rawBody,
           warnings,
           finalizeRequestTelemetry,
+          agentObservabilityContext,
         })
       );
       if (agenticStageExecution.handled) {
@@ -1944,6 +2139,7 @@ class SentinelServer {
       const streamStageExecution = await runOrchestratedStage('stream_egress', async () =>
         runStreamEgressStage({
           server: this,
+          req,
           res,
           upstream,
           egressConfig,

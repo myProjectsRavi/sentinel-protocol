@@ -31,6 +31,10 @@ const RUNTIME_KEYS = new Set([
   'budget',
   'loop_breaker',
   'agentic_threat_shield',
+  'a2a_card_verifier',
+  'consensus_protocol',
+  'cross_tenant_isolator',
+  'cold_start_analyzer',
   'mcp_poisoning',
   'mcp_shadow',
   'memory_poisoning',
@@ -38,6 +42,14 @@ const RUNTIME_KEYS = new Set([
   'agent_identity_federation',
   'tool_use_anomaly',
   'semantic_firewall_dsl',
+  'stego_exfil_detector',
+  'reasoning_trace_monitor',
+  'hallucination_tripwire',
+  'semantic_drift_canary',
+  'output_provenance',
+  'compute_attestation',
+  'capability_introspection',
+  'policy_gradient_analyzer',
   'budget_autopilot',
   'evidence_vault',
   'threat_graph',
@@ -302,6 +314,62 @@ const AGENTIC_THREAT_SHIELD_KEYS = new Set([
   'observability',
 ]);
 const AGENTIC_THREAT_SHIELD_MODES = new Set(['monitor', 'block']);
+const A2A_CARD_VERIFIER_KEYS = new Set([
+  'enabled',
+  'mode',
+  'card_header',
+  'agent_id_header',
+  'max_card_bytes',
+  'ttl_ms',
+  'max_agents',
+  'max_capabilities',
+  'max_observed_per_agent',
+  'overclaim_tolerance',
+  'block_on_invalid_schema',
+  'block_on_drift',
+  'block_on_overclaim',
+  'block_on_auth_mismatch',
+  'observability',
+]);
+const A2A_CARD_VERIFIER_MODES = new Set(['monitor', 'block']);
+const CONSENSUS_PROTOCOL_KEYS = new Set([
+  'enabled',
+  'mode',
+  'policy_header',
+  'action_field',
+  'max_votes',
+  'required_votes',
+  'total_agents',
+  'block_on_no_quorum',
+  'block_on_byzantine',
+  'high_risk_actions',
+  'observability',
+]);
+const CONSENSUS_PROTOCOL_MODES = new Set(['monitor', 'block']);
+const CROSS_TENANT_ISOLATOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'tenant_header',
+  'session_header',
+  'fallback_headers',
+  'ttl_ms',
+  'max_sessions',
+  'max_known_tenants',
+  'block_on_mismatch',
+  'block_on_leak',
+  'observability',
+]);
+const CROSS_TENANT_ISOLATOR_MODES = new Set(['monitor', 'block']);
+const COLD_START_ANALYZER_KEYS = new Set([
+  'enabled',
+  'mode',
+  'cold_start_window_ms',
+  'warmup_request_threshold',
+  'warmup_engines',
+  'block_during_cold_start',
+  'observability',
+]);
+const COLD_START_ANALYZER_MODES = new Set(['monitor', 'block']);
 const MCP_POISONING_KEYS = new Set([
   'enabled',
   'mode',
@@ -402,6 +470,82 @@ const SEMANTIC_FIREWALL_DSL_KEYS = new Set([
   'rules',
   'max_rules',
   'observability',
+]);
+const STEGO_EXFIL_DETECTOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_chars',
+  'max_findings',
+  'zero_width_density_threshold',
+  'invisible_density_threshold',
+  'whitespace_bits_threshold',
+  'segment_entropy_threshold',
+  'emoji_compound_threshold',
+  'block_on_detect',
+  'observability',
+]);
+const STEGO_EXFIL_DETECTOR_MODES = new Set(['monitor', 'block']);
+const REASONING_TRACE_MONITOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_chars',
+  'max_steps',
+  'min_step_chars',
+  'coherence_threshold',
+  'block_on_injection',
+  'block_on_incoherence',
+  'block_on_conclusion_mismatch',
+  'observability',
+]);
+const REASONING_TRACE_MONITOR_MODES = new Set(['monitor', 'block']);
+const HALLUCINATION_TRIPWIRE_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_chars',
+  'max_findings',
+  'warn_threshold',
+  'block_threshold',
+  'block_on_detect',
+  'observability',
+]);
+const HALLUCINATION_TRIPWIRE_MODES = new Set(['monitor', 'block']);
+const SEMANTIC_DRIFT_CANARY_KEYS = new Set([
+  'enabled',
+  'mode',
+  'sample_every_requests',
+  'max_providers',
+  'max_samples_per_provider',
+  'max_text_chars',
+  'warn_distance_threshold',
+  'block_distance_threshold',
+  'observability',
+]);
+const SEMANTIC_DRIFT_CANARY_MODES = new Set(['monitor', 'block']);
+const OUTPUT_PROVENANCE_KEYS = new Set([
+  'enabled',
+  'key_id',
+  'secret',
+  'expose_verify_endpoint',
+  'max_envelope_bytes',
+]);
+const COMPUTE_ATTESTATION_KEYS = new Set([
+  'enabled',
+  'key_id',
+  'secret',
+  'expose_verify_endpoint',
+  'max_config_chars',
+  'include_environment',
+]);
+const CAPABILITY_INTROSPECTION_KEYS = new Set([
+  'enabled',
+  'max_engines',
+  'observability',
+]);
+const POLICY_GRADIENT_ANALYZER_KEYS = new Set([
+  'enabled',
+  'max_events',
+  'current_injection_threshold',
+  'proposed_injection_threshold',
 ]);
 const BUDGET_AUTOPILOT_KEYS = new Set([
   'enabled',
@@ -1414,6 +1558,84 @@ function applyDefaults(config) {
   );
   agenticThreatShield.observability = agenticThreatShield.observability !== false;
 
+  normalized.runtime.a2a_card_verifier = normalized.runtime.a2a_card_verifier || {};
+  const a2aCardVerifier = normalized.runtime.a2a_card_verifier;
+  a2aCardVerifier.enabled = a2aCardVerifier.enabled === true;
+  a2aCardVerifier.mode = A2A_CARD_VERIFIER_MODES.has(String(a2aCardVerifier.mode || '').toLowerCase())
+    ? String(a2aCardVerifier.mode).toLowerCase()
+    : 'monitor';
+  a2aCardVerifier.card_header = String(a2aCardVerifier.card_header || 'x-a2a-agent-card').toLowerCase();
+  a2aCardVerifier.agent_id_header = String(
+    a2aCardVerifier.agent_id_header || 'x-sentinel-agent-id'
+  ).toLowerCase();
+  a2aCardVerifier.max_card_bytes = Number(a2aCardVerifier.max_card_bytes ?? 32768);
+  a2aCardVerifier.ttl_ms = Number(a2aCardVerifier.ttl_ms ?? 3600000);
+  a2aCardVerifier.max_agents = Number(a2aCardVerifier.max_agents ?? 10000);
+  a2aCardVerifier.max_capabilities = Number(a2aCardVerifier.max_capabilities ?? 128);
+  a2aCardVerifier.max_observed_per_agent = Number(a2aCardVerifier.max_observed_per_agent ?? 128);
+  a2aCardVerifier.overclaim_tolerance = Number(a2aCardVerifier.overclaim_tolerance ?? 6);
+  a2aCardVerifier.block_on_invalid_schema = a2aCardVerifier.block_on_invalid_schema === true;
+  a2aCardVerifier.block_on_drift = a2aCardVerifier.block_on_drift === true;
+  a2aCardVerifier.block_on_overclaim = a2aCardVerifier.block_on_overclaim === true;
+  a2aCardVerifier.block_on_auth_mismatch = a2aCardVerifier.block_on_auth_mismatch === true;
+  a2aCardVerifier.observability = a2aCardVerifier.observability !== false;
+
+  normalized.runtime.consensus_protocol = normalized.runtime.consensus_protocol || {};
+  const consensusProtocol = normalized.runtime.consensus_protocol;
+  consensusProtocol.enabled = consensusProtocol.enabled === true;
+  consensusProtocol.mode = CONSENSUS_PROTOCOL_MODES.has(String(consensusProtocol.mode || '').toLowerCase())
+    ? String(consensusProtocol.mode).toLowerCase()
+    : 'monitor';
+  consensusProtocol.policy_header = String(
+    consensusProtocol.policy_header || 'x-sentinel-consensus-policy'
+  ).toLowerCase();
+  consensusProtocol.action_field = String(consensusProtocol.action_field || 'action');
+  consensusProtocol.max_votes = Number(consensusProtocol.max_votes ?? 32);
+  consensusProtocol.required_votes = Number(consensusProtocol.required_votes ?? 2);
+  consensusProtocol.total_agents = Number(consensusProtocol.total_agents ?? 3);
+  consensusProtocol.block_on_no_quorum = consensusProtocol.block_on_no_quorum === true;
+  consensusProtocol.block_on_byzantine = consensusProtocol.block_on_byzantine === true;
+  consensusProtocol.high_risk_actions = Array.isArray(consensusProtocol.high_risk_actions)
+    ? consensusProtocol.high_risk_actions.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : ['wire_funds', 'grant_admin', 'delete_data', 'drop_database', 'execute_shell'];
+  consensusProtocol.observability = consensusProtocol.observability !== false;
+
+  normalized.runtime.cross_tenant_isolator = normalized.runtime.cross_tenant_isolator || {};
+  const crossTenantIsolator = normalized.runtime.cross_tenant_isolator;
+  crossTenantIsolator.enabled = crossTenantIsolator.enabled === true;
+  crossTenantIsolator.mode = CROSS_TENANT_ISOLATOR_MODES.has(String(crossTenantIsolator.mode || '').toLowerCase())
+    ? String(crossTenantIsolator.mode).toLowerCase()
+    : 'monitor';
+  crossTenantIsolator.tenant_header = String(
+    crossTenantIsolator.tenant_header || 'x-sentinel-tenant-id'
+  ).toLowerCase();
+  crossTenantIsolator.session_header = String(
+    crossTenantIsolator.session_header || 'x-sentinel-session-id'
+  ).toLowerCase();
+  crossTenantIsolator.fallback_headers = Array.isArray(crossTenantIsolator.fallback_headers)
+    ? crossTenantIsolator.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  crossTenantIsolator.ttl_ms = Number(crossTenantIsolator.ttl_ms ?? 21600000);
+  crossTenantIsolator.max_sessions = Number(crossTenantIsolator.max_sessions ?? 20000);
+  crossTenantIsolator.max_known_tenants = Number(crossTenantIsolator.max_known_tenants ?? 20000);
+  crossTenantIsolator.block_on_mismatch = crossTenantIsolator.block_on_mismatch === true;
+  crossTenantIsolator.block_on_leak = crossTenantIsolator.block_on_leak === true;
+  crossTenantIsolator.observability = crossTenantIsolator.observability !== false;
+
+  normalized.runtime.cold_start_analyzer = normalized.runtime.cold_start_analyzer || {};
+  const coldStartAnalyzer = normalized.runtime.cold_start_analyzer;
+  coldStartAnalyzer.enabled = coldStartAnalyzer.enabled === true;
+  coldStartAnalyzer.mode = COLD_START_ANALYZER_MODES.has(String(coldStartAnalyzer.mode || '').toLowerCase())
+    ? String(coldStartAnalyzer.mode).toLowerCase()
+    : 'monitor';
+  coldStartAnalyzer.cold_start_window_ms = Number(coldStartAnalyzer.cold_start_window_ms ?? 600000);
+  coldStartAnalyzer.warmup_request_threshold = Number(coldStartAnalyzer.warmup_request_threshold ?? 200);
+  coldStartAnalyzer.warmup_engines = Array.isArray(coldStartAnalyzer.warmup_engines)
+    ? coldStartAnalyzer.warmup_engines.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['semantic_cache', 'intent_drift', 'intent_throttle', 'agent_observability'];
+  coldStartAnalyzer.block_during_cold_start = coldStartAnalyzer.block_during_cold_start === true;
+  coldStartAnalyzer.observability = coldStartAnalyzer.observability !== false;
+
   normalized.runtime.mcp_poisoning = normalized.runtime.mcp_poisoning || {};
   const mcpPoisoning = normalized.runtime.mcp_poisoning;
   mcpPoisoning.enabled = mcpPoisoning.enabled === true;
@@ -1535,6 +1757,94 @@ function applyDefaults(config) {
     : [];
   semanticFirewallDsl.max_rules = Number(semanticFirewallDsl.max_rules ?? 128);
   semanticFirewallDsl.observability = semanticFirewallDsl.observability !== false;
+
+  normalized.runtime.stego_exfil_detector = normalized.runtime.stego_exfil_detector || {};
+  const stegoExfilDetector = normalized.runtime.stego_exfil_detector;
+  stegoExfilDetector.enabled = stegoExfilDetector.enabled === true;
+  stegoExfilDetector.mode = STEGO_EXFIL_DETECTOR_MODES.has(String(stegoExfilDetector.mode || '').toLowerCase())
+    ? String(stegoExfilDetector.mode).toLowerCase()
+    : 'monitor';
+  stegoExfilDetector.max_scan_chars = Number(stegoExfilDetector.max_scan_chars ?? 16384);
+  stegoExfilDetector.max_findings = Number(stegoExfilDetector.max_findings ?? 16);
+  stegoExfilDetector.zero_width_density_threshold = Number(stegoExfilDetector.zero_width_density_threshold ?? 0.02);
+  stegoExfilDetector.invisible_density_threshold = Number(stegoExfilDetector.invisible_density_threshold ?? 0.03);
+  stegoExfilDetector.whitespace_bits_threshold = Number(stegoExfilDetector.whitespace_bits_threshold ?? 128);
+  stegoExfilDetector.segment_entropy_threshold = Number(stegoExfilDetector.segment_entropy_threshold ?? 3.2);
+  stegoExfilDetector.emoji_compound_threshold = Number(stegoExfilDetector.emoji_compound_threshold ?? 3);
+  stegoExfilDetector.block_on_detect = stegoExfilDetector.block_on_detect === true;
+  stegoExfilDetector.observability = stegoExfilDetector.observability !== false;
+
+  normalized.runtime.reasoning_trace_monitor = normalized.runtime.reasoning_trace_monitor || {};
+  const reasoningTraceMonitor = normalized.runtime.reasoning_trace_monitor;
+  reasoningTraceMonitor.enabled = reasoningTraceMonitor.enabled === true;
+  reasoningTraceMonitor.mode = REASONING_TRACE_MONITOR_MODES.has(String(reasoningTraceMonitor.mode || '').toLowerCase())
+    ? String(reasoningTraceMonitor.mode).toLowerCase()
+    : 'monitor';
+  reasoningTraceMonitor.max_scan_chars = Number(reasoningTraceMonitor.max_scan_chars ?? 16384);
+  reasoningTraceMonitor.max_steps = Number(reasoningTraceMonitor.max_steps ?? 64);
+  reasoningTraceMonitor.min_step_chars = Number(reasoningTraceMonitor.min_step_chars ?? 12);
+  reasoningTraceMonitor.coherence_threshold = Number(reasoningTraceMonitor.coherence_threshold ?? 0.1);
+  reasoningTraceMonitor.block_on_injection = reasoningTraceMonitor.block_on_injection === true;
+  reasoningTraceMonitor.block_on_incoherence = reasoningTraceMonitor.block_on_incoherence === true;
+  reasoningTraceMonitor.block_on_conclusion_mismatch = reasoningTraceMonitor.block_on_conclusion_mismatch === true;
+  reasoningTraceMonitor.observability = reasoningTraceMonitor.observability !== false;
+
+  normalized.runtime.hallucination_tripwire = normalized.runtime.hallucination_tripwire || {};
+  const hallucinationTripwire = normalized.runtime.hallucination_tripwire;
+  hallucinationTripwire.enabled = hallucinationTripwire.enabled === true;
+  hallucinationTripwire.mode = HALLUCINATION_TRIPWIRE_MODES.has(String(hallucinationTripwire.mode || '').toLowerCase())
+    ? String(hallucinationTripwire.mode).toLowerCase()
+    : 'monitor';
+  hallucinationTripwire.max_scan_chars = Number(hallucinationTripwire.max_scan_chars ?? 16384);
+  hallucinationTripwire.max_findings = Number(hallucinationTripwire.max_findings ?? 24);
+  hallucinationTripwire.warn_threshold = Number(hallucinationTripwire.warn_threshold ?? 0.45);
+  hallucinationTripwire.block_threshold = Number(hallucinationTripwire.block_threshold ?? 0.8);
+  hallucinationTripwire.block_on_detect = hallucinationTripwire.block_on_detect === true;
+  hallucinationTripwire.observability = hallucinationTripwire.observability !== false;
+
+  normalized.runtime.semantic_drift_canary = normalized.runtime.semantic_drift_canary || {};
+  const semanticDriftCanary = normalized.runtime.semantic_drift_canary;
+  semanticDriftCanary.enabled = semanticDriftCanary.enabled === true;
+  semanticDriftCanary.mode = SEMANTIC_DRIFT_CANARY_MODES.has(String(semanticDriftCanary.mode || '').toLowerCase())
+    ? String(semanticDriftCanary.mode).toLowerCase()
+    : 'monitor';
+  semanticDriftCanary.sample_every_requests = Number(semanticDriftCanary.sample_every_requests ?? 100);
+  semanticDriftCanary.max_providers = Number(semanticDriftCanary.max_providers ?? 128);
+  semanticDriftCanary.max_samples_per_provider = Number(semanticDriftCanary.max_samples_per_provider ?? 256);
+  semanticDriftCanary.max_text_chars = Number(semanticDriftCanary.max_text_chars ?? 8192);
+  semanticDriftCanary.warn_distance_threshold = Number(semanticDriftCanary.warn_distance_threshold ?? 0.45);
+  semanticDriftCanary.block_distance_threshold = Number(semanticDriftCanary.block_distance_threshold ?? 0.8);
+  semanticDriftCanary.observability = semanticDriftCanary.observability !== false;
+
+  normalized.runtime.output_provenance = normalized.runtime.output_provenance || {};
+  const outputProvenance = normalized.runtime.output_provenance;
+  outputProvenance.enabled = outputProvenance.enabled === true;
+  outputProvenance.key_id = String(outputProvenance.key_id || `sentinel-output-${process.pid}`);
+  outputProvenance.secret = String(outputProvenance.secret || process.env.SENTINEL_OUTPUT_PROVENANCE_SECRET || '');
+  outputProvenance.expose_verify_endpoint = outputProvenance.expose_verify_endpoint !== false;
+  outputProvenance.max_envelope_bytes = Number(outputProvenance.max_envelope_bytes ?? 2097152);
+
+  normalized.runtime.compute_attestation = normalized.runtime.compute_attestation || {};
+  const computeAttestation = normalized.runtime.compute_attestation;
+  computeAttestation.enabled = computeAttestation.enabled === true;
+  computeAttestation.key_id = String(computeAttestation.key_id || `sentinel-attestation-${process.pid}`);
+  computeAttestation.secret = String(computeAttestation.secret || process.env.SENTINEL_ATTESTATION_SECRET || '');
+  computeAttestation.expose_verify_endpoint = computeAttestation.expose_verify_endpoint !== false;
+  computeAttestation.max_config_chars = Number(computeAttestation.max_config_chars ?? 4096);
+  computeAttestation.include_environment = computeAttestation.include_environment === true;
+
+  normalized.runtime.capability_introspection = normalized.runtime.capability_introspection || {};
+  const capabilityIntrospection = normalized.runtime.capability_introspection;
+  capabilityIntrospection.enabled = capabilityIntrospection.enabled === true;
+  capabilityIntrospection.max_engines = Number(capabilityIntrospection.max_engines ?? 256);
+  capabilityIntrospection.observability = capabilityIntrospection.observability !== false;
+
+  normalized.runtime.policy_gradient_analyzer = normalized.runtime.policy_gradient_analyzer || {};
+  const policyGradientAnalyzer = normalized.runtime.policy_gradient_analyzer;
+  policyGradientAnalyzer.enabled = policyGradientAnalyzer.enabled === true;
+  policyGradientAnalyzer.max_events = Number(policyGradientAnalyzer.max_events ?? 250000);
+  policyGradientAnalyzer.current_injection_threshold = Number(policyGradientAnalyzer.current_injection_threshold ?? 0.5);
+  policyGradientAnalyzer.proposed_injection_threshold = Number(policyGradientAnalyzer.proposed_injection_threshold ?? 0.35);
 
   normalized.runtime.budget_autopilot = normalized.runtime.budget_autopilot || {};
   const budgetAutopilot = normalized.runtime.budget_autopilot;
@@ -3115,6 +3425,272 @@ function validateConfigShape(config) {
     );
   }
 
+  const a2aCardVerifier = runtime.a2a_card_verifier || {};
+  if (runtime.a2a_card_verifier !== undefined) {
+    assertNoUnknownKeys(a2aCardVerifier, A2A_CARD_VERIFIER_KEYS, 'runtime.a2a_card_verifier', details);
+    assertType(typeof a2aCardVerifier.enabled === 'boolean', '`runtime.a2a_card_verifier.enabled` must be boolean', details);
+    assertType(
+      A2A_CARD_VERIFIER_MODES.has(String(a2aCardVerifier.mode)),
+      '`runtime.a2a_card_verifier.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.card_header === 'string' && a2aCardVerifier.card_header.length > 0,
+      '`runtime.a2a_card_verifier.card_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.agent_id_header === 'string' && a2aCardVerifier.agent_id_header.length > 0,
+      '`runtime.a2a_card_verifier.agent_id_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.max_card_bytes) && a2aCardVerifier.max_card_bytes > 0,
+      '`runtime.a2a_card_verifier.max_card_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.ttl_ms) && a2aCardVerifier.ttl_ms > 0,
+      '`runtime.a2a_card_verifier.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.max_agents) && a2aCardVerifier.max_agents > 0,
+      '`runtime.a2a_card_verifier.max_agents` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.max_capabilities) && a2aCardVerifier.max_capabilities > 0,
+      '`runtime.a2a_card_verifier.max_capabilities` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.max_observed_per_agent) && a2aCardVerifier.max_observed_per_agent > 0,
+      '`runtime.a2a_card_verifier.max_observed_per_agent` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(a2aCardVerifier.overclaim_tolerance) && a2aCardVerifier.overclaim_tolerance >= 0,
+      '`runtime.a2a_card_verifier.overclaim_tolerance` must be integer >= 0',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.block_on_invalid_schema === 'boolean',
+      '`runtime.a2a_card_verifier.block_on_invalid_schema` must be boolean',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.block_on_drift === 'boolean',
+      '`runtime.a2a_card_verifier.block_on_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.block_on_overclaim === 'boolean',
+      '`runtime.a2a_card_verifier.block_on_overclaim` must be boolean',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.block_on_auth_mismatch === 'boolean',
+      '`runtime.a2a_card_verifier.block_on_auth_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof a2aCardVerifier.observability === 'boolean',
+      '`runtime.a2a_card_verifier.observability` must be boolean',
+      details
+    );
+  }
+
+  const consensusProtocol = runtime.consensus_protocol || {};
+  if (runtime.consensus_protocol !== undefined) {
+    assertNoUnknownKeys(consensusProtocol, CONSENSUS_PROTOCOL_KEYS, 'runtime.consensus_protocol', details);
+    assertType(typeof consensusProtocol.enabled === 'boolean', '`runtime.consensus_protocol.enabled` must be boolean', details);
+    assertType(
+      CONSENSUS_PROTOCOL_MODES.has(String(consensusProtocol.mode)),
+      '`runtime.consensus_protocol.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof consensusProtocol.policy_header === 'string' && consensusProtocol.policy_header.length > 0,
+      '`runtime.consensus_protocol.policy_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof consensusProtocol.action_field === 'string' && consensusProtocol.action_field.length > 0,
+      '`runtime.consensus_protocol.action_field` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(consensusProtocol.max_votes) && consensusProtocol.max_votes > 0,
+      '`runtime.consensus_protocol.max_votes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(consensusProtocol.required_votes) && consensusProtocol.required_votes > 0,
+      '`runtime.consensus_protocol.required_votes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(consensusProtocol.total_agents) && consensusProtocol.total_agents > 0,
+      '`runtime.consensus_protocol.total_agents` must be integer > 0',
+      details
+    );
+    if (
+      Number.isInteger(consensusProtocol.required_votes) &&
+      Number.isInteger(consensusProtocol.total_agents) &&
+      consensusProtocol.required_votes > consensusProtocol.total_agents
+    ) {
+      details.push('`runtime.consensus_protocol.required_votes` must be <= `runtime.consensus_protocol.total_agents`');
+    }
+    assertType(
+      typeof consensusProtocol.block_on_no_quorum === 'boolean',
+      '`runtime.consensus_protocol.block_on_no_quorum` must be boolean',
+      details
+    );
+    assertType(
+      typeof consensusProtocol.block_on_byzantine === 'boolean',
+      '`runtime.consensus_protocol.block_on_byzantine` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(consensusProtocol.high_risk_actions),
+      '`runtime.consensus_protocol.high_risk_actions` must be array',
+      details
+    );
+    if (Array.isArray(consensusProtocol.high_risk_actions)) {
+      consensusProtocol.high_risk_actions.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.consensus_protocol.high_risk_actions[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof consensusProtocol.observability === 'boolean',
+      '`runtime.consensus_protocol.observability` must be boolean',
+      details
+    );
+  }
+
+  const crossTenantIsolator = runtime.cross_tenant_isolator || {};
+  if (runtime.cross_tenant_isolator !== undefined) {
+    assertNoUnknownKeys(crossTenantIsolator, CROSS_TENANT_ISOLATOR_KEYS, 'runtime.cross_tenant_isolator', details);
+    assertType(
+      typeof crossTenantIsolator.enabled === 'boolean',
+      '`runtime.cross_tenant_isolator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      CROSS_TENANT_ISOLATOR_MODES.has(String(crossTenantIsolator.mode)),
+      '`runtime.cross_tenant_isolator.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof crossTenantIsolator.tenant_header === 'string' && crossTenantIsolator.tenant_header.length > 0,
+      '`runtime.cross_tenant_isolator.tenant_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof crossTenantIsolator.session_header === 'string' && crossTenantIsolator.session_header.length > 0,
+      '`runtime.cross_tenant_isolator.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(crossTenantIsolator.fallback_headers),
+      '`runtime.cross_tenant_isolator.fallback_headers` must be array',
+      details
+    );
+    if (Array.isArray(crossTenantIsolator.fallback_headers)) {
+      crossTenantIsolator.fallback_headers.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.cross_tenant_isolator.fallback_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(crossTenantIsolator.ttl_ms) && crossTenantIsolator.ttl_ms > 0,
+      '`runtime.cross_tenant_isolator.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(crossTenantIsolator.max_sessions) && crossTenantIsolator.max_sessions > 0,
+      '`runtime.cross_tenant_isolator.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(crossTenantIsolator.max_known_tenants) && crossTenantIsolator.max_known_tenants > 0,
+      '`runtime.cross_tenant_isolator.max_known_tenants` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof crossTenantIsolator.block_on_mismatch === 'boolean',
+      '`runtime.cross_tenant_isolator.block_on_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof crossTenantIsolator.block_on_leak === 'boolean',
+      '`runtime.cross_tenant_isolator.block_on_leak` must be boolean',
+      details
+    );
+    assertType(
+      typeof crossTenantIsolator.observability === 'boolean',
+      '`runtime.cross_tenant_isolator.observability` must be boolean',
+      details
+    );
+  }
+
+  const coldStartAnalyzer = runtime.cold_start_analyzer || {};
+  if (runtime.cold_start_analyzer !== undefined) {
+    assertNoUnknownKeys(coldStartAnalyzer, COLD_START_ANALYZER_KEYS, 'runtime.cold_start_analyzer', details);
+    assertType(
+      typeof coldStartAnalyzer.enabled === 'boolean',
+      '`runtime.cold_start_analyzer.enabled` must be boolean',
+      details
+    );
+    assertType(
+      COLD_START_ANALYZER_MODES.has(String(coldStartAnalyzer.mode)),
+      '`runtime.cold_start_analyzer.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(coldStartAnalyzer.cold_start_window_ms) && coldStartAnalyzer.cold_start_window_ms > 0,
+      '`runtime.cold_start_analyzer.cold_start_window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(coldStartAnalyzer.warmup_request_threshold) && coldStartAnalyzer.warmup_request_threshold > 0,
+      '`runtime.cold_start_analyzer.warmup_request_threshold` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(coldStartAnalyzer.warmup_engines),
+      '`runtime.cold_start_analyzer.warmup_engines` must be array',
+      details
+    );
+    if (Array.isArray(coldStartAnalyzer.warmup_engines)) {
+      coldStartAnalyzer.warmup_engines.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.cold_start_analyzer.warmup_engines[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof coldStartAnalyzer.block_during_cold_start === 'boolean',
+      '`runtime.cold_start_analyzer.block_during_cold_start` must be boolean',
+      details
+    );
+    assertType(
+      typeof coldStartAnalyzer.observability === 'boolean',
+      '`runtime.cold_start_analyzer.observability` must be boolean',
+      details
+    );
+  }
+
   const mcpPoisoning = runtime.mcp_poisoning || {};
   if (runtime.mcp_poisoning !== undefined) {
     assertNoUnknownKeys(mcpPoisoning, MCP_POISONING_KEYS, 'runtime.mcp_poisoning', details);
@@ -3591,6 +4167,351 @@ function validateConfigShape(config) {
         details.push(`runtime.semantic_firewall_dsl.rules invalid: ${error.message}`);
       }
     }
+  }
+
+  const stegoExfilDetector = runtime.stego_exfil_detector || {};
+  if (runtime.stego_exfil_detector !== undefined) {
+    assertNoUnknownKeys(stegoExfilDetector, STEGO_EXFIL_DETECTOR_KEYS, 'runtime.stego_exfil_detector', details);
+    assertType(
+      typeof stegoExfilDetector.enabled === 'boolean',
+      '`runtime.stego_exfil_detector.enabled` must be boolean',
+      details
+    );
+    assertType(
+      STEGO_EXFIL_DETECTOR_MODES.has(String(stegoExfilDetector.mode)),
+      '`runtime.stego_exfil_detector.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(stegoExfilDetector.max_scan_chars) && stegoExfilDetector.max_scan_chars > 0,
+      '`runtime.stego_exfil_detector.max_scan_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(stegoExfilDetector.max_findings) && stegoExfilDetector.max_findings > 0,
+      '`runtime.stego_exfil_detector.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(stegoExfilDetector.zero_width_density_threshold))
+        && Number(stegoExfilDetector.zero_width_density_threshold) >= 0
+        && Number(stegoExfilDetector.zero_width_density_threshold) <= 1,
+      '`runtime.stego_exfil_detector.zero_width_density_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(stegoExfilDetector.invisible_density_threshold))
+        && Number(stegoExfilDetector.invisible_density_threshold) >= 0
+        && Number(stegoExfilDetector.invisible_density_threshold) <= 1,
+      '`runtime.stego_exfil_detector.invisible_density_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(stegoExfilDetector.whitespace_bits_threshold) && stegoExfilDetector.whitespace_bits_threshold > 0,
+      '`runtime.stego_exfil_detector.whitespace_bits_threshold` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(stegoExfilDetector.segment_entropy_threshold)) && Number(stegoExfilDetector.segment_entropy_threshold) > 0,
+      '`runtime.stego_exfil_detector.segment_entropy_threshold` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(stegoExfilDetector.emoji_compound_threshold) && stegoExfilDetector.emoji_compound_threshold > 0,
+      '`runtime.stego_exfil_detector.emoji_compound_threshold` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof stegoExfilDetector.block_on_detect === 'boolean',
+      '`runtime.stego_exfil_detector.block_on_detect` must be boolean',
+      details
+    );
+    assertType(
+      typeof stegoExfilDetector.observability === 'boolean',
+      '`runtime.stego_exfil_detector.observability` must be boolean',
+      details
+    );
+  }
+
+  const reasoningTraceMonitor = runtime.reasoning_trace_monitor || {};
+  if (runtime.reasoning_trace_monitor !== undefined) {
+    assertNoUnknownKeys(reasoningTraceMonitor, REASONING_TRACE_MONITOR_KEYS, 'runtime.reasoning_trace_monitor', details);
+    assertType(
+      typeof reasoningTraceMonitor.enabled === 'boolean',
+      '`runtime.reasoning_trace_monitor.enabled` must be boolean',
+      details
+    );
+    assertType(
+      REASONING_TRACE_MONITOR_MODES.has(String(reasoningTraceMonitor.mode)),
+      '`runtime.reasoning_trace_monitor.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(reasoningTraceMonitor.max_scan_chars) && reasoningTraceMonitor.max_scan_chars > 0,
+      '`runtime.reasoning_trace_monitor.max_scan_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(reasoningTraceMonitor.max_steps) && reasoningTraceMonitor.max_steps > 1,
+      '`runtime.reasoning_trace_monitor.max_steps` must be integer > 1',
+      details
+    );
+    assertType(
+      Number.isInteger(reasoningTraceMonitor.min_step_chars) && reasoningTraceMonitor.min_step_chars > 0,
+      '`runtime.reasoning_trace_monitor.min_step_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(reasoningTraceMonitor.coherence_threshold))
+        && Number(reasoningTraceMonitor.coherence_threshold) >= 0
+        && Number(reasoningTraceMonitor.coherence_threshold) <= 1,
+      '`runtime.reasoning_trace_monitor.coherence_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      typeof reasoningTraceMonitor.block_on_injection === 'boolean',
+      '`runtime.reasoning_trace_monitor.block_on_injection` must be boolean',
+      details
+    );
+    assertType(
+      typeof reasoningTraceMonitor.block_on_incoherence === 'boolean',
+      '`runtime.reasoning_trace_monitor.block_on_incoherence` must be boolean',
+      details
+    );
+    assertType(
+      typeof reasoningTraceMonitor.block_on_conclusion_mismatch === 'boolean',
+      '`runtime.reasoning_trace_monitor.block_on_conclusion_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof reasoningTraceMonitor.observability === 'boolean',
+      '`runtime.reasoning_trace_monitor.observability` must be boolean',
+      details
+    );
+  }
+
+  const hallucinationTripwire = runtime.hallucination_tripwire || {};
+  if (runtime.hallucination_tripwire !== undefined) {
+    assertNoUnknownKeys(hallucinationTripwire, HALLUCINATION_TRIPWIRE_KEYS, 'runtime.hallucination_tripwire', details);
+    assertType(
+      typeof hallucinationTripwire.enabled === 'boolean',
+      '`runtime.hallucination_tripwire.enabled` must be boolean',
+      details
+    );
+    assertType(
+      HALLUCINATION_TRIPWIRE_MODES.has(String(hallucinationTripwire.mode)),
+      '`runtime.hallucination_tripwire.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(hallucinationTripwire.max_scan_chars) && hallucinationTripwire.max_scan_chars > 0,
+      '`runtime.hallucination_tripwire.max_scan_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(hallucinationTripwire.max_findings) && hallucinationTripwire.max_findings > 0,
+      '`runtime.hallucination_tripwire.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(hallucinationTripwire.warn_threshold))
+        && Number(hallucinationTripwire.warn_threshold) >= 0
+        && Number(hallucinationTripwire.warn_threshold) <= 1,
+      '`runtime.hallucination_tripwire.warn_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(hallucinationTripwire.block_threshold))
+        && Number(hallucinationTripwire.block_threshold) >= 0
+        && Number(hallucinationTripwire.block_threshold) <= 1,
+      '`runtime.hallucination_tripwire.block_threshold` must be number between 0 and 1',
+      details
+    );
+    if (
+      Number.isFinite(Number(hallucinationTripwire.warn_threshold)) &&
+      Number.isFinite(Number(hallucinationTripwire.block_threshold)) &&
+      Number(hallucinationTripwire.block_threshold) < Number(hallucinationTripwire.warn_threshold)
+    ) {
+      details.push('`runtime.hallucination_tripwire.block_threshold` must be >= `runtime.hallucination_tripwire.warn_threshold`');
+    }
+    assertType(
+      typeof hallucinationTripwire.block_on_detect === 'boolean',
+      '`runtime.hallucination_tripwire.block_on_detect` must be boolean',
+      details
+    );
+    assertType(
+      typeof hallucinationTripwire.observability === 'boolean',
+      '`runtime.hallucination_tripwire.observability` must be boolean',
+      details
+    );
+  }
+
+  const semanticDriftCanary = runtime.semantic_drift_canary || {};
+  if (runtime.semantic_drift_canary !== undefined) {
+    assertNoUnknownKeys(semanticDriftCanary, SEMANTIC_DRIFT_CANARY_KEYS, 'runtime.semantic_drift_canary', details);
+    assertType(
+      typeof semanticDriftCanary.enabled === 'boolean',
+      '`runtime.semantic_drift_canary.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SEMANTIC_DRIFT_CANARY_MODES.has(String(semanticDriftCanary.mode)),
+      '`runtime.semantic_drift_canary.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticDriftCanary.sample_every_requests) && semanticDriftCanary.sample_every_requests > 0,
+      '`runtime.semantic_drift_canary.sample_every_requests` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticDriftCanary.max_providers) && semanticDriftCanary.max_providers > 0,
+      '`runtime.semantic_drift_canary.max_providers` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticDriftCanary.max_samples_per_provider) && semanticDriftCanary.max_samples_per_provider > 0,
+      '`runtime.semantic_drift_canary.max_samples_per_provider` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(semanticDriftCanary.max_text_chars) && semanticDriftCanary.max_text_chars > 0,
+      '`runtime.semantic_drift_canary.max_text_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(semanticDriftCanary.warn_distance_threshold))
+        && Number(semanticDriftCanary.warn_distance_threshold) >= 0
+        && Number(semanticDriftCanary.warn_distance_threshold) <= 1,
+      '`runtime.semantic_drift_canary.warn_distance_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(semanticDriftCanary.block_distance_threshold))
+        && Number(semanticDriftCanary.block_distance_threshold) >= 0
+        && Number(semanticDriftCanary.block_distance_threshold) <= 1,
+      '`runtime.semantic_drift_canary.block_distance_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      typeof semanticDriftCanary.observability === 'boolean',
+      '`runtime.semantic_drift_canary.observability` must be boolean',
+      details
+    );
+  }
+
+  const outputProvenance = runtime.output_provenance || {};
+  if (runtime.output_provenance !== undefined) {
+    assertNoUnknownKeys(outputProvenance, OUTPUT_PROVENANCE_KEYS, 'runtime.output_provenance', details);
+    assertType(
+      typeof outputProvenance.enabled === 'boolean',
+      '`runtime.output_provenance.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof outputProvenance.key_id === 'string' && outputProvenance.key_id.length > 0,
+      '`runtime.output_provenance.key_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof outputProvenance.secret === 'string',
+      '`runtime.output_provenance.secret` must be string',
+      details
+    );
+    assertType(
+      typeof outputProvenance.expose_verify_endpoint === 'boolean',
+      '`runtime.output_provenance.expose_verify_endpoint` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(outputProvenance.max_envelope_bytes) && outputProvenance.max_envelope_bytes > 0,
+      '`runtime.output_provenance.max_envelope_bytes` must be integer > 0',
+      details
+    );
+  }
+
+  const computeAttestation = runtime.compute_attestation || {};
+  if (runtime.compute_attestation !== undefined) {
+    assertNoUnknownKeys(computeAttestation, COMPUTE_ATTESTATION_KEYS, 'runtime.compute_attestation', details);
+    assertType(
+      typeof computeAttestation.enabled === 'boolean',
+      '`runtime.compute_attestation.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof computeAttestation.key_id === 'string' && computeAttestation.key_id.length > 0,
+      '`runtime.compute_attestation.key_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof computeAttestation.secret === 'string',
+      '`runtime.compute_attestation.secret` must be string',
+      details
+    );
+    assertType(
+      typeof computeAttestation.expose_verify_endpoint === 'boolean',
+      '`runtime.compute_attestation.expose_verify_endpoint` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(computeAttestation.max_config_chars) && computeAttestation.max_config_chars > 0,
+      '`runtime.compute_attestation.max_config_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof computeAttestation.include_environment === 'boolean',
+      '`runtime.compute_attestation.include_environment` must be boolean',
+      details
+    );
+  }
+
+  const capabilityIntrospection = runtime.capability_introspection || {};
+  if (runtime.capability_introspection !== undefined) {
+    assertNoUnknownKeys(capabilityIntrospection, CAPABILITY_INTROSPECTION_KEYS, 'runtime.capability_introspection', details);
+    assertType(
+      typeof capabilityIntrospection.enabled === 'boolean',
+      '`runtime.capability_introspection.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(capabilityIntrospection.max_engines) && capabilityIntrospection.max_engines > 0,
+      '`runtime.capability_introspection.max_engines` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof capabilityIntrospection.observability === 'boolean',
+      '`runtime.capability_introspection.observability` must be boolean',
+      details
+    );
+  }
+
+  const policyGradientAnalyzer = runtime.policy_gradient_analyzer || {};
+  if (runtime.policy_gradient_analyzer !== undefined) {
+    assertNoUnknownKeys(policyGradientAnalyzer, POLICY_GRADIENT_ANALYZER_KEYS, 'runtime.policy_gradient_analyzer', details);
+    assertType(
+      typeof policyGradientAnalyzer.enabled === 'boolean',
+      '`runtime.policy_gradient_analyzer.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(policyGradientAnalyzer.max_events) && policyGradientAnalyzer.max_events > 0,
+      '`runtime.policy_gradient_analyzer.max_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(policyGradientAnalyzer.current_injection_threshold))
+        && Number(policyGradientAnalyzer.current_injection_threshold) >= 0
+        && Number(policyGradientAnalyzer.current_injection_threshold) <= 1,
+      '`runtime.policy_gradient_analyzer.current_injection_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(policyGradientAnalyzer.proposed_injection_threshold))
+        && Number(policyGradientAnalyzer.proposed_injection_threshold) >= 0
+        && Number(policyGradientAnalyzer.proposed_injection_threshold) <= 1,
+      '`runtime.policy_gradient_analyzer.proposed_injection_threshold` must be number between 0 and 1',
+      details
+    );
   }
 
   const budgetAutopilot = runtime.budget_autopilot || {};

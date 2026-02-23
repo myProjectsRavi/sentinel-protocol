@@ -257,6 +257,54 @@ runtime:
     max_sessions: 5000
     max_graph_edges_per_session: 256
     observability: true
+  a2a_card_verifier:
+    enabled: false
+    mode: monitor # monitor | block
+    card_header: x-a2a-agent-card
+    agent_id_header: x-sentinel-agent-id
+    max_card_bytes: 32768
+    ttl_ms: 3600000
+    max_agents: 10000
+    max_capabilities: 128
+    max_observed_per_agent: 128
+    overclaim_tolerance: 6
+    block_on_invalid_schema: false
+    block_on_drift: false
+    block_on_overclaim: false
+    block_on_auth_mismatch: false
+    observability: true
+  consensus_protocol:
+    enabled: false
+    mode: monitor # monitor | block
+    policy_header: x-sentinel-consensus-policy
+    action_field: action
+    max_votes: 32
+    required_votes: 2
+    total_agents: 3
+    block_on_no_quorum: false
+    block_on_byzantine: false
+    high_risk_actions: [wire_funds, grant_admin, delete_data, drop_database, execute_shell]
+    observability: true
+  cross_tenant_isolator:
+    enabled: false
+    mode: monitor # monitor | block
+    tenant_header: x-sentinel-tenant-id
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    ttl_ms: 21600000
+    max_sessions: 20000
+    max_known_tenants: 20000
+    block_on_mismatch: false
+    block_on_leak: false
+    observability: true
+  cold_start_analyzer:
+    enabled: false
+    mode: monitor # monitor | block
+    cold_start_window_ms: 600000
+    warmup_request_threshold: 200
+    warmup_engines: [semantic_cache, intent_drift, intent_throttle, agent_observability]
+    block_during_cold_start: false
+    observability: true
   mcp_poisoning:
     enabled: false
     mode: monitor # monitor | block
@@ -345,6 +393,70 @@ runtime:
     rules: []
     max_rules: 128
     observability: true
+  stego_exfil_detector:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_chars: 16384
+    max_findings: 16
+    zero_width_density_threshold: 0.02
+    invisible_density_threshold: 0.03
+    whitespace_bits_threshold: 128
+    segment_entropy_threshold: 3.2
+    emoji_compound_threshold: 3
+    block_on_detect: false
+    observability: true
+  reasoning_trace_monitor:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_chars: 16384
+    max_steps: 64
+    min_step_chars: 12
+    coherence_threshold: 0.1
+    block_on_injection: false
+    block_on_incoherence: false
+    block_on_conclusion_mismatch: false
+    observability: true
+  hallucination_tripwire:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_chars: 16384
+    max_findings: 24
+    warn_threshold: 0.45
+    block_threshold: 0.8
+    block_on_detect: false
+    observability: true
+  semantic_drift_canary:
+    enabled: false
+    mode: monitor # monitor | block
+    sample_every_requests: 100
+    max_providers: 128
+    max_samples_per_provider: 256
+    max_text_chars: 8192
+    warn_distance_threshold: 0.45
+    block_distance_threshold: 0.8
+    observability: true
+  output_provenance:
+    enabled: false
+    key_id: sentinel-output
+    secret: ""
+    expose_verify_endpoint: true
+    max_envelope_bytes: 2097152
+  compute_attestation:
+    enabled: false
+    key_id: sentinel-attestation
+    secret: ""
+    expose_verify_endpoint: true
+    max_config_chars: 4096
+    include_environment: false
+  capability_introspection:
+    enabled: false
+    max_engines: 256
+    observability: true
+  policy_gradient_analyzer:
+    enabled: false
+    max_events: 250000
+    current_injection_threshold: 0.5
+    proposed_injection_threshold: 0.35
   budget_autopilot:
     enabled: false
     mode: monitor # monitor | active

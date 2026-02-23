@@ -27,6 +27,21 @@ function buildStreamEgressAuditFields({
   streamEntropyProjectedRedaction,
   outputClassifierCategories,
   outputClassifierBlocked,
+  stegoDetected,
+  stegoBlocked,
+  stegoFindings,
+  reasoningDetected,
+  reasoningBlocked,
+  reasoningFindings,
+  hallucinationDetected,
+  hallucinationBlocked,
+  hallucinationFindings,
+  crossTenantDetected,
+  crossTenantBlocked,
+  crossTenantFindings,
+  semanticDriftDetected,
+  semanticDriftBlocked,
+  semanticDriftFindings,
 }) {
   return {
     egress_pii_types: Array.from(streamEgressTypes).sort(),
@@ -37,11 +52,27 @@ function buildStreamEgressAuditFields({
     egress_entropy_projected_redaction: streamEntropyProjectedRedaction || undefined,
     output_classifier_categories: Array.from(outputClassifierCategories || []).sort(),
     output_classifier_blocked: outputClassifierBlocked === true ? true : undefined,
+    stego_detected: stegoDetected === true ? true : undefined,
+    stego_blocked: stegoBlocked === true ? true : undefined,
+    stego_findings: stegoFindings || [],
+    reasoning_trace_detected: reasoningDetected === true ? true : undefined,
+    reasoning_trace_blocked: reasoningBlocked === true ? true : undefined,
+    reasoning_trace_findings: reasoningFindings || [],
+    hallucination_detected: hallucinationDetected === true ? true : undefined,
+    hallucination_blocked: hallucinationBlocked === true ? true : undefined,
+    hallucination_findings: hallucinationFindings || [],
+    cross_tenant_egress_detected: crossTenantDetected === true ? true : undefined,
+    cross_tenant_egress_blocked: crossTenantBlocked === true ? true : undefined,
+    cross_tenant_egress_findings: crossTenantFindings || [],
+    semantic_drift_detected: semanticDriftDetected === true ? true : undefined,
+    semantic_drift_blocked: semanticDriftBlocked === true ? true : undefined,
+    semantic_drift_findings: semanticDriftFindings || [],
   };
 }
 
 async function runStreamEgressStage({
   server,
+  req,
   res,
   upstream,
   egressConfig,
@@ -92,6 +123,21 @@ async function runStreamEgressStage({
   const streamOutputClassifierCategories = new Set();
   const classifierDecoder = new StringDecoder('utf8');
   let classifierWindow = '';
+  let streamStegoDetected = false;
+  let streamStegoBlocked = false;
+  let streamReasoningDetected = false;
+  let streamReasoningBlocked = false;
+  let streamHallucinationDetected = false;
+  let streamHallucinationBlocked = false;
+  let streamCrossTenantDetected = false;
+  let streamCrossTenantBlocked = false;
+  let streamSemanticDriftDetected = false;
+  let streamSemanticDriftBlocked = false;
+  const streamStegoFindings = [];
+  const streamReasoningFindings = [];
+  const streamHallucinationFindings = [];
+  const streamCrossTenantFindings = [];
+  const streamSemanticDriftFindings = [];
   const upstreamContentType = String(upstream.responseHeaders?.['content-type'] || '').toLowerCase();
   const streamProof = server.provenanceSigner.createStreamContext({
     statusCode: upstream.status,
@@ -110,6 +156,18 @@ async function runStreamEgressStage({
     res.setHeader('x-sentinel-signature-status', 'stream-trailer');
   } else if (server.provenanceSigner.isEnabled()) {
     res.setHeader('x-sentinel-signature-status', 'stream-unsigned');
+  }
+  if (server.computeAttestation?.isEnabled?.() && !res.getHeader('x-sentinel-attestation')) {
+    const attestation = server.computeAttestation.create({
+      configHash: server.getRuntimeConfigHash(),
+      policyHash: server.getRuntimeConfigHash(),
+      correlationId,
+      provider: routedProvider,
+    });
+    if (attestation?.envelope) {
+      res.setHeader('x-sentinel-attestation', attestation.envelope);
+      server.stats.compute_attestation_signed += 1;
+    }
   }
 
   if (egressConfig.enabled && egressConfig.streamEnabled && upstreamContentType.includes('text/event-stream')) {
@@ -279,6 +337,153 @@ async function runStreamEgressStage({
     }
   };
 
+  const evaluateAdditionalEgressChunk = () => {
+    if (!classifierWindow) {
+      return;
+    }
+    if (!streamStegoBlocked && server.stegoExfilDetector?.isEnabled?.()) {
+      const stego = server.stegoExfilDetector.analyzeText(classifierWindow, { effectiveMode });
+      if (stego.detected) {
+        streamStegoDetected = true;
+        for (const finding of stego.findings || []) {
+          if (streamStegoFindings.length < 16) {
+            streamStegoFindings.push(finding);
+          }
+        }
+        if (!warnings.includes('stego:stream_detected')) {
+          warnings.push('stego:stream_detected');
+          server.stats.warnings_total += 1;
+        }
+        server.stats.stego_exfil_detected += 1;
+        if (!res.headersSent) {
+          res.setHeader('x-sentinel-stego', stego.shouldBlock ? 'block' : 'warn');
+        }
+        if (stego.shouldBlock) {
+          streamStegoBlocked = true;
+          server.stats.stego_exfil_blocked += 1;
+          server.stats.blocked_total += 1;
+          warnings.push('stego_stream_blocked');
+          server.stats.warnings_total += 1;
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
+          });
+          return;
+        }
+      }
+    }
+
+    if (!streamReasoningBlocked && server.reasoningTraceMonitor?.isEnabled?.()) {
+      const reasoning = server.reasoningTraceMonitor.analyzeText(classifierWindow, { effectiveMode });
+      if (reasoning.detected) {
+        streamReasoningDetected = true;
+        for (const finding of reasoning.findings || []) {
+          if (streamReasoningFindings.length < 16) {
+            streamReasoningFindings.push(finding);
+          }
+        }
+        if (!warnings.includes('reasoning:stream_detected')) {
+          warnings.push('reasoning:stream_detected');
+          server.stats.warnings_total += 1;
+        }
+        server.stats.reasoning_trace_detected += 1;
+        if (!res.headersSent) {
+          res.setHeader('x-sentinel-reasoning-trace', reasoning.shouldBlock ? 'block' : 'warn');
+        }
+        if (reasoning.shouldBlock) {
+          streamReasoningBlocked = true;
+          server.stats.reasoning_trace_blocked += 1;
+          server.stats.blocked_total += 1;
+          warnings.push('reasoning_stream_blocked');
+          server.stats.warnings_total += 1;
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
+          });
+          return;
+        }
+      }
+    }
+
+    if (!streamHallucinationBlocked && server.hallucinationTripwire?.isEnabled?.()) {
+      const hallucination = server.hallucinationTripwire.analyzeText(classifierWindow, { effectiveMode });
+      if (hallucination.detected) {
+        streamHallucinationDetected = true;
+        for (const finding of hallucination.findings || []) {
+          if (streamHallucinationFindings.length < 16) {
+            streamHallucinationFindings.push(finding);
+          }
+        }
+        if (!warnings.includes('hallucination:stream_detected')) {
+          warnings.push('hallucination:stream_detected');
+          server.stats.warnings_total += 1;
+        }
+        server.stats.hallucination_tripwire_detected += 1;
+        if (!res.headersSent) {
+          res.setHeader('x-sentinel-hallucination', hallucination.shouldBlock ? 'block' : 'warn');
+          res.setHeader('x-sentinel-hallucination-score', String(hallucination.score || 0));
+        }
+        if (hallucination.shouldBlock) {
+          streamHallucinationBlocked = true;
+          server.stats.hallucination_tripwire_blocked += 1;
+          server.stats.blocked_total += 1;
+          warnings.push('hallucination_stream_blocked');
+          server.stats.warnings_total += 1;
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
+          });
+          return;
+        }
+      }
+    }
+
+    if (!streamCrossTenantBlocked && server.crossTenantIsolator?.isEnabled?.()) {
+      const tenantDecision = server.crossTenantIsolator.evaluateEgress({
+        tenantId: req?.__sentinelTenantId || req?.headers?.['x-sentinel-tenant-id'] || '',
+        text: classifierWindow,
+        effectiveMode,
+      });
+      if (tenantDecision.detected) {
+        streamCrossTenantDetected = true;
+        server.stats.cross_tenant_detected += 1;
+        server.stats.cross_tenant_leaks += 1;
+        for (const finding of tenantDecision.findings || []) {
+          if (streamCrossTenantFindings.length < 16) {
+            streamCrossTenantFindings.push(finding);
+          }
+        }
+        if (!warnings.includes('cross_tenant:stream_detected')) {
+          warnings.push('cross_tenant:stream_detected');
+          server.stats.warnings_total += 1;
+        }
+        if (!res.headersSent) {
+          res.setHeader('x-sentinel-cross-tenant-egress', tenantDecision.shouldBlock ? 'block' : 'warn');
+        }
+        if (tenantDecision.shouldBlock) {
+          streamCrossTenantBlocked = true;
+          server.stats.cross_tenant_blocked += 1;
+          server.stats.blocked_total += 1;
+          warnings.push('cross_tenant_stream_blocked');
+          server.stats.warnings_total += 1;
+          terminateStream({
+            upstreamBodyStream: upstream.bodyStream,
+            streamOut,
+            res,
+            code: 'EGRESS_STREAM_BLOCKED',
+          });
+          return;
+        }
+      }
+    }
+  };
+
   streamOut.on('data', (chunk) => {
     streamedBytes += chunk.length;
     if (streamProof) {
@@ -287,6 +492,7 @@ async function runStreamEgressStage({
     const decoded = classifierDecoder.write(chunk);
     if (decoded) {
       evaluateOutputClassifierChunk(decoded);
+      evaluateAdditionalEgressChunk();
     }
   });
 
@@ -377,11 +583,52 @@ async function runStreamEgressStage({
     const trailing = classifierDecoder.end();
     if (trailing) {
       evaluateOutputClassifierChunk(trailing);
+      evaluateAdditionalEgressChunk();
+    }
+    if (server.semanticDriftCanary?.isEnabled?.()) {
+      const semanticDrift = server.semanticDriftCanary.observe({
+        provider: routedProvider,
+        responseText: classifierWindow,
+        latencyMs: Date.now() - requestStart,
+        effectiveMode,
+        forceSample: true,
+      });
+      if (semanticDrift.detected) {
+        streamSemanticDriftDetected = true;
+        for (const finding of semanticDrift.findings || []) {
+          if (streamSemanticDriftFindings.length < 16) {
+            streamSemanticDriftFindings.push(finding);
+          }
+        }
+        warnings.push('semantic_drift:stream_detected');
+        server.stats.warnings_total += 1;
+        server.stats.semantic_drift_detected += 1;
+        if (semanticDrift.shouldBlock) {
+          streamSemanticDriftBlocked = true;
+          server.stats.semantic_drift_blocked += 1;
+        }
+      }
     }
     if (canAddProofTrailers) {
       const proof = streamProof.finalize();
       if (proof) {
         res.addTrailers(ProvenanceSigner.proofHeaders(proof));
+        if (server.outputProvenanceSigner?.isEnabled?.()) {
+          const envelope = server.outputProvenanceSigner.createEnvelope({
+            outputSha256: proof.payloadSha256,
+            statusCode: upstream.status,
+            provider: routedProvider,
+            correlationId,
+            modelId: String(res.getHeader('x-sentinel-model-id') || ''),
+            configHash: server.getRuntimeConfigHash(),
+          });
+          if (envelope?.envelope) {
+            res.addTrailers({
+              'x-sentinel-provenance': envelope.envelope,
+            });
+            server.stats.output_provenance_signed += 1;
+          }
+        }
       }
     }
     server.latencyNormalizer.recordSuccess(Date.now() - requestStart);
@@ -404,6 +651,21 @@ async function runStreamEgressStage({
         streamEntropyProjectedRedaction,
         outputClassifierCategories: streamOutputClassifierCategories,
         outputClassifierBlocked: streamTerminatedForClassifier,
+        stegoDetected: streamStegoDetected,
+        stegoBlocked: streamStegoBlocked,
+        stegoFindings: streamStegoFindings,
+        reasoningDetected: streamReasoningDetected,
+        reasoningBlocked: streamReasoningBlocked,
+        reasoningFindings: streamReasoningFindings,
+        hallucinationDetected: streamHallucinationDetected,
+        hallucinationBlocked: streamHallucinationBlocked,
+        hallucinationFindings: streamHallucinationFindings,
+        crossTenantDetected: streamCrossTenantDetected,
+        crossTenantBlocked: streamCrossTenantBlocked,
+        crossTenantFindings: streamCrossTenantFindings,
+        semanticDriftDetected: streamSemanticDriftDetected,
+        semanticDriftBlocked: streamSemanticDriftBlocked,
+        semanticDriftFindings: streamSemanticDriftFindings,
       }),
     });
     server.writeStatus();
@@ -423,6 +685,14 @@ async function runStreamEgressStage({
       ) {
         const blockReason = streamTerminatedForClassifier
           ? 'output_classifier_stream_blocked'
+          : streamStegoBlocked
+            ? 'stego_stream_blocked'
+            : streamReasoningBlocked
+              ? 'reasoning_stream_blocked'
+              : streamHallucinationBlocked
+                ? 'hallucination_stream_blocked'
+                : streamCrossTenantBlocked
+                  ? 'cross_tenant_stream_blocked'
           : streamTerminatedForEntropy
             ? 'egress_entropy_stream_blocked'
             : 'egress_stream_blocked';
@@ -443,6 +713,21 @@ async function runStreamEgressStage({
             streamEntropyProjectedRedaction,
             outputClassifierCategories: streamOutputClassifierCategories,
             outputClassifierBlocked: streamTerminatedForClassifier,
+            stegoDetected: streamStegoDetected,
+            stegoBlocked: streamStegoBlocked,
+            stegoFindings: streamStegoFindings,
+            reasoningDetected: streamReasoningDetected,
+            reasoningBlocked: streamReasoningBlocked,
+            reasoningFindings: streamReasoningFindings,
+            hallucinationDetected: streamHallucinationDetected,
+            hallucinationBlocked: streamHallucinationBlocked,
+            hallucinationFindings: streamHallucinationFindings,
+            crossTenantDetected: streamCrossTenantDetected,
+            crossTenantBlocked: streamCrossTenantBlocked,
+            crossTenantFindings: streamCrossTenantFindings,
+            semanticDriftDetected: streamSemanticDriftDetected,
+            semanticDriftBlocked: streamSemanticDriftBlocked,
+            semanticDriftFindings: streamSemanticDriftFindings,
           }),
         });
         server.writeStatus();

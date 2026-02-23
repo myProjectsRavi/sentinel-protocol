@@ -56,6 +56,66 @@ const ENGINE_TECHNIQUE_MAP = Object.freeze({
     name: 'Unauthorized Agent Delegation and Looping',
     severity: 'high',
   }),
+  a2a_card_verifier: Object.freeze({
+    technique_id: 'AML.T0014.000',
+    tactic: 'Credential Access',
+    name: 'Agent Identity Card Tampering',
+    severity: 'high',
+  }),
+  consensus_protocol: Object.freeze({
+    technique_id: 'AML.T0016.000',
+    tactic: 'Execution',
+    name: 'Multi-Agent Quorum Failure',
+    severity: 'medium',
+  }),
+  cross_tenant_isolator: Object.freeze({
+    technique_id: 'AML.T0044.000',
+    tactic: 'Exfiltration',
+    name: 'Cross-Tenant Data Boundary Violation',
+    severity: 'high',
+  }),
+  cold_start_analyzer: Object.freeze({
+    technique_id: 'AML.T0034.000',
+    tactic: 'Impact',
+    name: 'Cold Start Security Degradation',
+    severity: 'medium',
+  }),
+  stego_exfil_detector: Object.freeze({
+    technique_id: 'AML.T0044.000',
+    tactic: 'Exfiltration',
+    name: 'Steganographic Data Exfiltration',
+    severity: 'high',
+  }),
+  reasoning_trace_monitor: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Reasoning Trace Injection and Drift',
+    severity: 'high',
+  }),
+  hallucination_tripwire: Object.freeze({
+    technique_id: 'AML.T0043.000',
+    tactic: 'Evasion',
+    name: 'High-Risk Hallucination Signal',
+    severity: 'medium',
+  }),
+  semantic_drift_canary: Object.freeze({
+    technique_id: 'AML.T0034.000',
+    tactic: 'Impact',
+    name: 'Model Drift and Silent Swap Signal',
+    severity: 'medium',
+  }),
+  output_provenance: Object.freeze({
+    technique_id: 'AML.T0014.000',
+    tactic: 'Credential Access',
+    name: 'Output Provenance Integrity Failure',
+    severity: 'medium',
+  }),
+  compute_attestation: Object.freeze({
+    technique_id: 'AML.T0014.000',
+    tactic: 'Credential Access',
+    name: 'Runtime Attestation Integrity Failure',
+    severity: 'medium',
+  }),
   loop_breaker: Object.freeze({
     technique_id: 'AML.T0016.000',
     tactic: 'Execution',
@@ -139,6 +199,16 @@ const ENGINE_TECHNIQUE_MAP = Object.freeze({
 const ENGINE_PRIORITY = Object.freeze([
   'prompt_rebuff',
   'agentic_threat_shield',
+  'a2a_card_verifier',
+  'consensus_protocol',
+  'cross_tenant_isolator',
+  'stego_exfil_detector',
+  'reasoning_trace_monitor',
+  'hallucination_tripwire',
+  'semantic_drift_canary',
+  'output_provenance',
+  'compute_attestation',
+  'cold_start_analyzer',
   'mcp_poisoning_detector',
   'synthetic_poisoner',
   'model_inversion_guard',
@@ -207,6 +277,36 @@ function inferEngineCandidates(event = {}) {
   if (decision.includes('agentic')) {
     candidates.add('agentic_threat_shield');
   }
+  if (decision.includes('a2a_card')) {
+    candidates.add('a2a_card_verifier');
+  }
+  if (decision.includes('consensus')) {
+    candidates.add('consensus_protocol');
+  }
+  if (decision.includes('cross_tenant')) {
+    candidates.add('cross_tenant_isolator');
+  }
+  if (decision.includes('cold_start')) {
+    candidates.add('cold_start_analyzer');
+  }
+  if (decision.includes('stego')) {
+    candidates.add('stego_exfil_detector');
+  }
+  if (decision.includes('reasoning_trace')) {
+    candidates.add('reasoning_trace_monitor');
+  }
+  if (decision.includes('hallucination')) {
+    candidates.add('hallucination_tripwire');
+  }
+  if (decision.includes('semantic_drift')) {
+    candidates.add('semantic_drift_canary');
+  }
+  if (decision.includes('provenance')) {
+    candidates.add('output_provenance');
+  }
+  if (decision.includes('attestation')) {
+    candidates.add('compute_attestation');
+  }
   if (decision.includes('mcp_poisoning')) {
     candidates.add('mcp_poisoning_detector');
   }
@@ -249,6 +349,30 @@ function inferEngineCandidates(event = {}) {
   }
   if (reasons.some((item) => item.startsWith('prompt_rebuff:'))) {
     candidates.add('prompt_rebuff');
+  }
+  if (reasons.some((item) => item.startsWith('a2a_card:'))) {
+    candidates.add('a2a_card_verifier');
+  }
+  if (reasons.some((item) => item.startsWith('consensus:'))) {
+    candidates.add('consensus_protocol');
+  }
+  if (reasons.some((item) => item.startsWith('cross_tenant:'))) {
+    candidates.add('cross_tenant_isolator');
+  }
+  if (reasons.some((item) => item.startsWith('cold_start:'))) {
+    candidates.add('cold_start_analyzer');
+  }
+  if (reasons.some((item) => item.startsWith('stego:'))) {
+    candidates.add('stego_exfil_detector');
+  }
+  if (reasons.some((item) => item.startsWith('reasoning:'))) {
+    candidates.add('reasoning_trace_monitor');
+  }
+  if (reasons.some((item) => item.startsWith('hallucination:'))) {
+    candidates.add('hallucination_tripwire');
+  }
+  if (reasons.some((item) => item.startsWith('semantic_drift:'))) {
+    candidates.add('semantic_drift_canary');
   }
   if (reasons.some((item) => item.startsWith('mcp_poisoning:'))) {
     candidates.add('mcp_poisoning_detector');

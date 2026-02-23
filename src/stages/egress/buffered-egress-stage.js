@@ -70,6 +70,11 @@ async function runBufferedEgressAndFinalizeStage({
   let currentCognitiveRollbackDecision = cognitiveRollbackDecision;
   let outputClassifierResult = null;
   let outputSchemaValidation = null;
+  let stegoDecision = null;
+  let reasoningDecision = null;
+  let hallucinationDecision = null;
+  let semanticDriftDecision = null;
+  let crossTenantEgressDecision = null;
 
   if (
     !replayedFromVcr &&
@@ -705,6 +710,362 @@ async function runBufferedEgressAndFinalizeStage({
     }
   }
 
+  const stegoStageExecution = await runOrchestratedStage(
+    'stego_exfil_detector',
+    async () =>
+      server.stegoExfilDetector.analyzeBuffer({
+        bodyBuffer: responseBodyForClient,
+        contentType: upstreamContentType,
+        effectiveMode,
+      }),
+    routedProvider
+  );
+  if (stegoStageExecution.handled) {
+    return { handled: true };
+  }
+  stegoDecision = stegoStageExecution.result;
+  if (stegoDecision?.enabled && stegoDecision.detected) {
+    server.stats.stego_exfil_detected += 1;
+    warnings.push(`stego:${stegoDecision.reason}`);
+    server.stats.warnings_total += 1;
+    res.setHeader('x-sentinel-stego', stegoDecision.shouldBlock ? 'block' : 'warn');
+    if (stegoDecision.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.stego_exfil_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'stego_exfil_detector');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_stego_exfil',
+        reasons: stegoDecision.findings?.map((item) => item.code) || ['stego_exfil_detected'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        stego_findings: stegoDecision.findings || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 403,
+        providerName: routedProvider,
+      });
+      res.status(403).json({
+        error: 'STEGO_EXFIL_DETECTED',
+        reason: stegoDecision.reason,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
+  const reasoningStageExecution = await runOrchestratedStage(
+    'reasoning_trace_monitor',
+    async () =>
+      server.reasoningTraceMonitor.analyzeBuffer({
+        bodyBuffer: responseBodyForClient,
+        contentType: upstreamContentType,
+        effectiveMode,
+      }),
+    routedProvider
+  );
+  if (reasoningStageExecution.handled) {
+    return { handled: true };
+  }
+  reasoningDecision = reasoningStageExecution.result;
+  if (reasoningDecision?.enabled && reasoningDecision.detected) {
+    server.stats.reasoning_trace_detected += 1;
+    warnings.push(`reasoning:${reasoningDecision.reason}`);
+    server.stats.warnings_total += 1;
+    res.setHeader('x-sentinel-reasoning-trace', reasoningDecision.shouldBlock ? 'block' : 'warn');
+    if (reasoningDecision.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.reasoning_trace_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'reasoning_trace_monitor');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_reasoning_trace',
+        reasons: reasoningDecision.findings?.map((item) => item.code) || ['reasoning_trace_violation'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        reasoning_findings: reasoningDecision.findings || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 403,
+        providerName: routedProvider,
+      });
+      res.status(403).json({
+        error: 'REASONING_TRACE_VIOLATION',
+        reason: reasoningDecision.reason,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
+  const hallucinationStageExecution = await runOrchestratedStage(
+    'hallucination_tripwire',
+    async () =>
+      server.hallucinationTripwire.analyzeBuffer({
+        bodyBuffer: responseBodyForClient,
+        contentType: upstreamContentType,
+        effectiveMode,
+      }),
+    routedProvider
+  );
+  if (hallucinationStageExecution.handled) {
+    return { handled: true };
+  }
+  hallucinationDecision = hallucinationStageExecution.result;
+  if (hallucinationDecision?.enabled && hallucinationDecision.detected) {
+    server.stats.hallucination_tripwire_detected += 1;
+    warnings.push(`hallucination:${hallucinationDecision.reason}`);
+    server.stats.warnings_total += 1;
+    res.setHeader('x-sentinel-hallucination', hallucinationDecision.shouldBlock ? 'block' : 'warn');
+    res.setHeader('x-sentinel-hallucination-score', String(hallucinationDecision.score || 0));
+    if (hallucinationDecision.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.hallucination_tripwire_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'hallucination_tripwire');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 502,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_hallucination_tripwire',
+        reasons: hallucinationDecision.findings?.map((item) => item.code) || ['hallucination_detected'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 502,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        hallucination_score: hallucinationDecision.score || 0,
+        hallucination_findings: hallucinationDecision.findings || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 502,
+        providerName: routedProvider,
+      });
+      res.status(502).json({
+        error: 'HALLUCINATION_TRIPWIRE_DETECTED',
+        reason: hallucinationDecision.reason,
+        score: hallucinationDecision.score || 0,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
+  crossTenantEgressDecision = server.crossTenantIsolator?.isEnabled?.()
+    ? server.crossTenantIsolator.evaluateEgress({
+        tenantId: req.__sentinelTenantId || req.headers?.['x-sentinel-tenant-id'] || '',
+        bodyBuffer: responseBodyForClient,
+        effectiveMode,
+      })
+    : null;
+  if (crossTenantEgressDecision?.enabled && crossTenantEgressDecision.detected) {
+    server.stats.cross_tenant_detected += 1;
+    server.stats.cross_tenant_leaks += 1;
+    warnings.push(`cross_tenant:${crossTenantEgressDecision.reason}`);
+    server.stats.warnings_total += 1;
+    res.setHeader('x-sentinel-cross-tenant-egress', crossTenantEgressDecision.shouldBlock ? 'block' : 'warn');
+    if (crossTenantEgressDecision.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.cross_tenant_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'cross_tenant_isolator');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_cross_tenant_egress',
+        reasons: crossTenantEgressDecision.findings?.map((item) => item.code) || ['cross_tenant_leak'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        cross_tenant_findings: crossTenantEgressDecision.findings || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 403,
+        providerName: routedProvider,
+      });
+      res.status(403).json({
+        error: 'CROSS_TENANT_LEAK_DETECTED',
+        reason: crossTenantEgressDecision.reason,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
+  semanticDriftDecision = server.semanticDriftCanary?.isEnabled?.()
+    ? server.semanticDriftCanary.observe({
+        provider: routedProvider,
+        responseText: responseBodyForClient.toString('utf8'),
+        latencyMs: Date.now() - requestStart,
+        effectiveMode,
+      })
+    : null;
+  if (semanticDriftDecision?.enabled && semanticDriftDecision.detected) {
+    server.stats.semantic_drift_detected += 1;
+    warnings.push(`semantic_drift:${semanticDriftDecision.reason}`);
+    server.stats.warnings_total += 1;
+    res.setHeader('x-sentinel-semantic-drift', semanticDriftDecision.shouldBlock ? 'block' : 'warn');
+    if (semanticDriftDecision.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.semantic_drift_blocked += 1;
+      const diagnostics = buildBufferedDiagnostics({
+        server,
+        correlationId,
+        routedProvider,
+        routedBreakerKey,
+        upstream,
+      });
+      responseHeaderDiagnostics(res, diagnostics);
+      res.setHeader('x-sentinel-blocked-by', 'semantic_drift_canary');
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 503,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_semantic_drift',
+        reasons: semanticDriftDecision.findings?.map((item) => item.code) || ['semantic_drift_detected'],
+        pii_types: piiTypes,
+        redactions: redactedCount,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: bodyBuffer.length,
+        response_status: 503,
+        response_bytes: 0,
+        provider: routedProvider,
+        upstream_target: routedTarget,
+        failover_used: upstream.route?.failoverUsed === true,
+        route_source: routePlan.routeSource,
+        route_group: routePlan.selectedGroup || undefined,
+        route_contract: routePlan.desiredContract,
+        requested_target: routePlan.requestedTarget,
+        semantic_drift_findings: semanticDriftDecision.findings || [],
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_egress',
+        status: 503,
+        providerName: routedProvider,
+      });
+      res.status(503).json({
+        error: 'SEMANTIC_DRIFT_DETECTED',
+        reason: semanticDriftDecision.reason,
+        correlation_id: correlationId,
+      });
+      return { handled: true };
+    }
+  }
+
   let budgetCharge = null;
   try {
     const budgetRecordStageExecution = await runOrchestratedStage(
@@ -747,6 +1108,9 @@ async function runBufferedEgressAndFinalizeStage({
       headers: upstream.responseHeaders || {},
       bodyBuffer: responseBodyForClient,
     });
+  }
+  if (warnings.length > 0) {
+    res.setHeader('x-sentinel-warning', warnings.join(','));
   }
 
   server.auditLogger.write({
@@ -804,6 +1168,22 @@ async function runBufferedEgressAndFinalizeStage({
     output_schema_valid: outputSchemaValidation?.applied ? outputSchemaValidation.valid : undefined,
     output_schema_mismatch_count: outputSchemaValidation?.mismatches?.length || 0,
     output_schema_extra_fields: outputSchemaValidation?.extraFields || [],
+    stego_detected: Boolean(stegoDecision?.detected),
+    stego_reason: stegoDecision?.reason,
+    stego_findings: stegoDecision?.findings || [],
+    reasoning_trace_detected: Boolean(reasoningDecision?.detected),
+    reasoning_trace_reason: reasoningDecision?.reason,
+    reasoning_trace_findings: reasoningDecision?.findings || [],
+    hallucination_detected: Boolean(hallucinationDecision?.detected),
+    hallucination_score: hallucinationDecision?.score || 0,
+    hallucination_reason: hallucinationDecision?.reason,
+    hallucination_findings: hallucinationDecision?.findings || [],
+    semantic_drift_detected: Boolean(semanticDriftDecision?.detected),
+    semantic_drift_reason: semanticDriftDecision?.reason,
+    semantic_drift_findings: semanticDriftDecision?.findings || [],
+    cross_tenant_egress_detected: Boolean(crossTenantEgressDecision?.detected),
+    cross_tenant_egress_reason: crossTenantEgressDecision?.reason,
+    cross_tenant_egress_findings: crossTenantEgressDecision?.findings || [],
   });
 
   if (upstream.status < 400) {
