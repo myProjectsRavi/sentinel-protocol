@@ -375,6 +375,114 @@ async function runInjectionAndPolicyStage({
     }
   }
 
+  let mcpShadowDecision = null;
+  if (server.mcpShadowDetector?.isEnabled() && isMcpLikeRequest({ req, parsedPath, bodyJson })) {
+    try {
+      mcpShadowDecision = server.mcpShadowDetector.inspect({
+        bodyJson,
+        serverId: req.headers?.['x-sentinel-mcp-server-id'] || provider,
+        serverConfig: {
+          provider,
+          path: parsedPath.pathname,
+          target: req.headers?.['x-sentinel-target'],
+          phase: req.headers?.['x-sentinel-mcp-phase'] || 'request',
+        },
+        effectiveMode,
+      });
+    } catch (error) {
+      mcpShadowDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        findings: [],
+        reason: 'mcp_shadow_error',
+        error: String(error.message || error),
+      };
+      warnings.push('mcp_shadow:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (mcpShadowDecision?.enabled && server.mcpShadowDetector.observability) {
+      res.setHeader(
+        'x-sentinel-mcp-shadow',
+        mcpShadowDecision.detected ? String(mcpShadowDecision.reason || 'detected') : 'clean'
+      );
+    }
+
+    if (mcpShadowDecision?.detected) {
+      server.stats.mcp_shadow_detected += 1;
+      if ((mcpShadowDecision.findings || []).some((finding) => String(finding.code || '').includes('schema_drift'))) {
+        server.stats.mcp_shadow_schema_drift += 1;
+      }
+      if ((mcpShadowDecision.findings || []).some((finding) => String(finding.code || '').includes('late_registration'))) {
+        server.stats.mcp_shadow_late_registration += 1;
+      }
+      if ((mcpShadowDecision.findings || []).some((finding) => String(finding.code || '').includes('name_collision'))) {
+        server.stats.mcp_shadow_name_collision += 1;
+      }
+      warnings.push(`mcp_shadow:${mcpShadowDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+
+    if (mcpShadowDecision?.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.policy_blocked += 1;
+      server.stats.mcp_shadow_blocked += 1;
+      res.setHeader('x-sentinel-blocked-by', 'mcp_shadow');
+      const diagnostics = {
+        errorSource: 'sentinel',
+        upstreamError: false,
+        provider,
+        retryCount: 0,
+        circuitState: server.circuitBreakers.getProviderState(breakerKey).state,
+        correlationId,
+      };
+      responseHeaderDiagnostics(res, diagnostics);
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_mcp_shadow',
+        reasons: [String(mcpShadowDecision.reason || 'mcp_shadow_detected')],
+        pii_types: [],
+        redactions: 0,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: rawBody.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider,
+        mcp_shadow_findings: (mcpShadowDecision.findings || []).map((finding) => finding.code),
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_policy',
+        status: 403,
+        providerName: provider,
+      });
+      res.status(403).json({
+        error: 'MCP_SHADOW_DETECTED',
+        reason: mcpShadowDecision.reason || 'mcp_shadow_detected',
+        findings: (mcpShadowDecision.findings || []).map((finding) => finding.code),
+        correlation_id: correlationId,
+      });
+      return {
+        handled: true,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore,
+        shadowDecision: null,
+      };
+    }
+  }
+
   let providerHostname;
   try {
     providerHostname = new URL(baseUrl).hostname;

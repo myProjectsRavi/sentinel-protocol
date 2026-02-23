@@ -272,6 +272,24 @@ runtime:
     sanitize_arguments: true
     strip_non_printable: true
     observability: true
+  mcp_shadow:
+    enabled: false
+    mode: monitor # monitor | block
+    detect_schema_drift: true
+    detect_late_registration: true
+    detect_name_collisions: true
+    block_on_schema_drift: false
+    block_on_late_registration: false
+    block_on_name_collision: false
+    max_tools: 64
+    max_tool_snapshot_bytes: 131072
+    ttl_ms: 3600000
+    max_server_entries: 2000
+    max_findings: 16
+    min_tool_name_length: 4
+    name_similarity_distance: 1
+    max_name_candidates: 128
+    observability: true
   prompt_rebuff:
     enabled: false
     mode: monitor # monitor | block

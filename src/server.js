@@ -48,6 +48,7 @@ const { ShadowOS } = require('./sandbox/shadow-os');
 const { EpistemicAnchor } = require('./runtime/epistemic-anchor');
 const { AgenticThreatShield } = require('./security/agentic-threat-shield');
 const { MCPPoisoningDetector } = require('./security/mcp-poisoning-detector');
+const { MCPShadowDetector } = require('./security/mcp-shadow-detector');
 const { OutputClassifier } = require('./egress/output-classifier');
 const { OutputSchemaValidator } = require('./egress/output-schema-validator');
 const {
@@ -170,6 +171,11 @@ class SentinelServer {
       mcp_poisoning_detected: 0,
       mcp_poisoning_blocked: 0,
       mcp_config_drift: 0,
+      mcp_shadow_detected: 0,
+      mcp_shadow_blocked: 0,
+      mcp_shadow_schema_drift: 0,
+      mcp_shadow_late_registration: 0,
+      mcp_shadow_name_collision: 0,
       auto_immune_matches: 0,
       auto_immune_blocked: 0,
       auto_immune_learned: 0,
@@ -288,6 +294,7 @@ class SentinelServer {
     this.canaryToolTrap = new CanaryToolTrap(this.config.runtime?.canary_tools || {});
     this.promptRebuff = new PromptRebuffEngine(this.config.runtime?.prompt_rebuff || {});
     this.mcpPoisoningDetector = new MCPPoisoningDetector(this.config.runtime?.mcp_poisoning || {});
+    this.mcpShadowDetector = new MCPShadowDetector(this.config.runtime?.mcp_shadow || {});
     this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
     this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
     this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
@@ -429,6 +436,8 @@ class SentinelServer {
       intent_drift_mode: this.intentDrift.mode,
       mcp_poisoning_enabled: this.mcpPoisoningDetector.isEnabled(),
       mcp_poisoning_mode: this.mcpPoisoningDetector.mode,
+      mcp_shadow_enabled: this.mcpShadowDetector.isEnabled(),
+      mcp_shadow_mode: this.mcpShadowDetector.mode,
       prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
       prompt_rebuff_mode: this.promptRebuff.mode,
       output_classifier_enabled: this.outputClassifier.isEnabled(),

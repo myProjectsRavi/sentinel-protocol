@@ -9,6 +9,7 @@ const { mergeInjectionResults } = require('../engines/injection-merge');
 const { PIIProviderEngine } = require('../pii/provider-engine');
 const { resolveProvider } = require('../upstream/router');
 const { MCPPoisoningDetector } = require('../security/mcp-poisoning-detector');
+const { MCPShadowDetector } = require('../security/mcp-shadow-detector');
 
 function safeParseJson(input) {
   try {
@@ -49,6 +50,7 @@ class SentinelMCPGovernance {
       telemetry: null,
     });
     this.mcpPoisoningDetector = new MCPPoisoningDetector(config.runtime?.mcp_poisoning || {});
+    this.mcpShadowDetector = new MCPShadowDetector(config.runtime?.mcp_shadow || {});
   }
 
   async inspectRequest(args = {}) {
@@ -95,6 +97,15 @@ class SentinelMCPGovernance {
       serverConfig: args.mcp_server_config || null,
       effectiveMode: mode,
     });
+    const mcpShadowDecision = this.mcpShadowDetector.inspect({
+      bodyJson,
+      serverId: args.server_id || headers['x-sentinel-mcp-server-id'] || providerName,
+      serverConfig: {
+        ...(args.mcp_server_config && typeof args.mcp_server_config === 'object' ? args.mcp_server_config : {}),
+        phase: args.mcp_phase || headers['x-sentinel-mcp-phase'] || 'request',
+      },
+      effectiveMode: mode,
+    });
 
     const policyDecision = this.policyEngine.check({
       method,
@@ -118,6 +129,13 @@ class SentinelMCPGovernance {
       warnings.push(`mcp_poisoning:${mcpDecision.reason || 'detected'}`);
       reasons.push(mcpDecision.reason || 'mcp_poisoning_detected');
       if (mcpDecision.shouldBlock) {
+        blocked = true;
+      }
+    }
+    if (mcpShadowDecision.detected) {
+      warnings.push(`mcp_shadow:${mcpShadowDecision.reason || 'detected'}`);
+      reasons.push(mcpShadowDecision.reason || 'mcp_shadow_detected');
+      if (mcpShadowDecision.shouldBlock) {
         blocked = true;
       }
     }
@@ -181,6 +199,14 @@ class SentinelMCPGovernance {
           args.tool_arguments
             && JSON.stringify(mcpDecision.sanitizedArguments || {}) !== JSON.stringify(args.tool_arguments || {})
         ),
+        shadow: {
+          enabled: mcpShadowDecision.enabled,
+          detected: mcpShadowDecision.detected,
+          should_block: mcpShadowDecision.shouldBlock,
+          reason: mcpShadowDecision.reason || 'clean',
+          findings: mcpShadowDecision.findings || [],
+          technique_id: mcpShadowDecision.technique_id || null,
+        },
       },
       pii: {
         provider: piiProvider,

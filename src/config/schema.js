@@ -31,6 +31,7 @@ const RUNTIME_KEYS = new Set([
   'loop_breaker',
   'agentic_threat_shield',
   'mcp_poisoning',
+  'mcp_shadow',
   'prompt_rebuff',
   'output_classifier',
   'output_schema_validator',
@@ -307,6 +308,26 @@ const MCP_POISONING_KEYS = new Set([
   'observability',
 ]);
 const MCP_POISONING_MODES = new Set(['monitor', 'block']);
+const MCP_SHADOW_KEYS = new Set([
+  'enabled',
+  'mode',
+  'detect_schema_drift',
+  'detect_late_registration',
+  'detect_name_collisions',
+  'block_on_schema_drift',
+  'block_on_late_registration',
+  'block_on_name_collision',
+  'max_tools',
+  'max_tool_snapshot_bytes',
+  'ttl_ms',
+  'max_server_entries',
+  'max_findings',
+  'min_tool_name_length',
+  'name_similarity_distance',
+  'max_name_candidates',
+  'observability',
+]);
+const MCP_SHADOW_MODES = new Set(['monitor', 'block']);
 const PROMPT_REBUFF_KEYS = new Set([
   'enabled',
   'mode',
@@ -1291,6 +1312,28 @@ function applyDefaults(config) {
   mcpPoisoning.sanitize_arguments = mcpPoisoning.sanitize_arguments !== false;
   mcpPoisoning.strip_non_printable = mcpPoisoning.strip_non_printable !== false;
   mcpPoisoning.observability = mcpPoisoning.observability !== false;
+
+  normalized.runtime.mcp_shadow = normalized.runtime.mcp_shadow || {};
+  const mcpShadow = normalized.runtime.mcp_shadow;
+  mcpShadow.enabled = mcpShadow.enabled === true;
+  mcpShadow.mode = MCP_SHADOW_MODES.has(String(mcpShadow.mode || '').toLowerCase())
+    ? String(mcpShadow.mode).toLowerCase()
+    : 'monitor';
+  mcpShadow.detect_schema_drift = mcpShadow.detect_schema_drift !== false;
+  mcpShadow.detect_late_registration = mcpShadow.detect_late_registration !== false;
+  mcpShadow.detect_name_collisions = mcpShadow.detect_name_collisions !== false;
+  mcpShadow.block_on_schema_drift = mcpShadow.block_on_schema_drift === true;
+  mcpShadow.block_on_late_registration = mcpShadow.block_on_late_registration === true;
+  mcpShadow.block_on_name_collision = mcpShadow.block_on_name_collision === true;
+  mcpShadow.max_tools = Number(mcpShadow.max_tools ?? 64);
+  mcpShadow.max_tool_snapshot_bytes = Number(mcpShadow.max_tool_snapshot_bytes ?? 131072);
+  mcpShadow.ttl_ms = Number(mcpShadow.ttl_ms ?? 3600000);
+  mcpShadow.max_server_entries = Number(mcpShadow.max_server_entries ?? 2000);
+  mcpShadow.max_findings = Number(mcpShadow.max_findings ?? 16);
+  mcpShadow.min_tool_name_length = Number(mcpShadow.min_tool_name_length ?? 4);
+  mcpShadow.name_similarity_distance = Number(mcpShadow.name_similarity_distance ?? 1);
+  mcpShadow.max_name_candidates = Number(mcpShadow.max_name_candidates ?? 128);
+  mcpShadow.observability = mcpShadow.observability !== false;
 
   normalized.runtime.prompt_rebuff = normalized.runtime.prompt_rebuff || {};
   const promptRebuff = normalized.runtime.prompt_rebuff;
@@ -2890,6 +2933,96 @@ function validateConfigShape(config) {
     assertType(
       typeof mcpPoisoning.observability === 'boolean',
       '`runtime.mcp_poisoning.observability` must be boolean',
+      details
+    );
+  }
+
+  const mcpShadow = runtime.mcp_shadow || {};
+  if (runtime.mcp_shadow !== undefined) {
+    assertNoUnknownKeys(mcpShadow, MCP_SHADOW_KEYS, 'runtime.mcp_shadow', details);
+    assertType(
+      typeof mcpShadow.enabled === 'boolean',
+      '`runtime.mcp_shadow.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MCP_SHADOW_MODES.has(String(mcpShadow.mode)),
+      '`runtime.mcp_shadow.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof mcpShadow.detect_schema_drift === 'boolean',
+      '`runtime.mcp_shadow.detect_schema_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpShadow.detect_late_registration === 'boolean',
+      '`runtime.mcp_shadow.detect_late_registration` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpShadow.detect_name_collisions === 'boolean',
+      '`runtime.mcp_shadow.detect_name_collisions` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpShadow.block_on_schema_drift === 'boolean',
+      '`runtime.mcp_shadow.block_on_schema_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpShadow.block_on_late_registration === 'boolean',
+      '`runtime.mcp_shadow.block_on_late_registration` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpShadow.block_on_name_collision === 'boolean',
+      '`runtime.mcp_shadow.block_on_name_collision` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.max_tools) && mcpShadow.max_tools > 0,
+      '`runtime.mcp_shadow.max_tools` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.max_tool_snapshot_bytes) && mcpShadow.max_tool_snapshot_bytes > 0,
+      '`runtime.mcp_shadow.max_tool_snapshot_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.ttl_ms) && mcpShadow.ttl_ms > 0,
+      '`runtime.mcp_shadow.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.max_server_entries) && mcpShadow.max_server_entries > 0,
+      '`runtime.mcp_shadow.max_server_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.max_findings) && mcpShadow.max_findings > 0,
+      '`runtime.mcp_shadow.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.min_tool_name_length) && mcpShadow.min_tool_name_length > 0,
+      '`runtime.mcp_shadow.min_tool_name_length` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.name_similarity_distance) && mcpShadow.name_similarity_distance > 0,
+      '`runtime.mcp_shadow.name_similarity_distance` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpShadow.max_name_candidates) && mcpShadow.max_name_candidates > 0,
+      '`runtime.mcp_shadow.max_name_candidates` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof mcpShadow.observability === 'boolean',
+      '`runtime.mcp_shadow.observability` must be boolean',
       details
     );
   }

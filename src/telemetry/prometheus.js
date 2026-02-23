@@ -97,6 +97,31 @@ class PrometheusExporter {
       counters.mcp_config_drift
     );
     appendCounter(
+      'sentinel_mcp_shadow_detected_total',
+      'Total requests where MCP shadow detector identified takeover signals',
+      counters.mcp_shadow_detected
+    );
+    appendCounter(
+      'sentinel_mcp_shadow_blocked_total',
+      'Total requests blocked by MCP shadow detector',
+      counters.mcp_shadow_blocked
+    );
+    appendCounter(
+      'sentinel_mcp_shadow_schema_drift_total',
+      'Total MCP shadow schema drift detections',
+      counters.mcp_shadow_schema_drift
+    );
+    appendCounter(
+      'sentinel_mcp_shadow_late_registration_total',
+      'Total MCP shadow late registration detections',
+      counters.mcp_shadow_late_registration
+    );
+    appendCounter(
+      'sentinel_mcp_shadow_name_collision_total',
+      'Total MCP shadow name collision detections',
+      counters.mcp_shadow_name_collision
+    );
+    appendCounter(
       'sentinel_prompt_rebuff_detected_total',
       'Total requests where prompt rebuff detected elevated risk',
       counters.prompt_rebuff_detected
