@@ -42,6 +42,9 @@
   - `GET /_sentinel/playground` (UI)
   - `POST /_sentinel/playground/analyze` (deterministic local multi-engine analysis)
 - VS Code extension scaffold for local prompt scanning: `extensions/vscode-sentinel/`
+- VS Code extension packaging pipeline:
+  - CI/release `.vsix` artifact build (`npm run ci:vscode:package`)
+  - optional release publish step gated by `VSCE_PAT`
 - Python adapter package for LangChain/LlamaIndex/CrewAI callbacks: `python/sentinel_protocol_adapters/`
 - Python adapter expansion: AutoGen + LangGraph callbacks.
 - Embed callback expansion: AutoGen + LangGraph callbacks.
@@ -50,6 +53,14 @@
   - hard RSS cap (`memory_hard_cap_bytes`)
   - deterministic engine shedding (`shed_on_memory_pressure`, `shed_engine_order`)
   - restore path after memory recovery.
+- Dashboard RBAC extensions:
+  - `runtime.dashboard.team_tokens`
+  - `runtime.dashboard.team_header`
+  - team-aware dashboard access audit fields
+- Dashboard forensic replay API bridge:
+  - `POST /api/forensics/replay` (dashboard-local what-if flow)
+- EU AI Act Article 12 machine-readable report path:
+  - `sentinel compliance report --framework eu-ai-act-article-12`
 
 ### Changed
 - Integrated new engines into live stage flow (policy + agentic + audit) with deterministic block/warn behavior.

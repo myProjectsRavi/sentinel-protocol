@@ -369,6 +369,60 @@ function collectEvidenceSamples(events, sampleLimit) {
   return samples;
 }
 
+function summarizeEUAIActArticle12(events = []) {
+  let withCorrelationId = 0;
+  let withProvider = 0;
+  let withReasons = 0;
+  let withIntegrityMarkers = 0;
+  let withBlockingAction = 0;
+  let withForensicSignals = 0;
+
+  for (const event of events) {
+    if (String(event?.correlation_id || '').trim()) {
+      withCorrelationId += 1;
+    }
+    if (String(event?.provider || '').trim()) {
+      withProvider += 1;
+    }
+    if (Array.isArray(event?.reasons) && event.reasons.length > 0) {
+      withReasons += 1;
+    }
+    const decision = String(event?.decision || '').toLowerCase();
+    if (decision.startsWith('blocked')) {
+      withBlockingAction += 1;
+    }
+    if (
+      decision.includes('forensic')
+      || decision.includes('dashboard_access')
+      || event?.forensic_snapshot_id
+      || event?.forensic_replay_id
+    ) {
+      withForensicSignals += 1;
+    }
+    if (
+      event?.provenance_signature
+      || event?.token_watermark
+      || event?.policy_bundle_signature
+      || event?.evidence_entry_hash
+      || event?.swarm_signature
+    ) {
+      withIntegrityMarkers += 1;
+    }
+  }
+
+  const total = Math.max(1, events.length);
+  return {
+    events_total: events.length,
+    events_with_correlation_id: withCorrelationId,
+    events_with_provider: withProvider,
+    events_with_reasons: withReasons,
+    events_with_integrity_markers: withIntegrityMarkers,
+    blocked_or_constrained_events: withBlockingAction,
+    forensic_or_audit_events: withForensicSignals,
+    coverage_ratio: Number(((withCorrelationId + withProvider + withReasons) / (3 * total)).toFixed(6)),
+  };
+}
+
 class ComplianceEngine {
   constructor(options = {}) {
     this.auditPath = options.auditPath;
@@ -448,6 +502,44 @@ class ComplianceEngine {
     });
   }
 
+  generateEUAIActArticle12Evidence(options = {}) {
+    const data = this.loadEventsWithMeta({
+      limit: options.limit,
+      maxReadBytes: options.maxReadBytes,
+      chunkReadBytes: options.chunkReadBytes,
+    });
+    const events = data.events;
+    const metadata = data.metadata;
+    const samples = collectEvidenceSamples(events, options.sampleLimit || this.sampleLimit);
+    const summary = summarize(events);
+
+    return {
+      framework: 'EU_AI_ACT_ARTICLE_12',
+      generated_at: new Date().toISOString(),
+      regulation: 'EU AI Act',
+      article: 'Article 12',
+      title: 'Record-keeping and logging',
+      summary,
+      article_12: summarizeEUAIActArticle12(events),
+      sample_size: events.length,
+      source: {
+        audit_path: this.auditPath,
+        limit: metadata.limit,
+        bytes_scanned: metadata.bytes_scanned,
+        truncated: metadata.truncated,
+        lines_scanned: metadata.lines_scanned,
+        lines_considered: metadata.lines_considered,
+        parsed_events: metadata.parsed_events,
+        malformed_lines: metadata.malformed_lines,
+      },
+      integrity: {
+        tail_sha256: metadata.tail_sha256,
+        window_sha256: metadata.window_sha256,
+      },
+      samples,
+    };
+  }
+
   static signReport(report, privateKeyPem) {
     const payload = Buffer.from(JSON.stringify(report), 'utf8');
     const signature = crypto.sign(null, payload, crypto.createPrivateKey(privateKeyPem)).toString('base64');
@@ -465,4 +557,5 @@ module.exports = {
   readJsonLines,
   readJsonLinesDetailed,
   summarize,
+  summarizeEUAIActArticle12,
 };

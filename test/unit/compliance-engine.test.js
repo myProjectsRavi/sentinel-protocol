@@ -2,7 +2,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { ComplianceEngine, readJsonLines, readJsonLinesDetailed } = require('../../src/governance/compliance-engine');
+const {
+  ComplianceEngine,
+  readJsonLines,
+  readJsonLinesDetailed,
+  summarizeEUAIActArticle12,
+} = require('../../src/governance/compliance-engine');
 
 function writeJsonl(filePath, entries) {
   const lines = entries.map((entry) => JSON.stringify(entry));
@@ -113,5 +118,55 @@ describe('compliance engine', () => {
     expect(report.summary.window_end).toBe('2026-02-19T00:00:02.000Z');
     expect(report.samples.blocked.length).toBeGreaterThan(0);
     expect(report.samples.upstream_errors.length).toBeGreaterThan(0);
+  });
+
+  test('generates machine-readable EU AI Act Article 12 report', () => {
+    const filePath = path.join(os.tmpdir(), `sentinel-compliance-${Date.now()}-eu-ai-act.jsonl`);
+    writeJsonl(filePath, [
+      {
+        timestamp: '2026-02-24T00:00:00.000Z',
+        correlation_id: 'corr-1',
+        decision: 'forwarded',
+        provider: 'openai',
+        reasons: ['monitor'],
+      },
+      {
+        timestamp: '2026-02-24T00:00:01.000Z',
+        correlation_id: 'corr-2',
+        decision: 'blocked_policy',
+        provider: 'anthropic',
+        reasons: ['injection_high'],
+        provenance_signature: 'sig-1',
+      },
+    ]);
+
+    const engine = new ComplianceEngine({
+      auditPath: filePath,
+      maxReadBytes: 4096,
+    });
+    const report = engine.generateEUAIActArticle12Evidence({ limit: 100 });
+
+    expect(report.framework).toBe('EU_AI_ACT_ARTICLE_12');
+    expect(report.article).toBe('Article 12');
+    expect(report.article_12.events_total).toBe(2);
+    expect(report.article_12.events_with_correlation_id).toBe(2);
+    expect(report.article_12.events_with_integrity_markers).toBe(1);
+    expect(typeof report.integrity.tail_sha256).toBe('string');
+  });
+
+  test('summarizes article 12 coverage counters deterministically', () => {
+    const summary = summarizeEUAIActArticle12([
+      {
+        correlation_id: 'a',
+        provider: 'openai',
+        reasons: ['ok'],
+        decision: 'blocked_policy',
+        token_watermark: 'wm',
+      },
+    ]);
+    expect(summary.events_total).toBe(1);
+    expect(summary.blocked_or_constrained_events).toBe(1);
+    expect(summary.events_with_integrity_markers).toBe(1);
+    expect(summary.coverage_ratio).toBe(1);
   });
 });

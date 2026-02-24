@@ -56,6 +56,7 @@
     "ci:bootstrap:npx": "node ./scripts/ci-validate-npx-bootstrap.js",
     "ci:init:wizard:smoke": "node ./scripts/ci-init-wizard-smoke.js",
     "ci:framework:detect:smoke": "node ./scripts/ci-framework-detect-smoke.js",
+    "ci:vscode:package": "node ./scripts/ci-vscode-package.js",
     "sbom:cyclonedx": "npm sbom --sbom-format=cyclonedx",
     "sbom:spdx": "npm sbom --sbom-format=spdx"
   },

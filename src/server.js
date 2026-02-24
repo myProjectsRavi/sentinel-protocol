@@ -1270,6 +1270,8 @@ class SentinelServer {
       dashboard_local_only: event.localOnly !== false,
       dashboard_auth_required: event.authRequired === true,
       dashboard_authenticated: event.authenticated === true,
+      dashboard_team: String(event.team || ''),
+      dashboard_team_header: String(event.teamHeader || ''),
     });
     this.writeStatus();
   }
@@ -3528,6 +3530,8 @@ class SentinelServer {
         port: dashboardConfig.port,
         allowRemote: dashboardConfig.allow_remote === true,
         authToken: dashboardConfig.auth_token,
+        teamTokens: dashboardConfig.team_tokens,
+        teamHeader: dashboardConfig.team_header,
         statusProvider: () => this.currentStatusPayload(),
         anomaliesProvider: () =>
           this.anomalyTelemetry?.isEnabled?.()
@@ -3543,6 +3547,27 @@ class SentinelServer {
               enabled: false,
               snapshots: [],
             },
+        forensicReplayProvider: ({ snapshotId = '', overrides = {} } = {}) => {
+          if (!this.forensicDebugger?.isEnabled?.()) {
+            return {
+              enabled: false,
+              error: 'FORENSIC_DEBUGGER_DISABLED',
+            };
+          }
+          const snapshot = snapshotId
+            ? this.forensicDebugger.getSnapshot(snapshotId, { includePayload: true })
+            : this.forensicDebugger.latestSnapshot({ includePayload: true });
+          if (!snapshot) {
+            return {
+              enabled: true,
+              error: 'FORENSIC_SNAPSHOT_NOT_FOUND',
+            };
+          }
+          return this.buildForensicReplay({
+            snapshot,
+            overrides: overrides && typeof overrides === 'object' ? overrides : {},
+          });
+        },
         accessLogger: (event) => this.recordDashboardAccess(event),
       });
       this.dashboardServer

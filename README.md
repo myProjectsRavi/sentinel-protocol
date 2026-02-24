@@ -78,6 +78,8 @@ Deployment model is simple:
 - Init wizard validation matrix: `docs/evidence/WIZARD_VALIDATION.md`
 - Framework detection matrix: `docs/evidence/FRAMEWORK_DETECT_MATRIX.md`
 - GitHub Action demo (`security-scan@v1`): `docs/evidence/GITHUB_ACTION_DEMO.md`
+- VS Code extension packaging proof: `docs/evidence/VSCODE_EXTENSION_VALIDATION.md`
+- Try-local playground evidence: `docs/evidence/TRY_SENTINEL_LOCAL.md`
 - Benchmark methodology: `docs/benchmarks/METHODOLOGY.md`
 - Competitor comparison page: `docs/benchmarks/COMPETITOR_COMPARISON.md`
 
@@ -261,7 +263,9 @@ Dashboard defaults:
 
 - localhost-only binding by default (`127.0.0.1`)
 - optional production auth token: `runtime.dashboard.auth_token`
-- if `runtime.dashboard.allow_remote=true`, auth token is mandatory
+- optional team-scoped RBAC tokens: `runtime.dashboard.team_tokens`
+- team selection header: `runtime.dashboard.team_header` (default `x-sentinel-dashboard-team`)
+- if `runtime.dashboard.allow_remote=true`, configure either `auth_token` or `team_tokens`
 
 ### 4. Route requests through Sentinel
 
@@ -396,6 +400,7 @@ sentinel red-team run --url http://127.0.0.1:8787 --target openai --report html 
 
 ```bash
 sentinel compliance report --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./soc2-evidence.json
+sentinel compliance report --framework eu-ai-act-article-12 --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-article12.json
 sentinel compliance evidence-vault --framework soc2 --audit-path ~/.sentinel/audit.jsonl --out ./evidence-packet.json
 sentinel threat graph --audit-path ~/.sentinel/audit.jsonl --format json --out ./threat-graph.json
 sentinel threat evolve-corpus --audit-path ~/.sentinel/audit.jsonl --out ./evolved-corpus.json
@@ -494,6 +499,8 @@ OpenAPI contract: `docs/openapi.yaml`
 - VS Code extension scaffold (local prompt scan command):
   - `extensions/vscode-sentinel/package.json`
   - `extensions/vscode-sentinel/extension.js`
+  - install from CI/release VSIX: `code --install-extension ./dist/sentinel-protocol-vscode-<version>.vsix`
+  - optional marketplace install: `code --install-extension myProjectsRavi.sentinel-protocol-vscode`
 - Python framework adapters (zero-dependency):
   - `python/sentinel_protocol_adapters/callbacks.py`
   - `examples/python-adapters-integration.py`
@@ -518,6 +525,8 @@ OpenAPI contract: `docs/openapi.yaml`
   - Python adapters: LangChain, LlamaIndex, CrewAI, AutoGen, LangGraph
 - EU AI Act evidence packet path:
   - `sentinel compliance evidence-vault --framework eu-ai-act --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-evidence.json`
+- EU AI Act Article 12 log report:
+  - `sentinel compliance report --framework eu-ai-act-article-12 --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-article12.json`
 - Token-level watermark verification endpoint:
   - `POST /_sentinel/watermark/verify`
 
@@ -542,6 +551,7 @@ sentinel stop
 # monitoring
 sentinel monitor
 sentinel compliance evidence-vault --framework eu-ai-act --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-evidence.json
+sentinel compliance report --framework eu-ai-act-article-12 --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-article12.json
 
 # MCP mode
 sentinel mcp

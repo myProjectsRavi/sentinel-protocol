@@ -88,6 +88,11 @@ Command:
 
 It scans selected editor text via local `/_sentinel/playground/analyze`.
 
+Install paths:
+
+- Marketplace: `code --install-extension myProjectsRavi.sentinel-protocol-vscode`
+- CI/release artifact: `code --install-extension ./dist/sentinel-protocol-vscode-<version>.vsix`
+
 ## Python Adapters (Zero Dependency)
 
 Files:

@@ -87,7 +87,44 @@ describe('config loader and migration', () => {
 
     expect(() => {
       loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
-    }).toThrow(/dashboard\.auth_token.*allow_remote=true/);
+    }).toThrow(/dashboard\.(auth_token|team_tokens).*allow_remote=true/);
+  });
+
+  test('accepts dashboard remote mode with team-scoped tokens', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.dashboard.enabled = true;
+    base.runtime.dashboard.allow_remote = true;
+    base.runtime.dashboard.auth_token = '';
+    base.runtime.dashboard.team_tokens = {
+      default: 'dash-team-token',
+      secops: 'dash-secops-token',
+    };
+    base.runtime.dashboard.team_header = 'x-sentinel-dashboard-team';
+    writeYamlConfig(configPath, base);
+
+    const loaded = loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    expect(loaded.config.runtime.dashboard.allow_remote).toBe(true);
+    expect(loaded.config.runtime.dashboard.team_tokens).toEqual({
+      default: 'dash-team-token',
+      secops: 'dash-secops-token',
+    });
+    expect(loaded.config.runtime.dashboard.team_header).toBe('x-sentinel-dashboard-team');
+  });
+
+  test('fails validation when dashboard team tokens are malformed', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-config-'));
+    const configPath = path.join(tmpDir, 'sentinel.yaml');
+
+    const base = yaml.load(fs.readFileSync(PROJECT_DEFAULT_CONFIG, 'utf8'));
+    base.runtime.dashboard.team_tokens = [];
+    writeYamlConfig(configPath, base);
+
+    expect(() => {
+      loadAndValidateConfig({ configPath, allowMigration: false, writeMigrated: false });
+    }).toThrow(/runtime\.dashboard\.team_tokens/);
   });
 
   test('fails validation on invalid websocket mode', () => {

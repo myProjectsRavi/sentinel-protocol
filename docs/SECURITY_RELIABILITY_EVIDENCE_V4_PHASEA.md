@@ -44,7 +44,11 @@
   - `sentinel watch` monitor-first passive mode
   - interactive playground (`/_sentinel/playground`)
   - framework adapters (LangChain/LlamaIndex/CrewAI/AutoGen/LangGraph)
+  - VS Code extension packaging path (`npm run ci:vscode:package`, `dist/*.vsix`)
   - token watermark envelopes (`x-sentinel-token-watermark`)
+  - dashboard team-scoped RBAC (`runtime.dashboard.team_tokens`, `runtime.dashboard.team_header`)
+  - dashboard forensic replay API (`POST /api/forensics/replay`)
+  - machine-readable EU AI Act Article 12 report (`sentinel compliance report --framework eu-ai-act-article-12`)
 - Runtime wiring is in live stages (policy, agentic, audit), not constructor-only.
 - Strict schema/default contract with unknown-key rejection for all new runtime blocks.
 
@@ -68,6 +72,8 @@
   - `sbom.spdx.json`
 - AIBOM:
   - `aibom.json`
+- VS Code extension package:
+  - `dist/*.vsix`
 - Perf reports:
   - `metrics/p0-engine-perf-*.json`
   - `metrics/p1-engine-perf-*.json`

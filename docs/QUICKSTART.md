@@ -277,7 +277,9 @@ Web dashboard auth/binding defaults:
 
 - Bind host defaults to `127.0.0.1` (localhost-only).
 - Optional production auth token: `runtime.dashboard.auth_token`.
-- If `runtime.dashboard.allow_remote=true`, a non-empty `runtime.dashboard.auth_token` is required.
+- Optional team-scoped tokens: `runtime.dashboard.team_tokens`.
+- Team routing header: `runtime.dashboard.team_header` (default `x-sentinel-dashboard-team`).
+- If `runtime.dashboard.allow_remote=true`, configure `auth_token` or `team_tokens`.
 
 ## 10. Check status
 

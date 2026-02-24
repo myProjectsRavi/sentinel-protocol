@@ -24,3 +24,17 @@ Start Sentinel first:
 ```bash
 npx --yes --package sentinel-protocol sentinel watch --profile minimal
 ```
+
+## Install
+
+Marketplace path (when published):
+
+```bash
+code --install-extension myProjectsRavi.sentinel-protocol-vscode
+```
+
+VSIX path (always available from CI/release artifacts):
+
+```bash
+code --install-extension ./dist/sentinel-protocol-vscode-<version>.vsix
+```

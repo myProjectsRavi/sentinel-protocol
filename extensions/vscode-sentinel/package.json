@@ -4,6 +4,11 @@
   "description": "Local AI prompt security scan inside VS Code using Sentinel Playground API.",
   "version": "0.1.0",
   "publisher": "myProjectsRavi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myProjectsRavi/sentinel-protocol.git"
+  },
   "engines": {
     "vscode": "^1.92.0"
   },

@@ -208,6 +208,8 @@ runtime:
     port: 8788
     auth_token: ""
     allow_remote: false
+    team_tokens: {}
+    team_header: x-sentinel-dashboard-team
   posture_scoring:
     enabled: true
     include_counters: true

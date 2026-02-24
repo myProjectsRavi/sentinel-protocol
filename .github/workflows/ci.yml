@@ -48,6 +48,7 @@ jobs:
       - run: npm run ci:bootstrap:npx
       - run: npm run ci:init:wizard:smoke
       - run: npm run ci:framework:detect:smoke
+      - run: npm run ci:vscode:package
       - run: npx jest --runInBand .github/actions/security-scan/test/action.test.js
       - run: node ./cli/sentinel.js aibom export --format json --out aibom.json
       - run: npm run sbom:cyclonedx > sbom.cyclonedx.json
@@ -59,6 +60,7 @@ jobs:
             sbom.cyclonedx.json
             sbom.spdx.json
             aibom.json
+            dist/*.vsix
             metrics/p0-engine-perf-*.json
             metrics/p1-engine-perf-*.json
             metrics/p2-engine-perf-*.json

@@ -982,8 +982,8 @@ const complianceCommand = program.command('compliance').description('Generate co
 
 complianceCommand
   .command('report')
-  .description('Generate SOC2/GDPR/HIPAA summary evidence report')
-  .option('--framework <name>', 'soc2 | gdpr | hipaa', 'soc2')
+  .description('Generate SOC2/GDPR/HIPAA/EU-AI-Act summary evidence report')
+  .option('--framework <name>', 'soc2 | gdpr | hipaa | eu-ai-act-article-12', 'soc2')
   .option('--audit-path <path>', 'Audit log path', AUDIT_LOG_PATH)
   .option('--limit <count>', 'Max JSONL events to inspect', '200000')
   .option('--out <path>', 'Write report JSON to path')
@@ -1001,6 +1001,8 @@ complianceCommand
         report = engine.generateGDPREvidence({ limit: normalizedLimit });
       } else if (framework === 'hipaa') {
         report = engine.generateHIPAAEvidence({ limit: normalizedLimit });
+      } else if (framework === 'eu-ai-act' || framework === 'eu-ai-act-article-12' || framework === 'article-12') {
+        report = engine.generateEUAIActArticle12Evidence({ limit: normalizedLimit });
       } else {
         report = engine.generateSOC2Evidence({ limit: normalizedLimit });
       }

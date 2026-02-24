@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 
 const { LogTailer, summarizePIITypes } = require('./tui');
@@ -26,9 +27,41 @@ function createRequestId() {
   return `dash-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createDashboardAccessGuard({ allowRemote, authToken, accessLogger }) {
+function normalizeTeamTokens(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
+  }
+  const out = {};
+  for (const [rawTeam, rawToken] of Object.entries(input)) {
+    const team = String(rawTeam || '').trim().toLowerCase().slice(0, 64);
+    const token = String(rawToken || '').trim();
+    if (!team || !token) {
+      continue;
+    }
+    out[team] = token.slice(0, 4096);
+  }
+  return out;
+}
+
+function safeTokenEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''), 'utf8');
+  const rightBuffer = Buffer.from(String(right || ''), 'utf8');
+  if (leftBuffer.length !== rightBuffer.length || leftBuffer.length === 0) {
+    return false;
+  }
+  try {
+    return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  } catch {
+    return false;
+  }
+}
+
+function createDashboardAccessGuard({ allowRemote, authToken, teamTokens, teamHeader, accessLogger }) {
   const enforceLocalOnly = allowRemote !== true;
-  const token = String(authToken || '');
+  const token = String(authToken || '').trim();
+  const scopedTokens = normalizeTeamTokens(teamTokens);
+  const scopedTokenCount = Object.keys(scopedTokens).length;
+  const scopedHeader = String(teamHeader || 'x-sentinel-dashboard-team').trim().toLowerCase() || 'x-sentinel-dashboard-team';
   const loggerFn = typeof accessLogger === 'function' ? accessLogger : null;
   return (req, res, next) => {
     const startedAt = Date.now();
@@ -36,9 +69,16 @@ function createDashboardAccessGuard({ allowRemote, authToken, accessLogger }) {
     const remoteAddr = req.socket?.remoteAddress || req.ip;
     const reqPath = String(req.path || req.url || '/');
     const method = String(req.method || 'GET').toUpperCase();
-    const authRequired = token.length > 0;
-    const providedToken = (req.headers || {})['x-sentinel-dashboard-token'];
-    const authenticated = !authRequired || providedToken === token;
+    const authRequired = token.length > 0 || scopedTokenCount > 0;
+    const providedToken = String((req.headers || {})['x-sentinel-dashboard-token'] || '');
+    const requestedTeam = String((req.headers || {})[scopedHeader] || '').trim().toLowerCase();
+    const selectedTeam = scopedTokenCount > 0
+      ? (requestedTeam || (Object.prototype.hasOwnProperty.call(scopedTokens, 'default') ? 'default' : ''))
+      : '';
+    const expectedToken = selectedTeam && scopedTokenCount > 0 ? scopedTokens[selectedTeam] : '';
+    const authenticated = scopedTokenCount > 0
+      ? safeTokenEqual(providedToken, expectedToken)
+      : (!authRequired || safeTokenEqual(providedToken, token));
     let logged = false;
     const logAccess = ({ allowed, reason, statusCode }) => {
       if (logged || !loggerFn) {
@@ -54,6 +94,8 @@ function createDashboardAccessGuard({ allowRemote, authToken, accessLogger }) {
           localOnly: enforceLocalOnly,
           authRequired,
           authenticated,
+          team: selectedTeam || '',
+          teamHeader: scopedHeader,
           allowed,
           reason,
           statusCode,
@@ -80,12 +122,21 @@ function createDashboardAccessGuard({ allowRemote, authToken, accessLogger }) {
       return;
     }
     if (authRequired && !authenticated) {
+      let reason = 'dashboard_auth_failed';
+      let error = 'DASHBOARD_AUTH_REQUIRED';
+      if (scopedTokenCount > 0 && !selectedTeam) {
+        reason = 'dashboard_team_required';
+        error = 'DASHBOARD_TEAM_REQUIRED';
+      } else if (scopedTokenCount > 0 && !expectedToken) {
+        reason = 'dashboard_team_unknown';
+        error = 'DASHBOARD_TEAM_UNKNOWN';
+      }
       logAccess({
         allowed: false,
-        reason: 'dashboard_auth_failed',
+        reason,
         statusCode: 401,
       });
-      res.status(401).json({ error: 'DASHBOARD_AUTH_REQUIRED' });
+      res.status(401).json({ error });
       return;
     }
     res.setHeader('x-content-type-options', 'nosniff');
@@ -189,12 +240,87 @@ const DASHBOARD_HTML = `<!doctype html>
       </div>
     </div>
 
-    <div class="card" style="margin-top:10px;">
-      <div class="panel-title">Hints</div>
-      <div class="muted">Use <code>sentinel forensic replay --snapshot ... --overrides ...</code> for what-if analysis and <code>/_sentinel/forensic/replay</code> for live runtime replay.</div>
+    <div class="row">
+      <div class="card">
+        <div class="panel-title">Forensic Replay</div>
+        <div class="muted" style="margin-bottom:8px;">Select a snapshot and run what-if thresholds without changing live policy.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin-bottom:8px;">
+          <select id="replaySnapshot"></select>
+          <input id="replayInjectionThreshold" placeholder="injection threshold" />
+          <input id="replayRebuffThreshold" placeholder="prompt rebuff threshold" />
+          <button id="replayRun">Replay</button>
+        </div>
+        <pre id="replayResult" class="muted" style="margin:0;white-space:pre-wrap;max-height:220px;overflow:auto;"></pre>
+      </div>
+      <div class="card">
+        <div class="panel-title">Hints</div>
+        <div class="muted">Use <code>sentinel forensic replay --snapshot ... --overrides ...</code> for offline what-if analysis and <code>/_sentinel/forensic/replay</code> for direct runtime replay.</div>
+      </div>
     </div>
   </div>
   <script>
+    function toNumberOrNull(value) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function populateReplaySnapshots(forensics) {
+      const select = document.getElementById('replaySnapshot');
+      const previous = String(select.value || '');
+      select.innerHTML = '';
+      for (const item of (forensics.snapshots || []).slice(0, 50)) {
+        const option = document.createElement('option');
+        option.value = String(item.id || '');
+        option.textContent = String(item.id || '') + ' :: ' + String(item.decision || 'unknown');
+        select.appendChild(option);
+      }
+      if (previous && Array.from(select.options).some((option) => option.value === previous)) {
+        select.value = previous;
+      }
+    }
+
+    async function runReplay() {
+      const resultEl = document.getElementById('replayResult');
+      const snapshotId = String(document.getElementById('replaySnapshot').value || '');
+      const injectionThreshold = toNumberOrNull(document.getElementById('replayInjectionThreshold').value);
+      const promptRebuffThreshold = toNumberOrNull(document.getElementById('replayRebuffThreshold').value);
+
+      const payload = {
+        snapshot_id: snapshotId || undefined,
+        overrides: {},
+      };
+      if (injectionThreshold !== null) {
+        payload.overrides.injection_threshold = injectionThreshold;
+      }
+      if (promptRebuffThreshold !== null) {
+        payload.overrides.prompt_rebuff_threshold = promptRebuffThreshold;
+      }
+
+      resultEl.textContent = 'Running replay...';
+      try {
+        const response = await fetch('/api/forensics/replay', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          resultEl.textContent = 'Replay failed: ' + String(body.error || response.status);
+          return;
+        }
+        const replay = await response.json();
+        const deltaKeys = Array.isArray(replay?.diff?.deltas) ? replay.diff.deltas.map((item) => item.key) : [];
+        resultEl.textContent = JSON.stringify({
+          snapshot_id: replay.snapshot_id,
+          changed: replay?.diff?.changed === true,
+          delta_keys: deltaKeys,
+          replayed_at: replay?.replay?.replayed_at || null,
+        }, null, 2);
+      } catch (error) {
+        resultEl.textContent = 'Replay failed: ' + String(error && error.message ? error.message : error);
+      }
+    }
+
     async function tick() {
       const [statusRes, recentRes, anomalyRes, forensicRes] = await Promise.all([
         fetch('/api/status', { cache: 'no-store' }),
@@ -226,7 +352,7 @@ const DASHBOARD_HTML = `<!doctype html>
       for (const row of recent.entries || []) {
         const tr = document.createElement('tr');
         const statusClass = Number(row.response_status || 0) >= 400 ? 'danger' : 'ok';
-        tr.innerHTML = '<td>' + (row.timestamp || '').split('T')[1]?.replace('Z','') + '</td>'
+        tr.innerHTML = '<td>' + (row.timestamp || '').split('T')[1]?.replace('Z', '') + '</td>'
           + '<td class="' + statusClass + '">' + String(row.response_status || '--') + '</td>'
           + '<td>' + String(row.decision || '--') + '</td>'
           + '<td>' + ((row.reasons || []).join(',') || '--') + '</td>';
@@ -258,8 +384,13 @@ const DASHBOARD_HTML = `<!doctype html>
           + '<td>' + String(item.reason || '--') + '</td>';
         forensicBody.appendChild(tr);
       }
+
+      populateReplaySnapshots(forensics);
     }
     tick();
+    document.getElementById('replayRun').addEventListener('click', () => {
+      runReplay();
+    });
     setInterval(tick, 1000);
   </script>
 </body>
@@ -271,6 +402,8 @@ class DashboardServer {
     this.port = Number(options.port || 8788);
     this.allowRemote = options.allowRemote === true;
     this.authToken = String(options.authToken || '');
+    this.teamTokens = normalizeTeamTokens(options.teamTokens);
+    this.teamHeader = String(options.teamHeader || 'x-sentinel-dashboard-team').trim().toLowerCase() || 'x-sentinel-dashboard-team';
     this.statusProvider = typeof options.statusProvider === 'function' ? options.statusProvider : () => ({});
     this.anomaliesProvider = typeof options.anomaliesProvider === 'function'
       ? options.anomaliesProvider
@@ -278,6 +411,9 @@ class DashboardServer {
     this.forensicsProvider = typeof options.forensicsProvider === 'function'
       ? options.forensicsProvider
       : () => ({ enabled: false, snapshots: [] });
+    this.forensicReplayProvider = typeof options.forensicReplayProvider === 'function'
+      ? options.forensicReplayProvider
+      : () => ({ enabled: false, error: 'FORENSIC_DEBUGGER_DISABLED' });
     this.accessLogger = typeof options.accessLogger === 'function' ? options.accessLogger : null;
     this.auditTailer = new LogTailer(options.auditPath || AUDIT_LOG_PATH, {
       maxEntries: Number(options.maxAuditEntries || 300),
@@ -286,9 +422,14 @@ class DashboardServer {
     this.app = express();
 
     this.app.disable('x-powered-by');
+    this.app.use(express.json({
+      limit: '64kb',
+    }));
     this.app.use(createDashboardAccessGuard({
       allowRemote: this.allowRemote,
       authToken: this.authToken,
+      teamTokens: this.teamTokens,
+      teamHeader: this.teamHeader,
       accessLogger: this.accessLogger,
     }));
 
@@ -318,6 +459,32 @@ class DashboardServer {
 
     this.app.get('/api/forensics', (req, res) => {
       res.json(this.forensicsProvider());
+    });
+
+    this.app.post('/api/forensics/replay', (req, res) => {
+      const payload = req.body && typeof req.body === 'object' ? req.body : {};
+      const snapshotId = String(payload.snapshot_id || '');
+      const overrides = payload.overrides && typeof payload.overrides === 'object'
+        ? payload.overrides
+        : {};
+      const result = this.forensicReplayProvider({
+        snapshotId,
+        overrides,
+      });
+      if (!result || result.enabled === false) {
+        res.status(404).json({
+          error: result?.error || 'FORENSIC_DEBUGGER_DISABLED',
+        });
+        return;
+      }
+      if (result.error) {
+        const status = result.error === 'FORENSIC_SNAPSHOT_NOT_FOUND' ? 404 : 400;
+        res.status(status).json({
+          error: result.error,
+        });
+        return;
+      }
+      res.json(result);
     });
 
     this.app.get('/health', (req, res) => {
@@ -350,4 +517,5 @@ module.exports = {
   isLocalAddress,
   estimateSavings,
   createDashboardAccessGuard,
+  normalizeTeamTokens,
 };

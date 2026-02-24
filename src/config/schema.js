@@ -286,7 +286,15 @@ const SANDBOX_EXPERIMENTAL_KEYS = new Set([
   'observability',
 ]);
 const SANDBOX_EXPERIMENTAL_MODES = new Set(['monitor', 'block']);
-const DASHBOARD_KEYS = new Set(['enabled', 'host', 'port', 'auth_token', 'allow_remote']);
+const DASHBOARD_KEYS = new Set([
+  'enabled',
+  'host',
+  'port',
+  'auth_token',
+  'allow_remote',
+  'team_tokens',
+  'team_header',
+]);
 const POSTURE_SCORING_KEYS = new Set(['enabled', 'include_counters', 'warn_threshold', 'critical_threshold']);
 const WEBSOCKET_KEYS = new Set(['enabled', 'mode', 'connect_timeout_ms', 'idle_timeout_ms', 'max_connections']);
 const WEBSOCKET_MODES = new Set(['monitor', 'enforce']);
@@ -1754,6 +1762,24 @@ function applyDefaults(config) {
   dashboard.port = Number(dashboard.port ?? 8788);
   dashboard.auth_token = String(dashboard.auth_token || process.env.SENTINEL_DASHBOARD_TOKEN || '');
   dashboard.allow_remote = dashboard.allow_remote === true;
+  const rawDashboardTokens =
+    dashboard.team_tokens && typeof dashboard.team_tokens === 'object' && !Array.isArray(dashboard.team_tokens)
+      ? dashboard.team_tokens
+      : {};
+  const normalizedDashboardTokens = {};
+  for (const [rawTeam, rawToken] of Object.entries(rawDashboardTokens).slice(0, 128)) {
+    const team = String(rawTeam || '').trim().toLowerCase().slice(0, 64);
+    const token = String(rawToken || '').trim();
+    if (!team || !token) {
+      continue;
+    }
+    normalizedDashboardTokens[team] = token.slice(0, 4096);
+  }
+  dashboard.team_tokens = normalizedDashboardTokens;
+  const defaultDashboardTeamHeader = 'x-sentinel-dashboard-team';
+  dashboard.team_header = String(dashboard.team_header || defaultDashboardTeamHeader)
+    .trim()
+    .toLowerCase() || defaultDashboardTeamHeader;
 
   normalized.runtime.posture_scoring = normalized.runtime.posture_scoring || {};
   const postureScoring = normalized.runtime.posture_scoring;
@@ -3780,8 +3806,38 @@ function validateConfigShape(config) {
     );
     assertType(typeof dashboard.auth_token === 'string', '`runtime.dashboard.auth_token` must be string', details);
     assertType(typeof dashboard.allow_remote === 'boolean', '`runtime.dashboard.allow_remote` must be boolean', details);
-    if (dashboard.allow_remote === true && String(dashboard.auth_token || '').length === 0) {
-      details.push('`runtime.dashboard.auth_token` must be non-empty when `runtime.dashboard.allow_remote=true`');
+    assertType(
+      dashboard.team_tokens && typeof dashboard.team_tokens === 'object' && !Array.isArray(dashboard.team_tokens),
+      '`runtime.dashboard.team_tokens` must be object',
+      details
+    );
+    if (dashboard.team_tokens && typeof dashboard.team_tokens === 'object' && !Array.isArray(dashboard.team_tokens)) {
+      for (const [team, token] of Object.entries(dashboard.team_tokens)) {
+        assertType(
+          typeof team === 'string' && team.trim().length > 0,
+          '`runtime.dashboard.team_tokens` keys must be non-empty strings',
+          details
+        );
+        assertType(
+          typeof token === 'string' && token.length > 0,
+          `runtime.dashboard.team_tokens.${team} must be non-empty string`,
+          details
+        );
+      }
+    }
+    assertType(
+      typeof dashboard.team_header === 'string' && dashboard.team_header.length > 0,
+      '`runtime.dashboard.team_header` must be non-empty string',
+      details
+    );
+    if (
+      dashboard.allow_remote === true
+      && String(dashboard.auth_token || '').length === 0
+      && Object.keys(dashboard.team_tokens || {}).length === 0
+    ) {
+      details.push(
+        '`runtime.dashboard.auth_token` or `runtime.dashboard.team_tokens` must be configured when `runtime.dashboard.allow_remote=true`'
+      );
     }
   }
 
