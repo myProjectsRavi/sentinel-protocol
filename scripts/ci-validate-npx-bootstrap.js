@@ -27,16 +27,39 @@ function readJsonIfExists(filePath) {
   }
 }
 
-async function waitForServerReady(statusPath, timeoutMs = 25000) {
+function summarizeOutput(output = []) {
+  const joined = output.join('');
+  if (!joined) {
+    return '';
+  }
+  const lines = joined.split(/\r?\n/).filter(Boolean);
+  return lines.slice(-40).join('\n');
+}
+
+async function waitForServerReady({
+  statusPath,
+  child,
+  output,
+  timeoutMs = 90000,
+}) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const payload = readJsonIfExists(statusPath);
     if (payload?.service_status === 'running') {
       return payload;
     }
+    if (child && Number.isInteger(child.exitCode)) {
+      const details = summarizeOutput(output);
+      throw new Error(
+        `sentinel bootstrap process exited before running status (exitCode=${child.exitCode})${
+          details ? `\n${details}` : ''
+        }`
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error('sentinel start timeout waiting for running status');
+  const details = summarizeOutput(output);
+  throw new Error(`sentinel start timeout waiting for running status${details ? `\n${details}` : ''}`);
 }
 
 function killSpawnedProcess(child, signal) {
@@ -163,7 +186,11 @@ async function main() {
     child.stderr.on('data', (chunk) => output.push(chunk.toString('utf8')));
 
     const statusPath = path.join(sentinelHome, 'status.json');
-    await waitForServerReady(statusPath);
+    await waitForServerReady({
+      statusPath,
+      child,
+      output,
+    });
     if (!fs.existsSync(configPath)) {
       throw new Error(`expected config not created: ${configPath}`);
     }

@@ -96,6 +96,7 @@ const WORKER_POOL_KEYS = new Set([
   'embed_task_timeout_ms',
 ]);
 const RATE_LIMITER_KEYS = new Set([
+  'enabled',
   'default_window_ms',
   'default_limit',
   'default_burst',
@@ -1396,6 +1397,7 @@ function applyDefaults(config) {
 
   normalized.runtime.rate_limiter = normalized.runtime.rate_limiter || {};
   const rateLimiter = normalized.runtime.rate_limiter;
+  rateLimiter.enabled = rateLimiter.enabled !== false;
   rateLimiter.default_window_ms = Number(rateLimiter.default_window_ms ?? 60 * 1000);
   rateLimiter.default_limit = Number(rateLimiter.default_limit ?? 60);
   rateLimiter.default_burst = Number(rateLimiter.default_burst ?? rateLimiter.default_limit);
@@ -2797,6 +2799,11 @@ function validateConfigShape(config) {
   const rateLimiter = runtime.rate_limiter || {};
   if (runtime.rate_limiter !== undefined) {
     assertNoUnknownKeys(rateLimiter, RATE_LIMITER_KEYS, 'runtime.rate_limiter', details);
+    assertType(
+      rateLimiter.enabled === undefined || typeof rateLimiter.enabled === 'boolean',
+      '`runtime.rate_limiter.enabled` must be boolean',
+      details
+    );
     assertType(
       Number.isInteger(rateLimiter.default_window_ms) && rateLimiter.default_window_ms > 0,
       '`runtime.rate_limiter.default_window_ms` must be integer > 0',
