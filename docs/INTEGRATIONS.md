@@ -48,6 +48,52 @@ llm = LLM(
 - `x-sentinel-target: google`
 - `x-sentinel-target: custom` with `x-sentinel-custom-url`
 
+## Zero-Code Passive Mode
+
+Run monitor-first proxy + dashboard + framework hints:
+
+```bash
+npx --yes --package sentinel-protocol sentinel watch --profile minimal
+```
+
+Then point any SDK base URL at:
+
+```text
+http://127.0.0.1:8787/v1
+```
+
+Playground UI:
+
+```text
+http://127.0.0.1:8787/_sentinel/playground
+```
+
+## VS Code Extension (Scaffold)
+
+Files:
+
+- `extensions/vscode-sentinel/package.json`
+- `extensions/vscode-sentinel/extension.js`
+
+Command:
+
+- `Sentinel: Scan Prompt`
+
+It scans selected editor text via local `/_sentinel/playground/analyze`.
+
+## Python Adapters (Zero Dependency)
+
+Files:
+
+- `python/sentinel_protocol_adapters/callbacks.py`
+- `examples/python-adapters-integration.py`
+
+Adapters:
+
+- `LangChainSentinelCallbackHandler`
+- `LlamaIndexSentinelCallback`
+- `CrewAISentinelHook`
+
 ## MCP (Claude Desktop / Cursor)
 
 Run Sentinel MCP server:

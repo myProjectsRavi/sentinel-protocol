@@ -25,6 +25,12 @@
   - `sentinel init --config <path>` explicit config path support
   - interactive init wizard (TTY-only) with 3 prompts (provider/framework/security level)
   - framework auto-detect snippets for `express|fastify|nextjs|koa|hono|nestjs`
+  - new `sentinel watch` monitor-first passive proxy command with dashboard + setup hints
+- Interactive web playground:
+  - `GET /_sentinel/playground` (UI)
+  - `POST /_sentinel/playground/analyze` (deterministic local multi-engine analysis)
+- VS Code extension scaffold for local prompt scanning: `extensions/vscode-sentinel/`
+- Python adapter package for LangChain/LlamaIndex/CrewAI callbacks: `python/sentinel_protocol_adapters/`
 - Lazy optional-engine loading with runtime visibility counters and status output.
 - Cost optimizer memory-budget extensions:
   - hard RSS cap (`memory_hard_cap_bytes`)

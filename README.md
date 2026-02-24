@@ -30,6 +30,12 @@ npx --yes --package sentinel-protocol sentinel doctor
 npx --yes --package sentinel-protocol sentinel start --dashboard
 ```
 
+Passive monitor-first mode (no app code changes required):
+
+```bash
+npx --yes --package sentinel-protocol sentinel watch --profile minimal
+```
+
 Interactive onboarding (TTY mode, 3 prompts only):
 
 ```bash
@@ -227,6 +233,12 @@ npx --yes --package sentinel-protocol sentinel doctor
 npx --yes --package sentinel-protocol sentinel start --dashboard
 ```
 
+Or run passive watch mode (monitor + dashboard + setup hints):
+
+```bash
+npx --yes --package sentinel-protocol sentinel watch --profile minimal
+```
+
 By default Sentinel runs at:
 
 ```text
@@ -237,6 +249,12 @@ Dashboard (when enabled):
 
 ```text
 http://127.0.0.1:8788
+```
+
+Playground:
+
+```text
+http://127.0.0.1:8787/_sentinel/playground
 ```
 
 Dashboard defaults:
@@ -461,8 +479,19 @@ Sentinel supports websocket interception (Phase A) and streaming protections:
 - `GET /_sentinel/threat-intel`
 - `GET /_sentinel/zk-config`
 - `POST /_sentinel/adversarial-eval/run`
+- `GET /_sentinel/playground`
+- `POST /_sentinel/playground/analyze`
 
 OpenAPI contract: `docs/openapi.yaml`
+
+## Developer Accelerators (Phase 1)
+
+- VS Code extension scaffold (local prompt scan command):
+  - `extensions/vscode-sentinel/package.json`
+  - `extensions/vscode-sentinel/extension.js`
+- Python framework adapters (zero-dependency):
+  - `python/sentinel_protocol_adapters/callbacks.py`
+  - `examples/python-adapters-integration.py`
 
 ## CLI Reference (Most Used)
 
@@ -471,6 +500,7 @@ OpenAPI contract: `docs/openapi.yaml`
 sentinel init
 sentinel start --dashboard
 sentinel bootstrap --profile minimal --dashboard
+sentinel watch --profile minimal
 
 # safety and diagnostics
 sentinel doctor

@@ -84,6 +84,31 @@ function createFrameworkCallbacks(server, options = {}) {
         },
       };
     },
+    crewaiCallback() {
+      return {
+        async onTaskStart(task = {}, runId) {
+          emit('agent.start', {
+            framework: 'crewai',
+            run_id: runId || task.runId || null,
+            task: String(task.description || task.task || '').slice(0, 1024),
+          });
+        },
+        async onTaskComplete(result = {}, runId) {
+          emit('agent.complete', {
+            framework: 'crewai',
+            run_id: runId || result.runId || null,
+            result_preview: String(result.output || result.result || '').slice(0, 1024),
+          });
+        },
+        async onTaskError(error, runId) {
+          emit('agent.error', {
+            framework: 'crewai',
+            run_id: runId || null,
+            error: String(error?.message || error || 'unknown_error'),
+          });
+        },
+      };
+    },
   };
 }
 

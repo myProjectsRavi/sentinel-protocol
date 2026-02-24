@@ -41,6 +41,9 @@ function createSentinel(config, options = {}) {
     llamaIndexCallback() {
       return frameworkCallbacks.llamaIndexCallback();
     },
+    crewaiCallback() {
+      return frameworkCallbacks.crewaiCallback();
+    },
     start() {
       server.start();
       return server;

@@ -164,9 +164,16 @@ export interface EmbeddedLlamaIndexCallback {
   onError(error: unknown, meta?: Record<string, unknown>): Promise<void>;
 }
 
+export interface EmbeddedCrewAICallback {
+  onTaskStart(task?: Record<string, unknown>, runId?: string): Promise<void>;
+  onTaskComplete(result?: Record<string, unknown>, runId?: string): Promise<void>;
+  onTaskError(error: unknown, runId?: string): Promise<void>;
+}
+
 export interface EmbeddedFrameworkCallbacks {
   langchainCallback(): EmbeddedLangChainCallback;
   llamaIndexCallback(): EmbeddedLlamaIndexCallback;
+  crewaiCallback(): EmbeddedCrewAICallback;
 }
 
 export interface EmbeddedSentinel {
@@ -178,6 +185,7 @@ export interface EmbeddedSentinel {
   frameworkCallbacks(): EmbeddedFrameworkCallbacks;
   langchainCallback(): EmbeddedLangChainCallback;
   llamaIndexCallback(): EmbeddedLlamaIndexCallback;
+  crewaiCallback(): EmbeddedCrewAICallback;
   start(): HttpServer;
   stop(): Promise<void>;
   scan(payload: unknown, requestHeaders?: Record<string, string>): Promise<EmbeddedScanResult>;

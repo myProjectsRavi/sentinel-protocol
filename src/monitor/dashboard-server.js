@@ -134,6 +134,7 @@ const DASHBOARD_HTML = `<!doctype html>
 <body>
   <div class="wrap">
     <h1>Sentinel Live Matrix</h1>
+    <div class="k" style="margin-bottom:10px;">Playground: <a href="http://127.0.0.1:8787/_sentinel/playground" style="color:#9ed9ff;">/_sentinel/playground</a></div>
     <div class="grid">
       <div class="card"><div class="k">Requests</div><div id="req" class="v">0</div></div>
       <div class="card"><div class="k">Blocked</div><div id="blk" class="v">0</div></div>

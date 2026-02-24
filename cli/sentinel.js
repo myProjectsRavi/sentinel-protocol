@@ -320,6 +320,51 @@ program
   });
 
 program
+  .command('watch')
+  .description('Passive monitor-first proxy mode with live dashboard and framework wiring hints')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--port <port>', 'Port override')
+  .option('--profile <name>', 'Runtime profile: minimal|standard|paranoid', 'minimal')
+  .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
+  .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
+  .action(async (options) => {
+    try {
+      const configPath = options.config || DEFAULT_CONFIG_PATH;
+      const initResult = ensureDefaultConfigExists(configPath, false);
+      const shutdownTimeoutMs = Number(options.shutdownTimeoutMs);
+      const result = startServer({
+        configPath,
+        port: options.port,
+        modeOverride: 'monitor',
+        dashboardEnabled: true,
+        profile: options.profile,
+        shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,
+        runDoctor: !options.skipDoctor,
+      });
+
+      console.log(initResult.created ? `Created config: ${configPath}` : `Using config: ${configPath}`);
+      console.log('Watch mode active: monitor-first passive proxy with dashboard enabled.');
+      console.log('Set provider SDK baseURL to http://127.0.0.1:8787/v1 and header x-sentinel-target=<provider>.');
+      console.log('Dashboard: http://127.0.0.1:8788');
+
+      if (result.doctor) {
+        const summary = result.doctor.summary;
+        console.log(`Doctor summary: pass=${summary.pass} warn=${summary.warn} fail=${summary.fail}`);
+      }
+      if (result.loaded?.profile?.name) {
+        console.log(
+          `Profile loaded: ${result.loaded.profile.name} (${result.loaded.profile.enabledRuntimeEngines}/${result.loaded.profile.totalRuntimeEngines} runtime engines enabled)`
+        );
+      }
+
+      await printAutoRuntimeHints(detectFramework(process.cwd()) || 'none');
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command('bootstrap')
   .description('Initialize config, run doctor checks, and start Sentinel (one-command path)')
   .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)

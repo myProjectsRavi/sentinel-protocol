@@ -158,6 +158,169 @@ const DEFAULT_SHED_ENGINE_ORDER = Object.freeze([
   'policy_gradient_analyzer',
 ]);
 
+const PLAYGROUND_HTML = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel Playground</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #13293d, #080d14 55%);
+      color: #d9ecff;
+    }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    p.sub { margin: 0 0 16px; color: #a7bfd8; }
+    textarea {
+      width: 100%;
+      min-height: 170px;
+      border-radius: 10px;
+      border: 1px solid #2f4a67;
+      background: #0c1520;
+      color: #d9ecff;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    .bar { display: flex; gap: 10px; margin: 12px 0 14px; align-items: center; }
+    button {
+      background: #0f5ed7;
+      border: none;
+      color: white;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: #146af0; }
+    .muted { color: #98b2ce; font-size: 13px; }
+    .cards {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .card {
+      border: 1px solid #2d4764;
+      background: #0c1520;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .k { font-size: 12px; color: #95b2d0; }
+    .v { margin-top: 6px; font-weight: 700; font-size: 18px; }
+    .table-wrap {
+      margin-top: 14px;
+      border: 1px solid #2d4764;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #1f3449; text-align: left; }
+    th { color: #94b4d5; background: #0c1520; }
+    .yes { color: #ff9494; font-weight: 700; }
+    .no { color: #89f0b0; font-weight: 700; }
+    pre {
+      margin-top: 14px;
+      border: 1px solid #2d4764;
+      border-radius: 10px;
+      padding: 10px;
+      background: #0c1520;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Sentinel Playground</h1>
+    <p class="sub">Paste prompt/context and run local deterministic analysis across active Sentinel engines.</p>
+    <textarea id="prompt" placeholder="Paste prompt, tool_calls JSON, or model output to inspect..."></textarea>
+    <div class="bar">
+      <button id="analyze" type="button">Analyze</button>
+      <span class="muted">No external API calls. Local analysis only.</span>
+    </div>
+    <div class="cards">
+      <div class="card"><div class="k">Engines Evaluated</div><div id="engines" class="v">0</div></div>
+      <div class="card"><div class="k">Detections</div><div id="detections" class="v">0</div></div>
+      <div class="card"><div class="k">Block-Eligible</div><div id="blocks" class="v">0</div></div>
+      <div class="card"><div class="k">Risk Level</div><div id="risk" class="v">low</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Engine</th><th>Enabled</th><th>Detected</th><th>Block</th><th>Reason</th></tr></thead>
+        <tbody id="engine-table"></tbody>
+      </table>
+    </div>
+    <pre id="json">{}</pre>
+  </div>
+  <script>
+    const promptEl = document.getElementById('prompt');
+    const btn = document.getElementById('analyze');
+    const table = document.getElementById('engine-table');
+    const raw = document.getElementById('json');
+    const fields = {
+      engines: document.getElementById('engines'),
+      detections: document.getElementById('detections'),
+      blocks: document.getElementById('blocks'),
+      risk: document.getElementById('risk'),
+    };
+
+    function row(engine, payload) {
+      const tr = document.createElement('tr');
+      const detectedClass = payload.detected ? 'yes' : 'no';
+      const blockedClass = payload.shouldBlock ? 'yes' : 'no';
+      tr.innerHTML = '<td>' + engine + '</td>'
+        + '<td>' + (payload.enabled ? 'yes' : 'no') + '</td>'
+        + '<td class=\"' + detectedClass + '\">' + (payload.detected ? 'yes' : 'no') + '</td>'
+        + '<td class=\"' + blockedClass + '\">' + (payload.shouldBlock ? 'yes' : 'no') + '</td>'
+        + '<td>' + String(payload.reason || '-') + '</td>';
+      return tr;
+    }
+
+    async function analyze() {
+      const payload = { prompt: promptEl.value || '' };
+      const response = await fetch('/_sentinel/playground/analyze', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      fields.engines.textContent = String(data.summary?.engines_evaluated || 0);
+      fields.detections.textContent = String(data.summary?.detections || 0);
+      fields.blocks.textContent = String(data.summary?.block_eligible || 0);
+      fields.risk.textContent = String(data.summary?.risk || 'unknown');
+
+      table.innerHTML = '';
+      const engines = data.engines || {};
+      Object.keys(engines).sort().forEach((name) => {
+        table.appendChild(row(name, engines[name] || {}));
+      });
+      raw.textContent = JSON.stringify(data, null, 2);
+    }
+
+    btn.addEventListener('click', () => {
+      analyze().catch((error) => {
+        raw.textContent = JSON.stringify({ error: String(error && error.message || error) }, null, 2);
+      });
+    });
+  </script>
+</body>
+</html>`;
+
+function parseJsonMaybe(value) {
+  try {
+    return JSON.parse(String(value || ''));
+  } catch {
+    return null;
+  }
+}
+
 function createDisabledRuntimeEngine(options = {}) {
   const extras = options.extras && typeof options.extras === 'object' ? options.extras : {};
   const mode = String(options.mode || 'monitor').toLowerCase();
@@ -1449,6 +1612,206 @@ class SentinelServer {
     return true;
   }
 
+  async buildPlaygroundAnalysis({ prompt = '', correlationId = '' } = {}) {
+    const text = String(prompt || '').slice(0, 32768);
+    const requestId = String(correlationId || `playground-${Date.now().toString(36)}`);
+    const rawBody = Buffer.from(text, 'utf8');
+    const bodyJson = parseJsonMaybe(text);
+    const effectiveMode = 'monitor';
+    const headers = {
+      'content-type': bodyJson ? 'application/json' : 'text/plain',
+    };
+    const engines = {};
+
+    const addEngineResult = (name, payload = {}) => {
+      const findingCount = Array.isArray(payload.findings)
+        ? payload.findings.length
+        : Array.isArray(payload.mismatches)
+          ? payload.mismatches.length
+          : 0;
+      engines[name] = {
+        enabled: payload.enabled !== false,
+        detected: payload.detected === true || payload.shouldWarn === true,
+        shouldBlock: payload.shouldBlock === true,
+        reason: String(payload.reason || 'clean'),
+        findings: findingCount,
+      };
+    };
+
+    const runEngine = async (name, runner, mapper) => {
+      try {
+        const result = await runner();
+        addEngineResult(name, typeof mapper === 'function' ? mapper(result) : result);
+      } catch (error) {
+        addEngineResult(name, {
+          enabled: false,
+          detected: false,
+          shouldBlock: false,
+          reason: `engine_error:${String(error?.message || 'unknown')}`,
+          findings: [],
+        });
+      }
+    };
+
+    const piiResult = this.piiScanner.scan(text, {
+      maxScanBytes: 65536,
+      regexSafetyCapBytes: 32768,
+    });
+    addEngineResult('pii_scanner', {
+      enabled: true,
+      detected: Array.isArray(piiResult.findings) && piiResult.findings.length > 0,
+      shouldBlock: false,
+      reason: piiResult.findings?.length ? 'pii_detected' : 'clean',
+      findings: piiResult.findings || [],
+    });
+
+    const injectionResult = this.policyEngine.scanInjection(text);
+    addEngineResult('injection_scanner', {
+      enabled: true,
+      detected: Number(injectionResult?.score || 0) >= 0.5,
+      shouldBlock: false,
+      reason: Number(injectionResult?.score || 0) >= 0.5 ? 'injection_detected' : 'clean',
+      findings: injectionResult?.matchedSignals || [],
+    });
+
+    await runEngine(
+      'prompt_rebuff',
+      () =>
+        this.promptRebuff.evaluate({
+          headers: {},
+          correlationId: requestId,
+          bodyText: text,
+          injectionResult,
+          effectiveMode,
+        }),
+      (result) => ({
+        enabled: result?.enabled !== false,
+        detected: result?.detected === true,
+        shouldBlock: result?.shouldBlock === true,
+        reason: result?.reason || 'clean',
+        findings: result?.canarySignal?.value > 0 ? ['canary_signal'] : [],
+      })
+    );
+
+    await runEngine(
+      'serialization_firewall',
+      () =>
+        this.serializationFirewall.evaluate({
+          headers,
+          rawBody,
+          bodyText: text,
+          bodyJson,
+          effectiveMode,
+        })
+    );
+
+    await runEngine(
+      'context_integrity_guardian',
+      () =>
+        this.contextIntegrityGuardian.evaluate({
+          headers: {},
+          bodyJson:
+            bodyJson && typeof bodyJson === 'object'
+              ? bodyJson
+              : {
+                messages: [
+                  {
+                    role: 'user',
+                    content: text,
+                  },
+                ],
+              },
+          bodyText: text,
+          correlationId: requestId,
+          effectiveMode,
+        })
+    );
+
+    await runEngine(
+      'tool_schema_validator',
+      () =>
+        this.toolSchemaValidator.evaluate({
+          headers: {},
+          bodyJson: bodyJson && typeof bodyJson === 'object' ? bodyJson : {},
+          provider: 'playground',
+          path: '/_sentinel/playground/analyze',
+          effectiveMode,
+        })
+    );
+
+    await runEngine(
+      'multimodal_injection_shield',
+      () =>
+        this.multiModalInjectionShield.evaluate({
+          headers,
+          rawBody,
+          bodyText: text,
+          bodyJson,
+          effectiveMode,
+        })
+    );
+
+    await runEngine(
+      'output_classifier',
+      () =>
+        this.outputClassifier.classifyText(text, {
+          effectiveMode,
+        }),
+      (result) => ({
+        enabled: result?.enabled !== false,
+        detected: result?.shouldWarn === true,
+        shouldBlock: result?.shouldBlock === true,
+        reason: result?.reasons?.[0] || 'clean',
+        findings: Array.isArray(result?.warnedBy) ? result.warnedBy : [],
+      })
+    );
+
+    await runEngine('stego_exfil_detector', () =>
+      this.stegoExfilDetector.analyzeText(text, {
+        effectiveMode,
+      })
+    );
+
+    await runEngine('reasoning_trace_monitor', () =>
+      this.reasoningTraceMonitor.analyzeText(text, {
+        effectiveMode,
+      })
+    );
+
+    await runEngine('hallucination_tripwire', () =>
+      this.hallucinationTripwire.analyzeText(text, {
+        effectiveMode,
+      })
+    );
+
+    const engineList = Object.keys(engines);
+    const detections = engineList.filter((name) => engines[name].detected === true).length;
+    const blockEligible = engineList.filter((name) => engines[name].shouldBlock === true).length;
+    const risk = blockEligible > 0
+      ? 'high'
+      : detections >= 4
+        ? 'medium'
+        : detections > 0
+          ? 'low'
+          : 'minimal';
+
+    return {
+      prompt_chars: text.length,
+      runtime_engine_inventory: {
+        configured_runtime_engines: this.runtimeEngineKeyByProp.size,
+        loaded_runtime_engines: this.lazyEngineState.loaded.length,
+        skipped_runtime_engines: this.lazyEngineState.skipped.length,
+      },
+      summary: {
+        engines_evaluated: engineList.length,
+        detections,
+        block_eligible: blockEligible,
+        risk,
+      },
+      engines,
+    };
+  }
+
   setupApp() {
     this.app.use(
       express.raw({
@@ -1697,6 +2060,49 @@ class SentinelServer {
       });
       res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
       res.status(200).send(payload);
+    });
+
+    this.app.get('/_sentinel/playground', (req, res) => {
+      res.setHeader('cache-control', 'no-store');
+      res.status(200).type('html').send(PLAYGROUND_HTML);
+    });
+
+    this.app.post('/_sentinel/playground/analyze', async (req, res) => {
+      let payload = {};
+      try {
+        if (Buffer.isBuffer(req.body)) {
+          payload = parseJsonMaybe(req.body.toString('utf8')) || {};
+        } else if (typeof req.body === 'string') {
+          payload = parseJsonMaybe(req.body) || {};
+        } else if (req.body && typeof req.body === 'object') {
+          payload = req.body;
+        }
+      } catch {
+        payload = {};
+      }
+
+      const prompt = String(payload.prompt || '');
+      if (!prompt.trim()) {
+        res.status(400).json({
+          error: 'PLAYGROUND_PROMPT_REQUIRED',
+        });
+        return;
+      }
+
+      try {
+        const analysis = await this.buildPlaygroundAnalysis({
+          prompt,
+          correlationId: String(req.headers?.['x-sentinel-correlation-id'] || ''),
+        });
+        res.status(200).json(analysis);
+      } catch (error) {
+        logger.warn('playground analysis failed', {
+          error: String(error?.message || error),
+        });
+        res.status(500).json({
+          error: 'PLAYGROUND_ANALYSIS_FAILED',
+        });
+      }
     });
 
     this.app.all('*', async (req, res) => {

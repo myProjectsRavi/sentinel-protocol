@@ -1,0 +1,38 @@
+{
+  "name": "sentinel-protocol-vscode",
+  "displayName": "Sentinel Protocol",
+  "description": "Local AI prompt security scan inside VS Code using Sentinel Playground API.",
+  "version": "0.1.0",
+  "publisher": "myProjectsRavi",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:sentinelProtocol.scanPrompt"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sentinelProtocol.scanPrompt",
+        "title": "Sentinel: Scan Prompt"
+      }
+    ],
+    "configuration": {
+      "title": "Sentinel Protocol",
+      "properties": {
+        "sentinelProtocol.playgroundEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787/_sentinel/playground/analyze",
+          "description": "HTTP endpoint used by the VS Code extension for local Sentinel prompt scans."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "node -e \"console.log('Use workspace lint for extension source')\""
+  }
+}

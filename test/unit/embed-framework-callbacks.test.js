@@ -120,5 +120,24 @@ describe('embed framework callbacks', () => {
     const callbacks = embedded.frameworkCallbacks();
     expect(typeof callbacks.langchainCallback).toBe('function');
     expect(typeof callbacks.llamaIndexCallback).toBe('function');
+    expect(typeof callbacks.crewaiCallback).toBe('function');
+  });
+
+  test('crewai callback emits lifecycle events', async () => {
+    const events = [];
+    const embedded = createSentinel(baseConfig(), {
+      framework: {
+        onEvent: (event) => events.push(event),
+      },
+    });
+    const callback = embedded.crewaiCallback();
+    await callback.onTaskStart({ description: 'Analyze policy drift' }, 'crew-1');
+    await callback.onTaskComplete({ result: 'done' }, 'crew-1');
+    await callback.onTaskError(new Error('fail'), 'crew-1');
+
+    expect(events.length).toBe(3);
+    expect(events[0].payload.framework).toBe('crewai');
+    expect(events[0].event).toBe('agent.start');
+    expect(events[2].event).toBe('agent.error');
   });
 });

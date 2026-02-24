@@ -228,6 +228,43 @@ paths:
                 additionalProperties: true
         '404':
           description: Adversarial eval harness disabled.
+  /_sentinel/playground:
+    get:
+      summary: Interactive local prompt playground UI
+      operationId: getPlaygroundUi
+      responses:
+        '200':
+          description: Playground HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /_sentinel/playground/analyze:
+    post:
+      summary: Analyze prompt with local deterministic Sentinel engines
+      operationId: analyzePlaygroundPrompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+      responses:
+        '200':
+          description: Playground analysis response.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Missing prompt input.
+        '500':
+          description: Analysis failed.
   /_sentinel/swarm/public-key:
     get:
       summary: Swarm protocol public metadata
