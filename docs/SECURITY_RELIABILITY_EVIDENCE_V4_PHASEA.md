@@ -3,8 +3,19 @@
 ## Scope
 - Branch: `main`
 - Package: `sentinel-protocol@1.0.0`
-- Phase: V4 implemented set (P0 + P1 complete)
+- Phase: V4 complete set (15/15 engines implemented and wired)
 - Evidence date: 2026-02-24
+
+## Current CI Proof (Authoritative)
+- Latest green run:
+  - `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729`
+- Quality gates:
+  - `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659040081`
+- Docker build smoke:
+  - `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659181978`
+- SBOM artifact:
+  - name: `sbom-ci`
+  - digest: `sha256:01d86d2d8f6eeff77942779213e829de9cc8442a5521a22706d5aa79e10d1a61`
 
 ## What Is Covered
 - V4 runtime engines (all config-driven, monitor-first defaults):
@@ -35,15 +46,15 @@
 1. `npm run lint` -> pass
 2. `npm run openapi:validate` -> pass
 3. `npm run test:unit:ci` -> pass
-4. `npm run test:integration` -> blocked in sandbox for network/listen (`EPERM`); validate in CI/non-sandbox runtime
-5. `npm run test:coverage:gate` -> pass (run in non-sandbox CI for authoritative gate)
+4. `npm run test:integration` -> pass in non-sandbox CI (authoritative), sandbox runs may hit `listen EPERM` depending on host policy
+5. `npm run test:coverage:gate` -> pass in CI
 6. `npm run benchmark:gate` -> pass
 7. `npm run perf:p0:gate` -> pass
 8. `npm run perf:p1:gate` -> pass
 9. `npm run perf:p2:gate` -> pass
 10. `npm run perf:p3:gate` -> pass
 11. `npm run perf:v4:phasea:gate` -> pass
-12. `npm run reliability` -> blocked in sandbox (`listen EPERM 127.0.0.1`), must validate in GitHub Actions/non-sandbox runtime
+12. `npm run reliability` -> validate in GitHub Actions/non-sandbox runtime
 
 ## CI Artifact Expectations
 - SBOM:

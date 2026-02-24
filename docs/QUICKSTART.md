@@ -3,8 +3,8 @@
 ## 1. Primary Bootstrap (npx)
 
 ```bash
-npx sentinel-protocol init
-npx sentinel-protocol start
+npx --yes --package sentinel-protocol sentinel init --force
+npx --yes --package sentinel-protocol sentinel start
 ```
 
 This is the primary onboarding path for docs/tutorials.
@@ -37,15 +37,15 @@ node ./cli/sentinel.js doctor
 Set production mode for safer runtime defaults:
 
 ```bash
-NODE_ENV=production npx sentinel-protocol start
+NODE_ENV=production npx --yes --package sentinel-protocol sentinel start
 ```
 
 Optional safe startup flags:
 
 ```bash
-npx sentinel-protocol start --dry-run
-npx sentinel-protocol start --fail-open
-npx sentinel-protocol start --skip-doctor
+npx --yes --package sentinel-protocol sentinel start --dry-run
+npx --yes --package sentinel-protocol sentinel start --fail-open
+npx --yes --package sentinel-protocol sentinel start --skip-doctor
 ```
 
 ## 5. Configure agent

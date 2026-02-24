@@ -61,10 +61,10 @@ Deployment model is simple:
 - Current V4 evidence doc: `docs/SECURITY_RELIABILITY_EVIDENCE_V4_PHASEA.md`
 - 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
 - OWASP LLM Top 10 mapping: `docs/OWASP_LLM_TOP10_SENTINEL_MAP.md`
-- CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518`
-- Quality gates job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256888360`
-- Docker quickstart smoke job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518/job/64256947051`
-- SBOM artifact digest: `sha256:fdff3692aca5cc48d31c402b7a8455fa6033290f2aee43f5172970a9365ca171`
+- Latest CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729`
+- Latest quality-gates job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659040081`
+- Latest docker-build job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659181978`
+- Latest SBOM artifact digest: `sha256:01d86d2d8f6eeff77942779213e829de9cc8442a5521a22706d5aa79e10d1a61`
 
 ## Architecture at a Glance
 

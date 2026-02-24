@@ -32,6 +32,15 @@
 - Extended config defaults + strict schema validation for all new runtime keys (unknown-key rejection preserved).
 - `startServer` now supports runtime profile overlay selection before mode/vcr overrides.
 
+### Fixed
+- SSE stream stability hardening:
+  - disabled provenance fallback no longer yields invalid stream proof contracts
+  - SSE proof context now validates `update/finalize` contract before use
+  - monitor-mode SSE path no longer escalates block-severity findings into stream termination
+- CI bootstrap gate hardening:
+  - `ci:bootstrap:npx` now uses robust readiness wait logic with clear early-exit diagnostics
+  - config compatibility restored for `runtime.rate_limiter.enabled` in strict schema validation
+
 ### Docs
 - Updated OpenAPI contract with new control-plane endpoints.
 - Updated README feature map and control-plane endpoint list.
