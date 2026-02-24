@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { Command } = require('commander');
+const { createInterface } = require('node:readline/promises');
 
 const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeYamlConfig } = require('../src/config/loader');
 const { PROFILE_NAMES, applyConfigProfile } = require('../src/config/profiles');
@@ -30,7 +31,17 @@ const {
 const { DifferentialPrivacyEngine } = require('../src/privacy/differential-privacy');
 const { startMCPServer } = require('../src/mcp/server');
 const { startMonitorTUI } = require('../src/monitor/tui');
+const { validateConfigShape } = require('../src/config/schema');
 const { StatusStore } = require('../src/status/store');
+const {
+  detectFramework,
+  normalizeFramework,
+  normalizeProviders,
+  injectProviderTargets,
+  frameworkSnippet,
+  appendGeneratedHints,
+  detectOllamaAvailable,
+} = require('../src/cli/adoption');
 const {
   startServer,
   stopServer,
@@ -62,54 +73,181 @@ function emitOutput(payload, outPath) {
   return null;
 }
 
-function detectFramework(projectRoot = process.cwd()) {
-  const packageJsonPath = path.join(projectRoot, 'package.json');
-  if (!fs.existsSync(packageJsonPath)) {
+function isInteractiveTerminal() {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+function envVarForProvider(provider) {
+  if (provider === 'anthropic') {
+    return 'SENTINEL_ANTHROPIC_API_KEY';
+  }
+  if (provider === 'google') {
+    return 'SENTINEL_GOOGLE_API_KEY';
+  }
+  if (provider === 'ollama') {
     return null;
   }
+  return 'SENTINEL_OPENAI_API_KEY';
+}
+
+function emitProviderEnvWarnings(providers) {
+  const uniqueProviders = normalizeProviders(providers);
+  for (const provider of uniqueProviders) {
+    const envVar = envVarForProvider(provider);
+    if (!envVar) {
+      continue;
+    }
+    if (!process.env[envVar]) {
+      console.log(`[WARN] Provider ${provider} selected but ${envVar} is not set.`);
+    }
+  }
+}
+
+function parseProfileChoice(input, fallback = 'minimal') {
+  const normalized = String(input || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === '1' || normalized === 'minimal') {
+    return 'minimal';
+  }
+  if (normalized === '2' || normalized === 'standard') {
+    return 'standard';
+  }
+  if (normalized === '3' || normalized === 'paranoid') {
+    return 'paranoid';
+  }
+  return fallback;
+}
+
+function parseFrameworkChoice(input, fallback = 'none') {
+  const normalized = String(input || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  const frameworkChoices = ['express', 'fastify', 'nextjs', 'koa', 'hono', 'nestjs', 'none'];
+  if (/^[1-7]$/.test(normalized)) {
+    return frameworkChoices[Number(normalized) - 1];
+  }
+  return normalizeFramework(normalized) || fallback;
+}
+
+async function runInitWizard({ detectedFramework, defaultProfile = 'minimal' }) {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
   try {
-    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const deps = {
-      ...(parsed.dependencies || {}),
-      ...(parsed.devDependencies || {}),
+    const providersRaw = await rl.question(
+      'Provider(s) [openai,anthropic,google,ollama] (comma list, default: openai): '
+    );
+    const providers = normalizeProviders(providersRaw || 'openai');
+    const frameworkRaw = await rl.question(
+      `Framework [express|fastify|nextjs|koa|hono|nestjs|none] (default: ${detectedFramework || 'none'}): `
+    );
+    const framework = parseFrameworkChoice(frameworkRaw, detectedFramework || 'none');
+    const profileRaw = await rl.question(
+      `Security level [1=minimal,2=standard,3=paranoid] (default: ${defaultProfile}): `
+    );
+    const profile = parseProfileChoice(profileRaw, defaultProfile);
+    return {
+      providers,
+      framework,
+      profile,
     };
-    const has = (name) => Object.prototype.hasOwnProperty.call(deps, name);
-    if (has('next')) return 'nextjs';
-    if (has('fastify')) return 'fastify';
-    if (has('koa')) return 'koa';
-    if (has('express')) return 'express';
-    if (has('@hono/node-server') || has('hono')) return 'hono';
-    return null;
-  } catch {
-    return null;
+  } finally {
+    rl.close();
+  }
+}
+
+function printFrameworkGuidance(framework) {
+  const normalized = normalizeFramework(framework);
+  if (!normalized || normalized === 'none') {
+    return;
+  }
+  console.log(`Detected framework: ${normalized}`);
+  console.log('Framework quick-start snippet:');
+  console.log(frameworkSnippet(normalized));
+}
+
+async function printAutoRuntimeHints(framework) {
+  printFrameworkGuidance(framework);
+  const ollamaDetected = await detectOllamaAvailable({
+    timeoutMs: 500,
+  });
+  if (ollamaDetected) {
+    console.log('Ollama detected at http://127.0.0.1:11434 (automatic local provider route available).');
   }
 }
 
 program
   .command('init')
   .description('Create default sentinel.yaml in ~/.sentinel')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
   .option('--force', 'Overwrite existing config')
   .option('--profile <name>', 'Config profile: minimal|standard|paranoid')
-  .action((options) => {
+  .option('--providers <list>', 'Comma-separated providers: openai,anthropic,google,ollama')
+  .option('--framework <name>', 'express|fastify|nextjs|koa|hono|nestjs|none')
+  .option('--yes', 'Disable interactive prompts (CI-safe)')
+  .action(async (options) => {
     try {
-      const result = ensureDefaultConfigExists(DEFAULT_CONFIG_PATH, Boolean(options.force));
-      if (options.profile) {
-        const profileName = String(options.profile || '').toLowerCase();
-        if (!PROFILE_NAMES.has(profileName)) {
-          throw new Error(`Invalid --profile value "${options.profile}". Use minimal|standard|paranoid.`);
-        }
-        const parsed = readYamlConfig(result.path);
-        const profiled = applyConfigProfile(parsed, profileName);
-        writeYamlConfig(result.path, profiled.config);
-        console.log(
-          `Applied profile: ${profiled.profile} (${profiled.enabledRuntimeEngines}/${profiled.totalRuntimeEngines} runtime engines enabled)`
-        );
-      }
-      if (result.created) {
-        console.log(`Created config: ${result.path}`);
+      const configPath = options.config || DEFAULT_CONFIG_PATH;
+      const result = ensureDefaultConfigExists(configPath, Boolean(options.force));
+      const hasExplicitOverrides = Boolean(options.profile || options.providers || options.framework);
+      if (!result.created && !options.force && !hasExplicitOverrides) {
+        console.log(`Config already exists: ${result.path}`);
         return;
       }
-      console.log(`Config already exists: ${result.path}`);
+
+      const detectedFramework = detectFramework(process.cwd()) || 'none';
+      let selectedProfile = String(options.profile || '').trim().toLowerCase();
+      let selectedProviders = normalizeProviders(options.providers || 'openai');
+      let selectedFramework = parseFrameworkChoice(options.framework, detectedFramework);
+
+      if (!selectedProfile && isInteractiveTerminal() && options.yes !== true) {
+        const wizard = await runInitWizard({
+          detectedFramework,
+          defaultProfile: 'minimal',
+        });
+        selectedProfile = wizard.profile;
+        selectedProviders = wizard.providers;
+        selectedFramework = wizard.framework;
+      }
+
+      if (!selectedProfile) {
+        selectedProfile = 'minimal';
+      }
+      if (!PROFILE_NAMES.has(selectedProfile)) {
+        throw new Error(`Invalid --profile value "${selectedProfile}". Use minimal|standard|paranoid.`);
+      }
+
+      const parsed = readYamlConfig(result.path);
+      const profiled = applyConfigProfile(parsed, selectedProfile);
+      const providerScoped = injectProviderTargets(profiled.config, selectedProviders);
+      validateConfigShape(providerScoped);
+      writeYamlConfig(result.path, providerScoped);
+      appendGeneratedHints(result.path, {
+        framework: selectedFramework,
+        providers: selectedProviders,
+      });
+
+      console.log(result.created ? `Created config: ${result.path}` : `Updated config: ${result.path}`);
+      console.log(
+        `Applied profile: ${profiled.profile} (${profiled.enabledRuntimeEngines}/${profiled.totalRuntimeEngines} runtime engines enabled)`
+      );
+      console.log(`Providers configured: ${selectedProviders.join(', ')}`);
+
+      const doctor = doctorServer({ configPath: result.path });
+      const summary = doctor.report.summary;
+      console.log(`Doctor summary: pass=${summary.pass} warn=${summary.warn} fail=${summary.fail}`);
+      for (const check of doctor.report.checks) {
+        if (check.status === 'warn') {
+          console.log(`[WARN] ${check.id}: ${check.message}`);
+        }
+      }
+      emitProviderEnvWarnings(selectedProviders);
+      printFrameworkGuidance(selectedFramework);
     } catch (error) {
       console.error(error.message);
       process.exitCode = 1;
@@ -128,9 +266,10 @@ program
   .option('--replay', 'Enable VCR replay mode (reads deterministic tape)')
   .option('--dashboard', 'Enable local dashboard server for this run')
   .option('--profile <name>', 'Runtime profile: minimal|standard|paranoid')
+  .option('--auto', 'Auto-detect framework and print wiring snippet')
   .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
   .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
-  .action((options) => {
+  .action(async (options) => {
     try {
       if (options.record && options.replay) {
         throw new Error('Choose either --record or --replay, not both.');
@@ -171,6 +310,9 @@ program
           `Profile loaded: ${result.loaded.profile.name} (${result.loaded.profile.enabledRuntimeEngines}/${result.loaded.profile.totalRuntimeEngines} runtime engines enabled)`
         );
       }
+      if (options.auto === true) {
+        await printAutoRuntimeHints(detectFramework(process.cwd()) || 'none');
+      }
     } catch (error) {
       console.error(error.message);
       process.exitCode = 1;
@@ -186,8 +328,9 @@ program
   .option('--port <port>', 'Port override')
   .option('--mode <mode>', 'Mode override (monitor|warn|enforce)')
   .option('--dashboard', 'Enable local dashboard server for this run')
+  .option('--auto', 'Auto-detect framework and print wiring snippet')
   .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
-  .action((options) => {
+  .action(async (options) => {
     try {
       const bootstrapPath = options.config || DEFAULT_CONFIG_PATH;
       const initResult = ensureDefaultConfigExists(bootstrapPath, Boolean(options.force));
@@ -214,8 +357,8 @@ program
         `Bootstrap profile: ${profiled.profile} (${profiled.enabledRuntimeEngines}/${profiled.totalRuntimeEngines} runtime engines enabled)`
       );
       const framework = detectFramework(process.cwd());
-      if (framework) {
-        console.log(`Detected framework: ${framework}`);
+      if (framework || options.auto === true) {
+        await printAutoRuntimeHints(framework || 'none');
       }
       if (startResult.doctor) {
         const summary = startResult.doctor.summary;

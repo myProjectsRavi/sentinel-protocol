@@ -86,4 +86,13 @@ module.exports = [
       },
     },
   },
+  {
+    files: ['.github/actions/**/test/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...nodeGlobals,
+        ...jestGlobals,
+      },
+    },
+  },
 ];

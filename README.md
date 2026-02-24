@@ -30,6 +30,12 @@ npx --yes --package sentinel-protocol sentinel doctor
 npx --yes --package sentinel-protocol sentinel start --dashboard
 ```
 
+Interactive onboarding (TTY mode, 3 prompts only):
+
+```bash
+npx --yes --package sentinel-protocol sentinel init
+```
+
 Then verify:
 
 ```bash
@@ -61,10 +67,13 @@ Deployment model is simple:
 - Current V4 evidence doc: `docs/SECURITY_RELIABILITY_EVIDENCE_V4_PHASEA.md`
 - 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
 - OWASP LLM Top 10 mapping: `docs/OWASP_LLM_TOP10_SENTINEL_MAP.md`
-- Latest CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729`
-- Latest quality-gates job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659040081`
-- Latest docker-build job: `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345476729/job/64659181978`
+- Latest CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345903691`
 - Latest SBOM artifact digest: `sha256:01d86d2d8f6eeff77942779213e829de9cc8442a5521a22706d5aa79e10d1a61`
+- Init wizard validation matrix: `docs/evidence/WIZARD_VALIDATION.md`
+- Framework detection matrix: `docs/evidence/FRAMEWORK_DETECT_MATRIX.md`
+- GitHub Action demo (`security-scan@v1`): `docs/evidence/GITHUB_ACTION_DEMO.md`
+- Benchmark methodology: `docs/benchmarks/METHODOLOGY.md`
+- Competitor comparison page: `docs/benchmarks/COMPETITOR_COMPARISON.md`
 
 ## Architecture at a Glance
 
@@ -177,6 +186,16 @@ npx --yes --package sentinel-protocol sentinel init --force --profile minimal
 npx --yes --package sentinel-protocol sentinel start --profile minimal
 npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
 ```
+
+## PR Security Gate (GitHub Action)
+
+Single-line action usage:
+
+```yaml
+- uses: myProjectsRavi/sentinel-protocol/.github/actions/security-scan@v1
+```
+
+This runs local adversarial eval checks in CI, emits SARIF optionally, and can block merges on detection regression.
 
 ## Quick Start (Primary Path: npx)
 

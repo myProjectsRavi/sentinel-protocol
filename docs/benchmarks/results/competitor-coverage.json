@@ -1,0 +1,123 @@
+{
+  "last_verified": "2026-02-24",
+  "owasp_categories": [
+    "LLM01 Prompt Injection",
+    "LLM02 Insecure Output Handling",
+    "LLM03 Training Data Poisoning",
+    "LLM04 Model DoS",
+    "LLM05 Supply Chain Vulnerabilities",
+    "LLM06 Sensitive Information Disclosure",
+    "LLM07 Insecure Plugin Design",
+    "LLM08 Excessive Agency",
+    "LLM09 Overreliance",
+    "LLM10 Model Theft"
+  ],
+  "tools": [
+    {
+      "name": "Sentinel Protocol",
+      "coverage": {
+        "LLM01": "full",
+        "LLM02": "full",
+        "LLM03": "full",
+        "LLM04": "full",
+        "LLM05": "full",
+        "LLM06": "full",
+        "LLM07": "full",
+        "LLM08": "full",
+        "LLM09": "full",
+        "LLM10": "full"
+      },
+      "latency_p95_overhead_ms": 1,
+      "time_to_first_protection_seconds": 90,
+      "sources": [
+        "docs/OWASP_LLM_TOP10_SENTINEL_MAP.md",
+        "docs/evidence/WIZARD_VALIDATION.md",
+        "docs/benchmarks/results/sentinel-v4.json"
+      ]
+    },
+    {
+      "name": "LLM Guard",
+      "coverage": {
+        "LLM01": "partial",
+        "LLM02": "partial",
+        "LLM03": "none",
+        "LLM04": "none",
+        "LLM05": "none",
+        "LLM06": "partial",
+        "LLM07": "none",
+        "LLM08": "none",
+        "LLM09": "partial",
+        "LLM10": "none"
+      },
+      "latency_p95_overhead_ms": null,
+      "time_to_first_protection_seconds": null,
+      "sources": [
+        "https://github.com/protectai/llm-guard"
+      ],
+      "notes": "Coverage based on documented scanners/guards. In-repo latency benchmark not yet run."
+    },
+    {
+      "name": "Rebuff",
+      "coverage": {
+        "LLM01": "partial",
+        "LLM02": "none",
+        "LLM03": "none",
+        "LLM04": "none",
+        "LLM05": "none",
+        "LLM06": "none",
+        "LLM07": "none",
+        "LLM08": "none",
+        "LLM09": "partial",
+        "LLM10": "none"
+      },
+      "latency_p95_overhead_ms": null,
+      "time_to_first_protection_seconds": null,
+      "sources": [
+        "https://github.com/protectai/rebuff"
+      ],
+      "notes": "Coverage based on prompt-injection-focused design. In-repo latency benchmark not yet run."
+    },
+    {
+      "name": "NVIDIA NeMo Guardrails",
+      "coverage": {
+        "LLM01": "partial",
+        "LLM02": "partial",
+        "LLM03": "none",
+        "LLM04": "none",
+        "LLM05": "none",
+        "LLM06": "partial",
+        "LLM07": "partial",
+        "LLM08": "partial",
+        "LLM09": "partial",
+        "LLM10": "none"
+      },
+      "latency_p95_overhead_ms": null,
+      "time_to_first_protection_seconds": null,
+      "sources": [
+        "https://github.com/NVIDIA/NeMo-Guardrails"
+      ],
+      "notes": "Coverage based on published guardrail categories. In-repo latency benchmark not yet run."
+    },
+    {
+      "name": "Lakera Guard",
+      "coverage": {
+        "LLM01": "partial",
+        "LLM02": "partial",
+        "LLM03": "none",
+        "LLM04": "none",
+        "LLM05": "none",
+        "LLM06": "partial",
+        "LLM07": "partial",
+        "LLM08": "partial",
+        "LLM09": "partial",
+        "LLM10": "none"
+      },
+      "latency_p95_overhead_ms": null,
+      "time_to_first_protection_seconds": null,
+      "sources": [
+        "https://lakera.ai/guard"
+      ],
+      "notes": "Coverage inferred from public product pages. Reproducible local benchmark in this repo is not available."
+    }
+  ]
+}

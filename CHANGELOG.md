@@ -20,6 +20,11 @@
 - New engine modules and unit coverage for the runtime controls above.
 - Config profile system (`minimal|standard|paranoid`) with deterministic overlays.
 - One-command bootstrap CLI flow: `sentinel bootstrap --profile <name>`.
+- Adoption sprint CLI upgrades:
+  - `sentinel init --yes` non-interactive CI-safe mode
+  - `sentinel init --config <path>` explicit config path support
+  - interactive init wizard (TTY-only) with 3 prompts (provider/framework/security level)
+  - framework auto-detect snippets for `express|fastify|nextjs|koa|hono|nestjs`
 - Lazy optional-engine loading with runtime visibility counters and status output.
 - Cost optimizer memory-budget extensions:
   - hard RSS cap (`memory_hard_cap_bytes`)
@@ -31,6 +36,7 @@
 - Extended capability introspection and MITRE ATLAS mapping for newly added engines.
 - Extended config defaults + strict schema validation for all new runtime keys (unknown-key rejection preserved).
 - `startServer` now supports runtime profile overlay selection before mode/vcr overrides.
+- Paranoid profile mode mapping now keeps all generated configs schema-valid (`active|inject|auto|enforce` where required).
 
 ### Fixed
 - SSE stream stability hardening:
@@ -46,6 +52,17 @@
 - Updated README feature map and control-plane endpoint list.
 - Updated README quickstart and CLI references for bootstrap/profile flows.
 - Refreshed V4 evidence doc to reflect full implemented engine set and verification focus.
+- Added adoption evidence docs:
+  - `docs/evidence/WIZARD_VALIDATION.md`
+  - `docs/evidence/FRAMEWORK_DETECT_MATRIX.md`
+  - `docs/evidence/GITHUB_ACTION_DEMO.md`
+- Added benchmark publication pack:
+  - `docs/benchmarks/METHODOLOGY.md`
+  - `docs/benchmarks/COMPETITOR_COMPARISON.md`
+  - `docs/benchmarks/results/sentinel-v4.json`
+  - `docs/benchmarks/results/competitor-coverage.json`
+- Added local GitHub Action package and tests:
+  - `.github/actions/security-scan/*`
 
 ## 1.0.0 - 2026-02-19
 

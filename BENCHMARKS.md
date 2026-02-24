@@ -1,67 +1,44 @@
 # Benchmarks
 
-This project ships a reproducible benchmark harness to measure Sentinel overhead versus direct upstream calls.
+This project ships reproducible performance and regression gates for Sentinel proxy overhead.
 
-## Goal
-
-- Keep p95 proxy overhead under 5ms for baseline monitor mode traffic.
-- Track request/sec delta and tail latency on every release.
-
-## Run
+## Quick Run
 
 ```bash
-npm run benchmark
+npm run benchmark -- --duration 3 --connections 16 --pipelining 1
 npm run benchmark:gate
 ```
 
-Reliability (stress + chaos scenarios):
+Reliability stress/chaos path:
 
 ```bash
 npm run reliability -- --websocket-requests 8
 ```
 
-Custom run parameters:
+## Published Benchmark Artifacts
 
-```bash
-node ./scripts/benchmark-overhead.js --duration 20 --connections 100 --pipelining 1
-```
+- Methodology: `docs/benchmarks/METHODOLOGY.md`
+- Competitor comparison: `docs/benchmarks/COMPETITOR_COMPARISON.md`
+- Sentinel benchmark snapshot: `docs/benchmarks/results/sentinel-v4.json`
+- OWASP coverage matrix data: `docs/benchmarks/results/competitor-coverage.json`
 
-The script writes JSON reports to:
+## Current Sentinel Baseline (published)
 
-- `metrics/benchmark-YYYY-MM-DD.json`
-- `metrics/reliability-<timestamp>.json`
+- direct p95: `33 ms`
+- sentinel p95: `34 ms`
+- p95 overhead: `1 ms` (`3.03%`)
+- throughput delta: `-57 req/sec`
 
-## What It Measures
+Source: `docs/benchmarks/results/sentinel-v4.json`
 
-1. Direct upstream traffic (`/v1/chat/completions`)
-2. Same traffic through Sentinel with:
-1. `mode=monitor`
-2. `pii.enabled=false`
-3. `injection.enabled=false`
-4. `x-sentinel-target=openai` mapped to local upstream endpoint
+## Regression Policy
 
-Outputs include:
-
-- `direct.latency_ms.p95`
-- `sentinel.latency_ms.p95`
-- `overhead.p95_ms`
-- `requests_per_sec_delta`
-
-## Interpreting Results
-
-- `overhead.p95_ms <= 5` is healthy baseline.
-- If overhead regresses:
-1. Profile body parsing and regex paths.
-2. Verify no accidental sync file IO in hot path.
-3. Check custom target DNS pinning/agent behavior.
+- Benchmark gate fails CI on configured regression thresholds (`npm run benchmark:gate`).
+- Separate perf gates cover P0/P1/P2/P3/V4 engine groups.
+- Reliability suite validates timeout, circuit-breaker, chaos, and websocket paths.
 
 ## Notes
 
-- Run with `NODE_ENV=production` for realistic results.
-- Benchmark host and network conditions affect absolute numbers.
-- Compare deltas across versions, not raw values from different machines.
-- Reliability gates currently cover:
-1. Stress run without transport errors/timeouts.
-2. Chaos-503 scenario where circuit breaker opens and fast-fails.
-3. Chaos-timeout scenario where timeout streak opens breaker and fast-fails.
-4. WebSocket upgrade forwarding stability with monitor-first interception enabled.
+- Run with `NODE_ENV=production` for realistic behavior.
+- Use comparisons from the same runner profile when evaluating regressions.
+- Competitor metrics are only asserted when reproducible in-repo; otherwise marked `not_measured`.

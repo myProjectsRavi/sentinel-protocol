@@ -19,6 +19,16 @@ const MINIMAL_RUNTIME_ENGINES = new Set([
   'cost_efficiency_optimizer',
 ]);
 
+const PARANOID_MODE_OVERRIDES = Object.freeze({
+  pii_vault: 'active',
+  synthetic_poisoning: 'inject',
+  cognitive_rollback: 'auto',
+  websocket: 'enforce',
+  budget_autopilot: 'active',
+  cost_efficiency_optimizer: 'active',
+  evidence_vault: 'active',
+});
+
 function isObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -103,7 +113,7 @@ function applyParanoidProfile(config) {
     if (typeof next.runtime[key].mode === 'string') {
       const currentMode = String(next.runtime[key].mode || '').toLowerCase();
       if (currentMode === 'monitor' || currentMode === 'warn') {
-        next.runtime[key].mode = 'block';
+        next.runtime[key].mode = PARANOID_MODE_OVERRIDES[key] || 'block';
       }
     }
   }

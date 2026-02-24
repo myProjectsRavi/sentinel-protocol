@@ -1,0 +1,31 @@
+{
+  "last_verified": "2026-02-23T08:37:32.523Z",
+  "source_metric_file": "metrics/benchmark-2026-02-23.json",
+  "benchmark": {
+    "duration_seconds": 3,
+    "connections": 16,
+    "pipelining": 1,
+    "upstream_latency_ms": 25
+  },
+  "direct": {
+    "requests_per_sec": 560.67,
+    "latency_ms": {
+      "p50": 27,
+      "p95": 33,
+      "p99": 34
+    }
+  },
+  "sentinel": {
+    "requests_per_sec": 503.67,
+    "latency_ms": {
+      "p50": 30,
+      "p95": 34,
+      "p99": 76
+    }
+  },
+  "overhead": {
+    "p95_ms": 1,
+    "p95_percent": 3.03,
+    "requests_per_sec_delta": -57
+  }
+}

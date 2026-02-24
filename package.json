@@ -54,6 +54,8 @@
     "perf:v4:phasea:gate": "node ./scripts/perf-v4-phasea-gate.js",
     "reliability": "node ./scripts/reliability-proof.js",
     "ci:bootstrap:npx": "node ./scripts/ci-validate-npx-bootstrap.js",
+    "ci:init:wizard:smoke": "node ./scripts/ci-init-wizard-smoke.js",
+    "ci:framework:detect:smoke": "node ./scripts/ci-framework-detect-smoke.js",
     "sbom:cyclonedx": "npm sbom --sbom-format=cyclonedx",
     "sbom:spdx": "npm sbom --sbom-format=spdx"
   },

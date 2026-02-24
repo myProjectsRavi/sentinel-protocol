@@ -1,0 +1,42 @@
+name: Sentinel Security Scan
+description: Runs local adversarial security evaluation and blocks regressions in pull requests.
+author: Sentinel Protocol
+inputs:
+  threshold:
+    description: Minimum required detection rate (0-1).
+    required: false
+    default: '0.85'
+  eval-file:
+    description: Optional path to custom eval cases JSON (array or {cases:[]}). Defaults to sentinel-eval.json.
+    required: false
+    default: sentinel-eval.json
+  fail-on-regression:
+    description: Fail action when regression is detected.
+    required: false
+    default: 'true'
+  sarif-output:
+    description: Optional SARIF output file path.
+    required: false
+    default: ''
+  post-comment:
+    description: Post pull request comment when findings/regression exist.
+    required: false
+    default: 'true'
+outputs:
+  detection_rate:
+    description: Evaluated detection rate.
+  missed_detections:
+    description: Number of missed expected detections.
+  false_positives:
+    description: Number of false positives.
+  regression_detected:
+    description: Whether regression was detected by harness.
+  pass:
+    description: true when thresholds and regression checks pass.
+runs:
+  using: node20
+  main: index.js
+branding:
+  icon: shield
+  color: red
+

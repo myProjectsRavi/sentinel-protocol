@@ -3,6 +3,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 const { applyConfigProfile } = require('../../src/config/profiles');
+const { validateConfigShape } = require('../../src/config/schema');
 
 const PROJECT_DEFAULT_CONFIG = path.join(__dirname, '..', '..', 'src', 'config', 'default.yaml');
 
@@ -30,6 +31,9 @@ describe('config profiles', () => {
     expect(result.profile).toBe('paranoid');
     expect(result.config.mode).toBe('enforce');
     expect(result.config.injection.action).toBe('block');
+    expect(result.config.runtime.pii_vault.mode).toBe('active');
+    expect(result.config.runtime.websocket.mode).toBe('enforce');
+    expect(() => validateConfigShape(result.config)).not.toThrow();
     expect(result.enabledRuntimeEngines).toBeGreaterThan(20);
   });
 

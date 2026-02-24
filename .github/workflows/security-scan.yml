@@ -1,0 +1,34 @@
+name: security-scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  adversarial-security-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: ./.github/actions/security-scan
+        with:
+          threshold: '0.85'
+          eval-file: 'sentinel-eval.json'
+          fail-on-regression: 'true'
+          post-comment: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          sarif-output: 'security-scan.sarif'
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('security-scan.sarif') != ''
+        with:
+          sarif_file: security-scan.sarif

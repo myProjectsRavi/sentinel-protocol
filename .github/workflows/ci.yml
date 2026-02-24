@@ -46,6 +46,9 @@ jobs:
       - run: npm run benchmark -- --duration 3 --connections 16 --pipelining 1
       - run: npm run benchmark:gate
       - run: npm run ci:bootstrap:npx
+      - run: npm run ci:init:wizard:smoke
+      - run: npm run ci:framework:detect:smoke
+      - run: npx jest --runInBand .github/actions/security-scan/test/action.test.js
       - run: node ./cli/sentinel.js aibom export --format json --out aibom.json
       - run: npm run sbom:cyclonedx > sbom.cyclonedx.json
       - run: npm run sbom:spdx > sbom.spdx.json
