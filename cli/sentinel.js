@@ -384,7 +384,8 @@ program
         throw new Error(`Invalid --profile value "${options.profile}". Use minimal|standard|paranoid.`);
       }
       const parsed = readYamlConfig(bootstrapPath);
-      const profiled = applyConfigProfile(parsed, profileName);
+      const normalized = validateConfigShape(parsed);
+      const profiled = applyConfigProfile(normalized, profileName);
       writeYamlConfig(bootstrapPath, profiled.config);
       const shutdownTimeoutMs = Number(options.shutdownTimeoutMs);
       const startResult = startServer({
