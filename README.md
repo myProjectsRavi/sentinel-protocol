@@ -581,6 +581,125 @@ npx --yes --package sentinel-protocol sentinel watch --profile minimal
 
 </details>
 
+<details>
+<summary><strong>Method 5: Enforce Mode — Maximum Security (paranoid profile)</strong></summary>
+
+Enforce mode with the `paranoid` profile activates **all 81 security engines** and **blocks threats instead of just logging them**. This is the strictest security posture available.
+
+#### Step 1: Bootstrap with Paranoid + Enforce
+
+```bash
+npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
+```
+
+You'll see output like:
+```
+Bootstrap profile: paranoid (81/81 runtime engines enabled)
+Doctor summary: pass=40 warn=4 fail=1
+[FAIL] synthetic-poisoning-ack: Requires explicit legal acknowledgement...
+[WARN] sandbox-experimental-mode: Validate false positives...
+[WARN] epistemic-anchor-ack: Set acknowledgement...
+[WARN] budget-cost-model: Zero token pricing...
+```
+
+**This is expected.** Sentinel intentionally requires opt-in for its most powerful engines.
+
+#### Step 2: Edit Your Config to Clear All Warnings
+
+Open the config file:
+
+```bash
+# macOS / Linux
+nano ~/.sentinel/sentinel.yaml
+
+# Or with VS Code
+code ~/.sentinel/sentinel.yaml
+```
+
+Find and update these sections:
+
+**a) Synthetic Poisoning** (clears the `[FAIL]` — this engine injects decoy data to detect exfiltration):
+
+```yaml
+  synthetic_poisoning:
+    enabled: true
+    mode: inject
+    acknowledgement: "I_UNDERSTAND_SYNTHETIC_DATA_RISK"     # ← add this line
+```
+
+**b) Epistemic Anchor** (clears the `[WARN]` — experimental fact-checking engine):
+
+```yaml
+  epistemic_anchor:
+    enabled: true
+    acknowledgement: "I_UNDERSTAND_EPISTEMIC_ANCHOR_IS_EXPERIMENTAL"  # ← add this line
+```
+
+**c) Budget Token Pricing** (optional — clears the `[WARN]` about $0 spend tracking):
+
+```yaml
+  budget:
+    enabled: true
+    daily_limit_usd: 10                  # your daily budget ceiling
+    input_cost_per_1k_tokens: 0.005      # ← add pricing for your model
+    output_cost_per_1k_tokens: 0.015     # ← add pricing for your model
+```
+
+Save the file and exit.
+
+#### Step 3: Restart and Verify
+
+```bash
+# Stop existing instance
+npx --yes --package sentinel-protocol sentinel stop
+
+# Restart with enforce mode
+npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
+```
+
+Now verify doctor passes with zero failures:
+
+```bash
+npx --yes --package sentinel-protocol sentinel doctor
+```
+
+Expected output:
+```
+Doctor summary: pass=44 warn=1 fail=0
+[WARN] node-env: NODE_ENV is not set to production...
+```
+
+> **💡 Tip:** The `NODE_ENV` warning is normal for local development. In production, start with `NODE_ENV=production` to clear it:
+> ```bash
+> NODE_ENV=production npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
+> ```
+
+#### What Each Mode Does
+
+| Mode | Behavior | Best For |
+|---|---|---|
+| `monitor` | Logs threats but allows all requests through | Development, initial testing |
+| `warn` | Logs threats + adds warning headers to responses | Staging, gradual rollout |
+| `enforce` | **Blocks** any request that fails security checks | Production, compliance |
+
+#### Quick Reference — All Combinations
+
+```bash
+# Dev laptop, just watching
+sentinel bootstrap --profile minimal --dashboard
+
+# Staging, log threats with warnings
+sentinel bootstrap --profile standard --mode warn --dashboard
+
+# Production, block everything suspicious
+sentinel bootstrap --profile paranoid --mode enforce --dashboard
+
+# Production with NODE_ENV set (clears all warnings)
+NODE_ENV=production sentinel start --profile paranoid --mode enforce --dashboard
+```
+
+</details>
+
 ---
 
 ## 🔧 Configuration
