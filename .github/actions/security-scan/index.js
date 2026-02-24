@@ -6,6 +6,13 @@ const path = require('path');
 const { InjectionScanner } = require('../../../src/engines/injection-scanner');
 const { AdversarialEvalHarness, DEFAULT_CASES } = require('../../../src/governance/adversarial-eval-harness');
 
+const TOOL_CALLS_RE = /"tool_calls"\s*:/i;
+const DANGEROUS_TOOL_NAME_RE =
+  /\b(?:execute_shell|shell_exec|run_command|exec(?:ute)?|bash|powershell|terminal|os_system|cmd)\b/i;
+const DANGEROUS_ARGUMENT_KEY_RE = /"(?:cmd|command|script|shell|exec|payload)"\s*:/i;
+const DANGEROUS_COMMAND_RE =
+  /\b(?:cat\s+\/etc\/passwd|rm\s+-rf|curl\s+https?:\/\/|wget\s+https?:\/\/|nc\s+-e|\/bin\/sh|chmod\s+\+x|base64\s+-d|drop\s+table|select\s+\*)\b/i;
+
 function getInput(name, fallback = '') {
   const key = `INPUT_${String(name || '').replace(/ /g, '_').replace(/-/g, '_').toUpperCase()}`;
   const value = process.env[key];
@@ -63,6 +70,75 @@ function appendStepSummary(lines) {
     return;
   }
   fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`, 'utf8');
+}
+
+function parseJsonSafe(input) {
+  try {
+    return JSON.parse(String(input || ''));
+  } catch {
+    return null;
+  }
+}
+
+function stringifySafe(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function evaluateToolForgerySignals(input) {
+  const text = String(input || '').slice(0, 32768);
+  if (!text) {
+    return {
+      detected: false,
+      score: 0,
+    };
+  }
+
+  const hasToolCallsSyntax = TOOL_CALLS_RE.test(text) || /\btool_calls\b/i.test(text);
+  let nameSignal = false;
+  let commandSignal = false;
+  let argumentKeySignal = false;
+
+  const parsed = parseJsonSafe(text);
+  if (parsed && parsed.tool_calls && Array.isArray(parsed.tool_calls)) {
+    for (const call of parsed.tool_calls.slice(0, 32)) {
+      const fn = call && typeof call === 'object' ? (call.function || call) : {};
+      const name = String(fn?.name || '');
+      const argsText = stringifySafe(fn?.arguments);
+      if (DANGEROUS_TOOL_NAME_RE.test(name)) {
+        nameSignal = true;
+      }
+      if (DANGEROUS_ARGUMENT_KEY_RE.test(argsText)) {
+        argumentKeySignal = true;
+      }
+      if (DANGEROUS_COMMAND_RE.test(argsText)) {
+        commandSignal = true;
+      }
+      if (nameSignal && (argumentKeySignal || commandSignal)) {
+        break;
+      }
+    }
+  } else {
+    nameSignal = DANGEROUS_TOOL_NAME_RE.test(text);
+    argumentKeySignal = DANGEROUS_ARGUMENT_KEY_RE.test(text);
+    commandSignal = DANGEROUS_COMMAND_RE.test(text);
+  }
+
+  const detected = hasToolCallsSyntax && nameSignal && (argumentKeySignal || commandSignal);
+  const score = detected ? (commandSignal ? 0.95 : 0.88) : 0;
+  return {
+    detected,
+    score,
+  };
 }
 
 function buildSarif(report) {
@@ -210,6 +286,12 @@ async function main() {
           score: Number(outcome.score || 0),
         };
       },
+      extraEngines: [
+        {
+          name: 'tool_forgery_heuristic',
+          evaluate: (text) => evaluateToolForgerySignals(text),
+        },
+      ],
     },
     runId: process.env.GITHUB_RUN_ID ? `gh-${process.env.GITHUB_RUN_ID}` : undefined,
   });
@@ -262,4 +344,3 @@ main().catch((error) => {
   console.error(`sentinel security-scan action failed: ${error.message}`);
   process.exitCode = 1;
 });
-

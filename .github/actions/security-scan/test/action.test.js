@@ -41,7 +41,7 @@ describe('security-scan action', () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-action-pass-'));
     const sarifPath = path.join(temp, 'scan.sarif');
     const run = runAction({
-      INPUT_THRESHOLD: '0.50',
+      INPUT_THRESHOLD: '0.85',
       INPUT_SARIF_OUTPUT: sarifPath,
     });
 
@@ -49,8 +49,10 @@ describe('security-scan action', () => {
     const out = fs.readFileSync(run.outputFile, 'utf8');
     expect(out.includes('detection_rate=')).toBe(true);
     expect(out.includes('pass=true')).toBe(true);
+    expect(out.includes('detection_rate=1.000000')).toBe(true);
     const summary = fs.readFileSync(run.summaryFile, 'utf8');
     expect(summary.includes('### Sentinel Security Scan')).toBe(true);
+    expect(summary.includes('tool_forgery_heuristic')).toBe(true);
     expect(fs.existsSync(sarifPath)).toBe(true);
   });
 
