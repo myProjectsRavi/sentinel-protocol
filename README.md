@@ -241,6 +241,25 @@ Or run passive watch mode (monitor + dashboard + setup hints):
 npx --yes --package sentinel-protocol sentinel watch --profile minimal
 ```
 
+## Passive Watch Mode (No App-Code Changes)
+
+Fastest monitor-first local path:
+
+```bash
+npx --yes --package sentinel-protocol sentinel watch --profile minimal
+```
+
+One-line config intent (already applied by `--profile minimal`):
+
+```yaml
+mode: monitor
+runtime:
+  dashboard:
+    enabled: true
+```
+
+Then point any SDK `baseURL` to `http://127.0.0.1:8787/v1` with `x-sentinel-target`.
+
 By default Sentinel runs at:
 
 ```text

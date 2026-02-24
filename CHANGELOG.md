@@ -47,6 +47,7 @@
   - optional release publish step gated by `VSCE_PAT`
 - Python adapter package for LangChain/LlamaIndex/CrewAI callbacks: `python/sentinel_protocol_adapters/`
 - Python adapter expansion: AutoGen + LangGraph callbacks.
+- Added single-file Python adapter source: `python/sentinel_protocol_adapters.py`.
 - Embed callback expansion: AutoGen + LangGraph callbacks.
 - Lazy optional-engine loading with runtime visibility counters and status output.
 - Cost optimizer memory-budget extensions:
