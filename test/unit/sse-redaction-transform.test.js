@@ -65,6 +65,32 @@ describe('SSERedactionTransform', () => {
     expect(detections[0].projectedRedaction).toContain('[REDACTED_OPENAI_API_KEY]');
   });
 
+  test('monitor mode never terminates stream for block-severity findings', async () => {
+    const scanner = new PIIScanner({
+      maxScanBytes: 262144,
+      regexSafetyCapBytes: 51200,
+    });
+    const detections = [];
+    const transform = new SSERedactionTransform({
+      scanner,
+      maxScanBytes: 65536,
+      maxLineBytes: 16384,
+      severityActions: { critical: 'block', high: 'block', medium: 'redact', low: 'log' },
+      effectiveMode: 'monitor',
+      streamBlockMode: 'terminate',
+      onDetection: (event) => detections.push(event),
+    });
+
+    const source = Readable.from([
+      Buffer.from('data: openai key sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890abcdefgh\n\n', 'utf8'),
+    ]);
+
+    const out = await collect(source.pipe(transform));
+    expect(out).toContain('sk-proj-');
+    expect(detections.length).toBeGreaterThan(0);
+    expect(detections[0].action).toBe('log');
+  });
+
   test('detects entropy in monitor mode and keeps stream flowing', async () => {
     const scanner = new PIIScanner({
       maxScanBytes: 262144,

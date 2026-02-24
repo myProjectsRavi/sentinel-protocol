@@ -15,8 +15,11 @@ function highestSeverity(findings) {
 
 function resolveAction({ severity, severityActions, effectiveMode, streamBlockMode }) {
   const configured = severityActions?.[severity] || 'log';
-  if (configured === 'block' && effectiveMode === 'enforce') {
-    return streamBlockMode === 'terminate' ? 'block' : 'redact';
+  if (configured === 'block') {
+    if (effectiveMode === 'enforce') {
+      return streamBlockMode === 'terminate' ? 'block' : 'redact';
+    }
+    return 'log';
   }
   return configured;
 }

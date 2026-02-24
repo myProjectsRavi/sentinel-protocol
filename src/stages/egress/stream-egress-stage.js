@@ -144,8 +144,14 @@ async function runStreamEgressStage({
     provider: routedProvider,
     correlationId,
   });
+  const proofContext =
+    streamProof &&
+    typeof streamProof.update === 'function' &&
+    typeof streamProof.finalize === 'function'
+      ? streamProof
+      : null;
   const canAddProofTrailers =
-    Boolean(streamProof) &&
+    Boolean(proofContext) &&
     server.provenanceSigner.signStreamTrailers === true &&
     typeof res.addTrailers === 'function';
   if (canAddProofTrailers) {
@@ -486,8 +492,8 @@ async function runStreamEgressStage({
 
   streamOut.on('data', (chunk) => {
     streamedBytes += chunk.length;
-    if (streamProof) {
-      streamProof.update(chunk);
+    if (proofContext) {
+      proofContext.update(chunk);
     }
     const decoded = classifierDecoder.write(chunk);
     if (decoded) {
@@ -610,7 +616,7 @@ async function runStreamEgressStage({
       }
     }
     if (canAddProofTrailers) {
-      const proof = streamProof.finalize();
+      const proof = proofContext.finalize();
       if (proof) {
         res.addTrailers(ProvenanceSigner.proofHeaders(proof));
         if (server.outputProvenanceSigner?.isEnabled?.()) {

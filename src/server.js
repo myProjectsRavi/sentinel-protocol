@@ -185,6 +185,7 @@ function createDisabledRuntimeEngine(options = {}) {
     snapshotMetrics: () => ({ enabled: false }),
     getStats: () => ({ enabled: false }),
     getPublicMetadata: () => ({ enabled: false }),
+    createStreamContext: () => null,
     create: () => null,
     verify: () => ({ valid: false, reason: 'disabled' }),
     createEnvelope: () => null,
@@ -1338,8 +1339,14 @@ class SentinelServer {
         provider,
         correlationId,
       });
+      const proofContext =
+        streamProof &&
+        typeof streamProof.update === 'function' &&
+        typeof streamProof.finalize === 'function'
+          ? streamProof
+          : null;
       const canAddTrailers =
-        Boolean(streamProof) &&
+        Boolean(proofContext) &&
         this.provenanceSigner.signStreamTrailers === true &&
         typeof res.addTrailers === 'function';
       if (canAddTrailers) {
@@ -1357,14 +1364,14 @@ class SentinelServer {
         trigger,
         onChunk: (chunk) => {
           streamedBytes += chunk.length;
-          if (streamProof) {
-            streamProof.update(chunk);
+          if (proofContext) {
+            proofContext.update(chunk);
           }
         },
       });
 
       if (canAddTrailers) {
-        const proof = streamProof.finalize();
+        const proof = proofContext.finalize();
         if (proof) {
           res.addTrailers(ProvenanceSigner.proofHeaders(proof));
         }
