@@ -51,6 +51,8 @@ const { A2ACardVerifier } = require('./security/a2a-card-verifier');
 const { ConsensusProtocol } = require('./security/consensus-protocol');
 const { CrossTenantIsolator } = require('./security/cross-tenant-isolator');
 const { ColdStartAnalyzer } = require('./security/cold-start-analyzer');
+const { BehavioralFingerprint } = require('./security/behavioral-fingerprint');
+const { ThreatIntelMesh } = require('./security/threat-intel-mesh');
 const { MCPPoisoningDetector } = require('./security/mcp-poisoning-detector');
 const { MCPShadowDetector } = require('./security/mcp-shadow-detector');
 const { MemoryPoisoningSentinel } = require('./security/memory-poisoning-sentinel');
@@ -72,13 +74,19 @@ const { OutputProvenanceSigner, sha256Text } = require('./egress/output-provenan
 const { OutputSchemaValidator } = require('./egress/output-schema-validator');
 const { SemanticDriftCanary } = require('./security/semantic-drift-canary');
 const { BudgetAutopilot } = require('./optimizer/budget-autopilot');
+const { CostEfficiencyOptimizer } = require('./optimizer/cost-efficiency-optimizer');
+const { ZKConfigValidator } = require('./config/zk-config-validator');
 const { EvidenceVault } = require('./governance/evidence-vault');
 const { ThreatPropagationGraph } = require('./governance/threat-propagation-graph');
 const { AttackCorpusEvolver } = require('./governance/attack-corpus-evolver');
 const { ForensicDebugger } = require('./governance/forensic-debugger');
+const { AdversarialEvalHarness } = require('./governance/adversarial-eval-harness');
 const { PolicyGradientAnalyzer } = require('./governance/policy-gradient-analyzer');
 const { CapabilityIntrospection } = require('./governance/capability-introspection');
 const { ComputeAttestation } = require('./governance/compute-attestation');
+const { AnomalyTelemetry } = require('./telemetry/anomaly-telemetry');
+const { LFRLEngine } = require('./engines/lfrl-engine');
+const { SelfHealingImmuneSystem } = require('./engines/self-healing-immune');
 const {
   initRequestEnvelope,
   attachProvenanceInterceptors,
@@ -231,6 +239,8 @@ class SentinelServer {
       agent_identity_blocked: 0,
       tool_use_anomaly_detected: 0,
       tool_use_anomaly_blocked: 0,
+      behavioral_fingerprint_detected: 0,
+      behavioral_fingerprint_blocked: 0,
       serialization_firewall_detected: 0,
       serialization_firewall_blocked: 0,
       context_integrity_detected: 0,
@@ -246,13 +256,25 @@ class SentinelServer {
       sandbox_enforcer_blocked: 0,
       memory_integrity_detected: 0,
       memory_integrity_blocked: 0,
+      threat_intel_detected: 0,
+      threat_intel_blocked: 0,
+      self_healing_detected: 0,
+      self_healing_blocked: 0,
+      lfrl_matches: 0,
+      lfrl_blocked: 0,
       semantic_dsl_matched: 0,
       budget_autopilot_recommendations: 0,
+      cost_efficiency_detected: 0,
+      cost_efficiency_blocked: 0,
       evidence_vault_entries: 0,
       threat_graph_events: 0,
       attack_corpus_candidates: 0,
+      anomaly_events_total: 0,
       capability_snapshots: 0,
       policy_gradient_runs: 0,
+      adversarial_eval_runs: 0,
+      adversarial_eval_regressions: 0,
+      zk_config_findings: 0,
       auto_immune_matches: 0,
       auto_immune_blocked: 0,
       auto_immune_learned: 0,
@@ -376,6 +398,10 @@ class SentinelServer {
     this.cascadeIsolator = new CascadeIsolator(this.config.runtime?.cascade_isolator || {});
     this.agentIdentityFederation = new AgentIdentityFederation(this.config.runtime?.agent_identity_federation || {});
     this.toolUseAnomalyDetector = new ToolUseAnomalyDetector(this.config.runtime?.tool_use_anomaly || {});
+    this.behavioralFingerprint = new BehavioralFingerprint(this.config.runtime?.behavioral_fingerprint || {});
+    this.threatIntelMesh = new ThreatIntelMesh(this.config.runtime?.threat_intel_mesh || {});
+    this.lfrlEngine = new LFRLEngine(this.config.runtime?.lfrl || {});
+    this.selfHealingImmune = new SelfHealingImmuneSystem(this.config.runtime?.self_healing_immune || {});
     this.serializationFirewall = new SerializationFirewall(this.config.runtime?.serialization_firewall || {});
     this.contextIntegrityGuardian = new ContextIntegrityGuardian(this.config.runtime?.context_integrity_guardian || {});
     this.toolSchemaValidator = new ToolSchemaValidator(this.config.runtime?.tool_schema_validator || {});
@@ -386,10 +412,14 @@ class SentinelServer {
     this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
     this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
     this.budgetAutopilot = new BudgetAutopilot(this.config.runtime?.budget_autopilot || {});
+    this.costEfficiencyOptimizer = new CostEfficiencyOptimizer(this.config.runtime?.cost_efficiency_optimizer || {});
     this.evidenceVault = new EvidenceVault(this.config.runtime?.evidence_vault || {});
     this.threatPropagationGraph = new ThreatPropagationGraph(this.config.runtime?.threat_graph || {});
     this.attackCorpusEvolver = new AttackCorpusEvolver(this.config.runtime?.attack_corpus_evolver || {});
     this.forensicDebugger = new ForensicDebugger(this.config.runtime?.forensic_debugger || {});
+    this.adversarialEvalHarness = new AdversarialEvalHarness(this.config.runtime?.adversarial_eval_harness || {});
+    this.anomalyTelemetry = new AnomalyTelemetry(this.config.runtime?.anomaly_telemetry || {});
+    this.zkConfigValidator = new ZKConfigValidator(this.config.runtime?.zk_config_validator || {});
     this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
       upstreamClient: this.upstreamClient,
       config: this.config,
@@ -413,6 +443,7 @@ class SentinelServer {
     this.computeAttestation = new ComputeAttestation(this.config.runtime?.compute_attestation || {});
     this.capabilityIntrospection = new CapabilityIntrospection(this.config.runtime?.capability_introspection || {});
     this.policyGradientAnalyzer = new PolicyGradientAnalyzer(this.config.runtime?.policy_gradient_analyzer || {});
+    this.refreshZkConfigAssessment();
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
         semantic_cache_enabled: true,
@@ -499,6 +530,21 @@ class SentinelServer {
     return this.config.mode;
   }
 
+  refreshZkConfigAssessment() {
+    if (!this.zkConfigValidator?.isEnabled?.()) {
+      this.zkConfigAssessment = {
+        enabled: false,
+      };
+      return this.zkConfigAssessment;
+    }
+    const assessment = this.zkConfigValidator.evaluate(this.config, {
+      knownRuntimeKeys: Object.keys(this.config?.runtime || {}),
+    });
+    this.zkConfigAssessment = assessment;
+    this.stats.zk_config_findings = Array.isArray(assessment?.findings) ? assessment.findings.length : 0;
+    return assessment;
+  }
+
   currentStatusPayload() {
     const budgetSnapshot = this.budgetStore.snapshot();
     const budgetAutopilotConfig =
@@ -577,6 +623,8 @@ class SentinelServer {
       agent_identity_federation_mode: this.agentIdentityFederation.mode,
       tool_use_anomaly_enabled: this.toolUseAnomalyDetector.isEnabled(),
       tool_use_anomaly_mode: this.toolUseAnomalyDetector.mode,
+      behavioral_fingerprint_enabled: this.behavioralFingerprint.isEnabled(),
+      behavioral_fingerprint_mode: this.behavioralFingerprint.mode,
       serialization_firewall_enabled: this.serializationFirewall.isEnabled(),
       serialization_firewall_mode: this.serializationFirewall.mode,
       context_integrity_guardian_enabled: this.contextIntegrityGuardian.isEnabled(),
@@ -591,6 +639,15 @@ class SentinelServer {
       sandbox_enforcer_mode: this.sandboxEnforcer.mode,
       memory_integrity_monitor_enabled: this.memoryIntegrityMonitor.isEnabled(),
       memory_integrity_monitor_mode: this.memoryIntegrityMonitor.mode,
+      threat_intel_mesh_enabled: this.threatIntelMesh.isEnabled(),
+      threat_intel_mesh_mode: this.threatIntelMesh.mode,
+      threat_intel_mesh_signatures: this.threatIntelMesh.signatures?.size || 0,
+      lfrl_enabled: this.lfrlEngine.isEnabled(),
+      lfrl_mode: this.lfrlEngine.mode,
+      lfrl_rules_loaded: Array.isArray(this.lfrlEngine.compiledRules) ? this.lfrlEngine.compiledRules.length : 0,
+      self_healing_immune_enabled: this.selfHealingImmune.isEnabled(),
+      self_healing_immune_mode: this.selfHealingImmune.mode,
+      self_healing_signatures: this.selfHealingImmune.signatures?.size || 0,
       semantic_firewall_dsl_enabled: this.config.runtime?.semantic_firewall_dsl?.enabled === true,
       prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
       prompt_rebuff_mode: this.promptRebuff.mode,
@@ -609,6 +666,9 @@ class SentinelServer {
       budget_autopilot_enabled: this.budgetAutopilot.isEnabled(),
       budget_autopilot_mode: this.budgetAutopilot.mode,
       budget_autopilot_recommendation: budgetAutopilotRecommendation,
+      cost_efficiency_optimizer_enabled: this.costEfficiencyOptimizer.isEnabled(),
+      cost_efficiency_optimizer_mode: this.costEfficiencyOptimizer.mode,
+      cost_efficiency_optimizer_snapshot: this.costEfficiencyOptimizer.snapshot(),
       evidence_vault_enabled: this.evidenceVault.isEnabled(),
       evidence_vault_stats: this.evidenceVault.getStats(),
       threat_graph_enabled: this.threatPropagationGraph.isEnabled(),
@@ -619,6 +679,12 @@ class SentinelServer {
         : 0,
       capability_introspection_enabled: this.capabilityIntrospection.isEnabled(),
       policy_gradient_analyzer_enabled: this.policyGradientAnalyzer.isEnabled(),
+      adversarial_eval_harness_enabled: this.adversarialEvalHarness.isEnabled(),
+      adversarial_eval_latest: this.adversarialEvalHarness.latest(),
+      anomaly_telemetry_enabled: this.anomalyTelemetry.isEnabled(),
+      anomaly_telemetry_snapshot: this.anomalyTelemetry.snapshot(),
+      zk_config_validator_enabled: this.zkConfigValidator.isEnabled(),
+      zk_config_assessment: this.zkConfigAssessment || this.refreshZkConfigAssessment(),
       agent_observability_enabled: this.agentObservability.isEnabled(),
       shadow_os_enabled: this.shadowOS.isEnabled(),
       shadow_os_mode: this.shadowOS.mode,
@@ -1226,6 +1292,83 @@ class SentinelServer {
       res.status(200).json(report);
     });
 
+    this.app.get('/_sentinel/anomalies', (req, res) => {
+      if (!this.anomalyTelemetry?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'ANOMALY_TELEMETRY_DISABLED',
+        });
+        return;
+      }
+      res.status(200).json(this.anomalyTelemetry.snapshot());
+    });
+
+    this.app.get('/_sentinel/threat-intel', (req, res) => {
+      if (!this.threatIntelMesh?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'THREAT_INTEL_MESH_DISABLED',
+        });
+        return;
+      }
+      res.status(200).json(this.threatIntelMesh.exportSnapshot());
+    });
+
+    this.app.get('/_sentinel/zk-config', (req, res) => {
+      if (!this.zkConfigValidator?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'ZK_CONFIG_VALIDATOR_DISABLED',
+        });
+        return;
+      }
+      const exportPayload = this.zkConfigValidator.safeExport(this.config, {
+        knownRuntimeKeys: Object.keys(this.config?.runtime || {}),
+      });
+      this.zkConfigAssessment = exportPayload;
+      this.stats.zk_config_findings = Array.isArray(exportPayload.findings) ? exportPayload.findings.length : 0;
+      res.status(200).json(exportPayload);
+    });
+
+    this.app.post('/_sentinel/adversarial-eval/run', (req, res) => {
+      if (!this.adversarialEvalHarness?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'ADVERSARIAL_EVAL_HARNESS_DISABLED',
+        });
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const result = this.adversarialEvalHarness.run({
+        cases: Array.isArray(payload.cases) ? payload.cases : [],
+        adapters: {
+          injectionScan: (text) => this.policyEngine.scanInjection(String(text || '')),
+          promptRebuff: (text) => {
+            if (!this.promptRebuff?.isEnabled?.()) {
+              return { detected: false, score: 0 };
+            }
+            const injectionResult = this.policyEngine.scanInjection(String(text || ''));
+            return this.promptRebuff.evaluate({
+              headers: {},
+              correlationId: 'adversarial-eval',
+              bodyText: String(text || ''),
+              injectionResult,
+              effectiveMode: 'monitor',
+            });
+          },
+        },
+        runId: String(payload.run_id || ''),
+      });
+      if (result?.report) {
+        this.stats.adversarial_eval_runs += 1;
+        if (result.report.summary?.regression_detected === true) {
+          this.stats.adversarial_eval_regressions += 1;
+        }
+      }
+      res.status(200).json(result);
+    });
+
     this.app.get('/_sentinel/metrics', (req, res) => {
       const payload = this.prometheus.renderMetrics({
         counters: this.stats,
@@ -1305,6 +1448,32 @@ class SentinelServer {
         method,
         route: parsedPath.pathname,
       });
+      if (this.adversarialEvalHarness?.isEnabled?.()) {
+        const evalRun = this.adversarialEvalHarness.maybeRun({
+          requestCount: this.stats.requests_total,
+          adapters: {
+            injectionScan: (text) => this.policyEngine.scanInjection(String(text || '')),
+            promptRebuff: (text) => {
+              if (!this.promptRebuff?.isEnabled?.()) {
+                return { detected: false, score: 0 };
+              }
+              return this.promptRebuff.evaluate({
+                headers: {},
+                correlationId: 'scheduled-adversarial-eval',
+                bodyText: String(text || ''),
+                injectionResult: this.policyEngine.scanInjection(String(text || '')),
+                effectiveMode: 'monitor',
+              });
+            },
+          },
+        });
+        if (evalRun?.executed) {
+          this.stats.adversarial_eval_runs += 1;
+          if (evalRun.report?.summary?.regression_detected === true) {
+            this.stats.adversarial_eval_regressions += 1;
+          }
+        }
+      }
       if (await runPipelineOrRespond({
         server: this,
         stageName: 'request:received',
@@ -1381,6 +1550,94 @@ class SentinelServer {
         (bodyJson && bodyJson.stream === true);
       const warnings = [];
       const effectiveMode = this.computeEffectiveMode();
+      const budgetSnapshotForCost = this.budgetStore.snapshot();
+      let costEfficiencyDecision = null;
+      if (this.costEfficiencyOptimizer?.isEnabled?.()) {
+        try {
+          costEfficiencyDecision = this.costEfficiencyOptimizer.evaluate({
+            provider,
+            bodyText,
+            bodyJson,
+            latencyMs: Date.now() - requestStart,
+            budgetRemainingUsd: Number(budgetSnapshotForCost.remainingUsd || 0),
+            effectiveMode,
+          });
+        } catch (error) {
+          costEfficiencyDecision = {
+            enabled: true,
+            detected: false,
+            shouldBlock: false,
+            reason: 'cost_efficiency_error',
+            findings: [],
+            error: String(error.message || error),
+          };
+          warnings.push('cost_efficiency:error');
+          this.stats.warnings_total += 1;
+        }
+
+        if (costEfficiencyDecision?.enabled && this.costEfficiencyOptimizer.observability) {
+          res.setHeader(
+            'x-sentinel-cost-efficiency',
+            costEfficiencyDecision.detected ? String(costEfficiencyDecision.reason || 'detected') : 'clean'
+          );
+          if (costEfficiencyDecision.route_recommendation?.provider) {
+            res.setHeader('x-sentinel-cost-route-recommendation', String(costEfficiencyDecision.route_recommendation.provider));
+          }
+        }
+        if (costEfficiencyDecision?.detected) {
+          this.stats.cost_efficiency_detected += 1;
+          warnings.push(`cost_efficiency:${costEfficiencyDecision.reason || 'detected'}`);
+          this.stats.warnings_total += 1;
+        }
+        if (costEfficiencyDecision?.shouldBlock) {
+          this.stats.blocked_total += 1;
+          this.stats.policy_blocked += 1;
+          this.stats.cost_efficiency_blocked += 1;
+          res.setHeader('x-sentinel-blocked-by', 'cost_efficiency_optimizer');
+          const diagnostics = {
+            errorSource: 'sentinel',
+            upstreamError: false,
+            provider,
+            retryCount: 0,
+            circuitState: this.circuitBreakers.getProviderState(breakerKey).state,
+            correlationId,
+          };
+          responseHeaderDiagnostics(res, diagnostics);
+          await this.maybeNormalizeBlockedLatency({
+            res,
+            statusCode: 429,
+            requestStart,
+          });
+          this.auditLogger.write({
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'blocked_cost_efficiency',
+            reasons: [String(costEfficiencyDecision.reason || 'cost_efficiency_violation')],
+            pii_types: [],
+            redactions: 0,
+            duration_ms: Date.now() - requestStart,
+            request_bytes: rawBody.length,
+            response_status: 429,
+            response_bytes: 0,
+            provider,
+            cost_efficiency_findings: costEfficiencyDecision.findings || [],
+          });
+          this.writeStatus();
+          finalizeRequestTelemetry({
+            decision: 'blocked_policy',
+            status: 429,
+            providerName: provider,
+          });
+          res.status(429).json({
+            error: 'COST_EFFICIENCY_BLOCKED',
+            reason: costEfficiencyDecision.reason || 'cost_efficiency_violation',
+            correlation_id: correlationId,
+          });
+          return;
+        }
+      }
       const pathWithQuery = `${parsedPath.pathname}${parsedPath.search}`;
       let precomputedLocalScan = null;
       let precomputedInjection = null;

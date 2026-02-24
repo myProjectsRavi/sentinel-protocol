@@ -158,6 +158,76 @@ paths:
                 additionalProperties: true
         '404':
           description: Policy gradient analyzer disabled.
+  /_sentinel/anomalies:
+    get:
+      summary: Runtime anomaly telemetry snapshot
+      operationId: getAnomalyTelemetry
+      responses:
+        '200':
+          description: Anomaly telemetry snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Anomaly telemetry disabled.
+  /_sentinel/threat-intel:
+    get:
+      summary: Threat intelligence mesh snapshot
+      operationId: getThreatIntelMesh
+      responses:
+        '200':
+          description: Threat intelligence signature state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Threat intel mesh disabled.
+  /_sentinel/zk-config:
+    get:
+      summary: Zero-knowledge config assessment export
+      operationId: getZkConfigAssessment
+      responses:
+        '200':
+          description: Redacted configuration assessment and score.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: ZK config validator disabled.
+  /_sentinel/adversarial-eval/run:
+    post:
+      summary: Run adversarial self-evaluation harness
+      operationId: runAdversarialEval
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                run_id:
+                  type: string
+                cases:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+      responses:
+        '200':
+          description: Adversarial evaluation report.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Adversarial eval harness disabled.
   /_sentinel/swarm/public-key:
     get:
       summary: Swarm protocol public metadata

@@ -151,6 +151,31 @@ async function runAgenticStage({
       statsBlocked: 'tool_use_anomaly_blocked',
     });
   }
+  if (server.behavioralFingerprint?.isEnabled()) {
+    const behavioralDecision = server.behavioralFingerprint.evaluate({
+      agentId,
+      bodyText,
+      bodyJson,
+      latencyMs: Date.now() - requestStart,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'behavioral_fingerprint',
+      decision: behavioralDecision,
+      warningPrefix: 'behavioral_fingerprint',
+      statsDetected: 'behavioral_fingerprint_detected',
+      statsBlocked: 'behavioral_fingerprint_blocked',
+    });
+    if (behavioralDecision?.enabled && server.behavioralFingerprint.observability) {
+      res.setHeader(
+        'x-sentinel-behavioral-fingerprint',
+        behavioralDecision.detected ? String(behavioralDecision.reason || 'detected') : 'clean'
+      );
+      if (Number.isFinite(Number(behavioralDecision.trust_score))) {
+        res.setHeader('x-sentinel-behavioral-trust-score', String(behavioralDecision.trust_score));
+      }
+    }
+  }
   if (server.sandboxEnforcer?.isEnabled()) {
     const sandboxEnforcerDecision = server.sandboxEnforcer.evaluate({
       bodyJson,

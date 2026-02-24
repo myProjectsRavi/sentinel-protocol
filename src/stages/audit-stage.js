@@ -92,6 +92,28 @@ function writeAudit(server, payload) {
       });
     }
   }
+  if (server?.costEfficiencyOptimizer?.isEnabled?.()) {
+    const latencyMs = Number(enriched?.duration_ms || 0);
+    const chargedUsd = Number(enriched?.budget_charged_usd || 0);
+    server.costEfficiencyOptimizer.observe({
+      provider: enriched.provider || 'unknown',
+      latencyMs: Number.isFinite(latencyMs) && latencyMs >= 0 ? latencyMs : 0,
+      inputTokens: Number(enriched?.budget_input_tokens || 0),
+      costUsd: Number.isFinite(chargedUsd) && chargedUsd >= 0 ? chargedUsd : 0,
+    });
+  }
+  if (server?.anomalyTelemetry?.isEnabled?.()) {
+    const event = server.anomalyTelemetry.record(enriched);
+    if (event) {
+      server.stats.anomaly_events_total += 1;
+    }
+  }
+  if (server?.threatIntelMesh?.isEnabled?.()) {
+    server.threatIntelMesh.ingestAuditEvent(enriched);
+  }
+  if (server?.selfHealingImmune?.isEnabled?.()) {
+    server.selfHealingImmune.observeAuditEvent(enriched);
+  }
   return writer(enriched);
 }
 

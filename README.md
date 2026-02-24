@@ -52,6 +52,7 @@ Deployment model is simple:
 - Baseline freeze tag: `release-baseline-7186f1f`
 - Baseline commit: `7186f1fdad29c927753e4c08a32fa47ab0257ec9`
 - Evidence doc: `docs/releases/SECURITY_RELIABILITY_EVIDENCE_7186f1f.md`
+- Current V4 evidence doc: `docs/SECURITY_RELIABILITY_EVIDENCE_V4_PHASEA.md`
 - 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
 - OWASP LLM Top 10 mapping: `docs/OWASP_LLM_TOP10_SENTINEL_MAP.md`
 - CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22214993518`
@@ -134,8 +135,10 @@ This is a governance perimeter, not just another model wrapper.
 | Agentic and MCP controls | agentic threat shield (depth/delegation/identity), MCP poisoning detector (schema, description poisoning, config drift) |
 | Egress risk controls | output classifier (toxicity/code/hallucination/disclosure), structured output schema validator, entropy analyzer, SSE safeguards |
 | Governance intelligence | MITRE ATLAS mapping, OWASP compliance mapper, security posture scoring, AIBOM generator |
+| Adaptive defense controls | behavioral fingerprinting, threat-intel mesh signatures, LFRL correlation rules, self-healing immune learning loop |
+| Runtime introspection controls | anomaly telemetry snapshot, ZK config assessment export, adversarial eval harness, capability introspection |
 | Privacy and trust | two-way vault detokenization, differential privacy research track (advisory), provenance/policy signing |
-| Reliability and cost | retry, circuit breaker, failover, loop breaker, intent throttle/drift, rate limiter, budget controls |
+| Reliability and cost | retry, circuit breaker, failover, loop breaker, intent throttle/drift, rate limiter, budget controls, cost-efficiency optimizer |
 | Transport hardening | DNS rebinding defenses, header scrubbing, websocket interception (policy parity with HTTP), stream guards |
 | Developer proof system | red-team (JSON + HTML), CI coverage gate, benchmark regression gate, SBOM (CycloneDX + SPDX), reliability reports |
 
@@ -406,8 +409,17 @@ Sentinel supports websocket interception (Phase A) and streaming protections:
 
 - `GET /_sentinel/health`
 - `GET /_sentinel/metrics` (Prometheus exposition)
+- `GET /_sentinel/capabilities`
+- `GET /_sentinel/attestation`
+- `POST /_sentinel/attestation/verify`
+- `POST /_sentinel/policy/gradient`
 - `GET /_sentinel/provenance/public-key`
+- `POST /_sentinel/provenance/verify`
 - `GET /_sentinel/swarm/public-key`
+- `GET /_sentinel/anomalies`
+- `GET /_sentinel/threat-intel`
+- `GET /_sentinel/zk-config`
+- `POST /_sentinel/adversarial-eval/run`
 
 OpenAPI contract: `docs/openapi.yaml`
 

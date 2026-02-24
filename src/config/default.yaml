@@ -479,6 +479,53 @@ runtime:
     sequence_threshold: 2
     block_on_anomaly: false
     observability: true
+  behavioral_fingerprint:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 21600000
+    max_agents: 5000
+    max_styles_per_agent: 64
+    max_text_chars: 4096
+    max_impersonation_agents: 128
+    warmup_events: 20
+    z_score_threshold: 3
+    impersonation_min_hits: 3
+    block_on_anomaly: false
+    block_on_impersonation: false
+    observability: true
+  threat_intel_mesh:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 604800000
+    max_signatures: 50000
+    max_text_chars: 8192
+    min_hits_to_block: 2
+    block_on_match: false
+    allow_anonymous_share: false
+    bootstrap_signatures: []
+    observability: true
+  lfrl:
+    enabled: false
+    mode: monitor # monitor | block
+    rules: []
+    max_rules: 128
+    max_events: 20000
+    max_matches: 32
+    default_within_ms: 600000
+    ttl_ms: 86400000
+    block_on_rule_action: true
+    observability: true
+  self_healing_immune:
+    enabled: false
+    mode: monitor # monitor | block
+    ttl_ms: 2592000000
+    max_signatures: 50000
+    max_text_chars: 8192
+    min_learn_hits: 3
+    block_on_learned_signature: false
+    auto_tune_enabled: false
+    max_recommendations: 32
+    observability: true
   semantic_firewall_dsl:
     enabled: false
     rules: []
@@ -559,6 +606,49 @@ runtime:
     warn_budget_ratio: 0.2
     sla_p95_ms: 2000
     horizon_hours: 24
+    observability: true
+  cost_efficiency_optimizer:
+    enabled: false
+    mode: monitor # monitor | active
+    ttl_ms: 86400000
+    max_providers: 256
+    max_samples_per_provider: 512
+    max_prompt_chars: 16384
+    chars_per_token: 4
+    prompt_bloat_chars: 6000
+    repetition_warn_ratio: 0.2
+    low_budget_usd: 2
+    memory_warn_bytes: 6442450944
+    memory_critical_bytes: 7516192768
+    block_on_critical_memory: false
+    block_on_budget_exhausted: false
+    observability: true
+  zk_config_validator:
+    enabled: false
+    hmac_key: ""
+    max_findings: 256
+    max_nodes: 50000
+    max_depth: 64
+    redaction_text: "[REDACTED]"
+    score_penalty_secret: 8
+    score_penalty_dead_key: 4
+    score_penalty_over_config: 2
+    observability: true
+  adversarial_eval_harness:
+    enabled: false
+    max_cases: 256
+    max_prompt_chars: 8192
+    max_runs: 128
+    schedule_every_requests: 0
+    fail_open: true
+    regression_drop_threshold: 0.15
+    observability: true
+  anomaly_telemetry:
+    enabled: false
+    max_events: 20000
+    window_ms: 86400000
+    max_engine_buckets: 512
+    max_timeline_events: 500
     observability: true
   evidence_vault:
     enabled: false

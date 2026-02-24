@@ -48,6 +48,10 @@ const RUNTIME_KEYS = new Set([
   'cascade_isolator',
   'agent_identity_federation',
   'tool_use_anomaly',
+  'behavioral_fingerprint',
+  'threat_intel_mesh',
+  'lfrl',
+  'self_healing_immune',
   'semantic_firewall_dsl',
   'stego_exfil_detector',
   'reasoning_trace_monitor',
@@ -58,6 +62,10 @@ const RUNTIME_KEYS = new Set([
   'capability_introspection',
   'policy_gradient_analyzer',
   'budget_autopilot',
+  'cost_efficiency_optimizer',
+  'zk_config_validator',
+  'adversarial_eval_harness',
+  'anomaly_telemetry',
   'evidence_vault',
   'threat_graph',
   'attack_corpus_evolver',
@@ -577,6 +585,61 @@ const TOOL_USE_ANOMALY_KEYS = new Set([
   'observability',
 ]);
 const TOOL_USE_ANOMALY_MODES = new Set(['monitor', 'block']);
+const BEHAVIORAL_FINGERPRINT_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_agents',
+  'max_styles_per_agent',
+  'max_text_chars',
+  'max_impersonation_agents',
+  'warmup_events',
+  'z_score_threshold',
+  'impersonation_min_hits',
+  'block_on_anomaly',
+  'block_on_impersonation',
+  'observability',
+]);
+const BEHAVIORAL_FINGERPRINT_MODES = new Set(['monitor', 'block']);
+const THREAT_INTEL_MESH_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_signatures',
+  'max_text_chars',
+  'min_hits_to_block',
+  'block_on_match',
+  'allow_anonymous_share',
+  'bootstrap_signatures',
+  'observability',
+]);
+const THREAT_INTEL_MESH_MODES = new Set(['monitor', 'block']);
+const LFRL_KEYS = new Set([
+  'enabled',
+  'mode',
+  'rules',
+  'max_rules',
+  'max_events',
+  'max_matches',
+  'default_within_ms',
+  'ttl_ms',
+  'block_on_rule_action',
+  'observability',
+]);
+const LFRL_MODES = new Set(['monitor', 'block']);
+const SELF_HEALING_IMMUNE_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_signatures',
+  'max_text_chars',
+  'min_learn_hits',
+  'block_on_learned_signature',
+  'auto_tune_enabled',
+  'max_recommendations',
+  'observability',
+]);
+const SELF_HEALING_IMMUNE_MODES = new Set(['monitor', 'block']);
 const SEMANTIC_FIREWALL_DSL_KEYS = new Set([
   'enabled',
   'rules',
@@ -673,6 +736,54 @@ const BUDGET_AUTOPILOT_KEYS = new Set([
   'observability',
 ]);
 const BUDGET_AUTOPILOT_MODES = new Set(['monitor', 'active']);
+const COST_EFFICIENCY_OPTIMIZER_KEYS = new Set([
+  'enabled',
+  'mode',
+  'ttl_ms',
+  'max_providers',
+  'max_samples_per_provider',
+  'max_prompt_chars',
+  'chars_per_token',
+  'prompt_bloat_chars',
+  'repetition_warn_ratio',
+  'low_budget_usd',
+  'memory_warn_bytes',
+  'memory_critical_bytes',
+  'block_on_critical_memory',
+  'block_on_budget_exhausted',
+  'observability',
+]);
+const COST_EFFICIENCY_OPTIMIZER_MODES = new Set(['monitor', 'active']);
+const ZK_CONFIG_VALIDATOR_KEYS = new Set([
+  'enabled',
+  'hmac_key',
+  'max_findings',
+  'max_nodes',
+  'max_depth',
+  'redaction_text',
+  'score_penalty_secret',
+  'score_penalty_dead_key',
+  'score_penalty_over_config',
+  'observability',
+]);
+const ADVERSARIAL_EVAL_HARNESS_KEYS = new Set([
+  'enabled',
+  'max_cases',
+  'max_prompt_chars',
+  'max_runs',
+  'schedule_every_requests',
+  'fail_open',
+  'regression_drop_threshold',
+  'observability',
+]);
+const ANOMALY_TELEMETRY_KEYS = new Set([
+  'enabled',
+  'max_events',
+  'window_ms',
+  'max_engine_buckets',
+  'max_timeline_events',
+  'observability',
+]);
 const EVIDENCE_VAULT_KEYS = new Set([
   'enabled',
   'mode',
@@ -2000,6 +2111,73 @@ function applyDefaults(config) {
   toolUseAnomaly.block_on_anomaly = toolUseAnomaly.block_on_anomaly === true;
   toolUseAnomaly.observability = toolUseAnomaly.observability !== false;
 
+  normalized.runtime.behavioral_fingerprint = normalized.runtime.behavioral_fingerprint || {};
+  const behavioralFingerprint = normalized.runtime.behavioral_fingerprint;
+  behavioralFingerprint.enabled = behavioralFingerprint.enabled === true;
+  behavioralFingerprint.mode = BEHAVIORAL_FINGERPRINT_MODES.has(String(behavioralFingerprint.mode || '').toLowerCase())
+    ? String(behavioralFingerprint.mode).toLowerCase()
+    : 'monitor';
+  behavioralFingerprint.ttl_ms = Number(behavioralFingerprint.ttl_ms ?? 6 * 3600000);
+  behavioralFingerprint.max_agents = Number(behavioralFingerprint.max_agents ?? 5000);
+  behavioralFingerprint.max_styles_per_agent = Number(behavioralFingerprint.max_styles_per_agent ?? 64);
+  behavioralFingerprint.max_text_chars = Number(behavioralFingerprint.max_text_chars ?? 4096);
+  behavioralFingerprint.max_impersonation_agents = Number(behavioralFingerprint.max_impersonation_agents ?? 128);
+  behavioralFingerprint.warmup_events = Number(behavioralFingerprint.warmup_events ?? 20);
+  behavioralFingerprint.z_score_threshold = Number(behavioralFingerprint.z_score_threshold ?? 3);
+  behavioralFingerprint.impersonation_min_hits = Number(behavioralFingerprint.impersonation_min_hits ?? 3);
+  behavioralFingerprint.block_on_anomaly = behavioralFingerprint.block_on_anomaly === true;
+  behavioralFingerprint.block_on_impersonation = behavioralFingerprint.block_on_impersonation === true;
+  behavioralFingerprint.observability = behavioralFingerprint.observability !== false;
+
+  normalized.runtime.threat_intel_mesh = normalized.runtime.threat_intel_mesh || {};
+  const threatIntelMesh = normalized.runtime.threat_intel_mesh;
+  threatIntelMesh.enabled = threatIntelMesh.enabled === true;
+  threatIntelMesh.mode = THREAT_INTEL_MESH_MODES.has(String(threatIntelMesh.mode || '').toLowerCase())
+    ? String(threatIntelMesh.mode).toLowerCase()
+    : 'monitor';
+  threatIntelMesh.ttl_ms = Number(threatIntelMesh.ttl_ms ?? 7 * 24 * 3600000);
+  threatIntelMesh.max_signatures = Number(threatIntelMesh.max_signatures ?? 50000);
+  threatIntelMesh.max_text_chars = Number(threatIntelMesh.max_text_chars ?? 8192);
+  threatIntelMesh.min_hits_to_block = Number(threatIntelMesh.min_hits_to_block ?? 2);
+  threatIntelMesh.block_on_match = threatIntelMesh.block_on_match === true;
+  threatIntelMesh.allow_anonymous_share = threatIntelMesh.allow_anonymous_share === true;
+  threatIntelMesh.bootstrap_signatures = Array.isArray(threatIntelMesh.bootstrap_signatures)
+    ? threatIntelMesh.bootstrap_signatures.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  threatIntelMesh.observability = threatIntelMesh.observability !== false;
+
+  normalized.runtime.lfrl = normalized.runtime.lfrl || {};
+  const lfrl = normalized.runtime.lfrl;
+  lfrl.enabled = lfrl.enabled === true;
+  lfrl.mode = LFRL_MODES.has(String(lfrl.mode || '').toLowerCase())
+    ? String(lfrl.mode).toLowerCase()
+    : 'monitor';
+  lfrl.rules = Array.isArray(lfrl.rules)
+    ? lfrl.rules.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  lfrl.max_rules = Number(lfrl.max_rules ?? 128);
+  lfrl.max_events = Number(lfrl.max_events ?? 20000);
+  lfrl.max_matches = Number(lfrl.max_matches ?? 32);
+  lfrl.default_within_ms = Number(lfrl.default_within_ms ?? 10 * 60 * 1000);
+  lfrl.ttl_ms = Number(lfrl.ttl_ms ?? 24 * 3600000);
+  lfrl.block_on_rule_action = lfrl.block_on_rule_action !== false;
+  lfrl.observability = lfrl.observability !== false;
+
+  normalized.runtime.self_healing_immune = normalized.runtime.self_healing_immune || {};
+  const selfHealingImmune = normalized.runtime.self_healing_immune;
+  selfHealingImmune.enabled = selfHealingImmune.enabled === true;
+  selfHealingImmune.mode = SELF_HEALING_IMMUNE_MODES.has(String(selfHealingImmune.mode || '').toLowerCase())
+    ? String(selfHealingImmune.mode).toLowerCase()
+    : 'monitor';
+  selfHealingImmune.ttl_ms = Number(selfHealingImmune.ttl_ms ?? 30 * 24 * 3600000);
+  selfHealingImmune.max_signatures = Number(selfHealingImmune.max_signatures ?? 50000);
+  selfHealingImmune.max_text_chars = Number(selfHealingImmune.max_text_chars ?? 8192);
+  selfHealingImmune.min_learn_hits = Number(selfHealingImmune.min_learn_hits ?? 3);
+  selfHealingImmune.block_on_learned_signature = selfHealingImmune.block_on_learned_signature === true;
+  selfHealingImmune.auto_tune_enabled = selfHealingImmune.auto_tune_enabled === true;
+  selfHealingImmune.max_recommendations = Number(selfHealingImmune.max_recommendations ?? 32);
+  selfHealingImmune.observability = selfHealingImmune.observability !== false;
+
   normalized.runtime.semantic_firewall_dsl = normalized.runtime.semantic_firewall_dsl || {};
   const semanticFirewallDsl = normalized.runtime.semantic_firewall_dsl;
   semanticFirewallDsl.enabled = semanticFirewallDsl.enabled === true;
@@ -2112,6 +2290,59 @@ function applyDefaults(config) {
   budgetAutopilot.sla_p95_ms = Number(budgetAutopilot.sla_p95_ms ?? 2000);
   budgetAutopilot.horizon_hours = Number(budgetAutopilot.horizon_hours ?? 24);
   budgetAutopilot.observability = budgetAutopilot.observability !== false;
+
+  normalized.runtime.cost_efficiency_optimizer = normalized.runtime.cost_efficiency_optimizer || {};
+  const costEfficiencyOptimizer = normalized.runtime.cost_efficiency_optimizer;
+  costEfficiencyOptimizer.enabled = costEfficiencyOptimizer.enabled === true;
+  costEfficiencyOptimizer.mode = COST_EFFICIENCY_OPTIMIZER_MODES.has(String(costEfficiencyOptimizer.mode || '').toLowerCase())
+    ? String(costEfficiencyOptimizer.mode).toLowerCase()
+    : 'monitor';
+  costEfficiencyOptimizer.ttl_ms = Number(costEfficiencyOptimizer.ttl_ms ?? 24 * 3600000);
+  costEfficiencyOptimizer.max_providers = Number(costEfficiencyOptimizer.max_providers ?? 256);
+  costEfficiencyOptimizer.max_samples_per_provider = Number(costEfficiencyOptimizer.max_samples_per_provider ?? 512);
+  costEfficiencyOptimizer.max_prompt_chars = Number(costEfficiencyOptimizer.max_prompt_chars ?? 16384);
+  costEfficiencyOptimizer.chars_per_token = Number(costEfficiencyOptimizer.chars_per_token ?? 4);
+  costEfficiencyOptimizer.prompt_bloat_chars = Number(costEfficiencyOptimizer.prompt_bloat_chars ?? 6000);
+  costEfficiencyOptimizer.repetition_warn_ratio = Number(costEfficiencyOptimizer.repetition_warn_ratio ?? 0.2);
+  costEfficiencyOptimizer.low_budget_usd = Number(costEfficiencyOptimizer.low_budget_usd ?? 2);
+  costEfficiencyOptimizer.memory_warn_bytes = Number(costEfficiencyOptimizer.memory_warn_bytes ?? 6 * 1024 * 1024 * 1024);
+  costEfficiencyOptimizer.memory_critical_bytes = Number(costEfficiencyOptimizer.memory_critical_bytes ?? 7 * 1024 * 1024 * 1024);
+  costEfficiencyOptimizer.block_on_critical_memory = costEfficiencyOptimizer.block_on_critical_memory === true;
+  costEfficiencyOptimizer.block_on_budget_exhausted = costEfficiencyOptimizer.block_on_budget_exhausted === true;
+  costEfficiencyOptimizer.observability = costEfficiencyOptimizer.observability !== false;
+
+  normalized.runtime.zk_config_validator = normalized.runtime.zk_config_validator || {};
+  const zkConfigValidator = normalized.runtime.zk_config_validator;
+  zkConfigValidator.enabled = zkConfigValidator.enabled === true;
+  zkConfigValidator.hmac_key = String(zkConfigValidator.hmac_key || process.env.SENTINEL_ZK_CONFIG_HMAC || '');
+  zkConfigValidator.max_findings = Number(zkConfigValidator.max_findings ?? 256);
+  zkConfigValidator.max_nodes = Number(zkConfigValidator.max_nodes ?? 50000);
+  zkConfigValidator.max_depth = Number(zkConfigValidator.max_depth ?? 64);
+  zkConfigValidator.redaction_text = String(zkConfigValidator.redaction_text || '[REDACTED]');
+  zkConfigValidator.score_penalty_secret = Number(zkConfigValidator.score_penalty_secret ?? 8);
+  zkConfigValidator.score_penalty_dead_key = Number(zkConfigValidator.score_penalty_dead_key ?? 4);
+  zkConfigValidator.score_penalty_over_config = Number(zkConfigValidator.score_penalty_over_config ?? 2);
+  zkConfigValidator.observability = zkConfigValidator.observability !== false;
+
+  normalized.runtime.adversarial_eval_harness = normalized.runtime.adversarial_eval_harness || {};
+  const adversarialEvalHarness = normalized.runtime.adversarial_eval_harness;
+  adversarialEvalHarness.enabled = adversarialEvalHarness.enabled === true;
+  adversarialEvalHarness.max_cases = Number(adversarialEvalHarness.max_cases ?? 256);
+  adversarialEvalHarness.max_prompt_chars = Number(adversarialEvalHarness.max_prompt_chars ?? 8192);
+  adversarialEvalHarness.max_runs = Number(adversarialEvalHarness.max_runs ?? 128);
+  adversarialEvalHarness.schedule_every_requests = Number(adversarialEvalHarness.schedule_every_requests ?? 0);
+  adversarialEvalHarness.fail_open = adversarialEvalHarness.fail_open !== false;
+  adversarialEvalHarness.regression_drop_threshold = Number(adversarialEvalHarness.regression_drop_threshold ?? 0.15);
+  adversarialEvalHarness.observability = adversarialEvalHarness.observability !== false;
+
+  normalized.runtime.anomaly_telemetry = normalized.runtime.anomaly_telemetry || {};
+  const anomalyTelemetry = normalized.runtime.anomaly_telemetry;
+  anomalyTelemetry.enabled = anomalyTelemetry.enabled === true;
+  anomalyTelemetry.max_events = Number(anomalyTelemetry.max_events ?? 20000);
+  anomalyTelemetry.window_ms = Number(anomalyTelemetry.window_ms ?? 24 * 3600000);
+  anomalyTelemetry.max_engine_buckets = Number(anomalyTelemetry.max_engine_buckets ?? 512);
+  anomalyTelemetry.max_timeline_events = Number(anomalyTelemetry.max_timeline_events ?? 500);
+  anomalyTelemetry.observability = anomalyTelemetry.observability !== false;
 
   normalized.runtime.evidence_vault = normalized.runtime.evidence_vault || {};
   const evidenceVault = normalized.runtime.evidence_vault;
@@ -4927,6 +5158,250 @@ function validateConfigShape(config) {
     );
   }
 
+  const behavioralFingerprint = runtime.behavioral_fingerprint || {};
+  if (runtime.behavioral_fingerprint !== undefined) {
+    assertNoUnknownKeys(behavioralFingerprint, BEHAVIORAL_FINGERPRINT_KEYS, 'runtime.behavioral_fingerprint', details);
+    assertType(
+      typeof behavioralFingerprint.enabled === 'boolean',
+      '`runtime.behavioral_fingerprint.enabled` must be boolean',
+      details
+    );
+    assertType(
+      BEHAVIORAL_FINGERPRINT_MODES.has(String(behavioralFingerprint.mode)),
+      '`runtime.behavioral_fingerprint.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.ttl_ms) && behavioralFingerprint.ttl_ms > 0,
+      '`runtime.behavioral_fingerprint.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.max_agents) && behavioralFingerprint.max_agents > 0,
+      '`runtime.behavioral_fingerprint.max_agents` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.max_styles_per_agent) && behavioralFingerprint.max_styles_per_agent > 0,
+      '`runtime.behavioral_fingerprint.max_styles_per_agent` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.max_text_chars) && behavioralFingerprint.max_text_chars > 0,
+      '`runtime.behavioral_fingerprint.max_text_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.max_impersonation_agents) && behavioralFingerprint.max_impersonation_agents > 0,
+      '`runtime.behavioral_fingerprint.max_impersonation_agents` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.warmup_events) && behavioralFingerprint.warmup_events > 0,
+      '`runtime.behavioral_fingerprint.warmup_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(behavioralFingerprint.z_score_threshold)) && Number(behavioralFingerprint.z_score_threshold) > 0,
+      '`runtime.behavioral_fingerprint.z_score_threshold` must be number > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(behavioralFingerprint.impersonation_min_hits) && behavioralFingerprint.impersonation_min_hits > 0,
+      '`runtime.behavioral_fingerprint.impersonation_min_hits` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof behavioralFingerprint.block_on_anomaly === 'boolean',
+      '`runtime.behavioral_fingerprint.block_on_anomaly` must be boolean',
+      details
+    );
+    assertType(
+      typeof behavioralFingerprint.block_on_impersonation === 'boolean',
+      '`runtime.behavioral_fingerprint.block_on_impersonation` must be boolean',
+      details
+    );
+    assertType(
+      typeof behavioralFingerprint.observability === 'boolean',
+      '`runtime.behavioral_fingerprint.observability` must be boolean',
+      details
+    );
+  }
+
+  const threatIntelMesh = runtime.threat_intel_mesh || {};
+  if (runtime.threat_intel_mesh !== undefined) {
+    assertNoUnknownKeys(threatIntelMesh, THREAT_INTEL_MESH_KEYS, 'runtime.threat_intel_mesh', details);
+    assertType(
+      typeof threatIntelMesh.enabled === 'boolean',
+      '`runtime.threat_intel_mesh.enabled` must be boolean',
+      details
+    );
+    assertType(
+      THREAT_INTEL_MESH_MODES.has(String(threatIntelMesh.mode)),
+      '`runtime.threat_intel_mesh.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.ttl_ms) && threatIntelMesh.ttl_ms > 0,
+      '`runtime.threat_intel_mesh.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.max_signatures) && threatIntelMesh.max_signatures > 0,
+      '`runtime.threat_intel_mesh.max_signatures` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.max_text_chars) && threatIntelMesh.max_text_chars > 0,
+      '`runtime.threat_intel_mesh.max_text_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.min_hits_to_block) && threatIntelMesh.min_hits_to_block > 0,
+      '`runtime.threat_intel_mesh.min_hits_to_block` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.block_on_match === 'boolean',
+      '`runtime.threat_intel_mesh.block_on_match` must be boolean',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.allow_anonymous_share === 'boolean',
+      '`runtime.threat_intel_mesh.allow_anonymous_share` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(threatIntelMesh.bootstrap_signatures),
+      '`runtime.threat_intel_mesh.bootstrap_signatures` must be array',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.observability === 'boolean',
+      '`runtime.threat_intel_mesh.observability` must be boolean',
+      details
+    );
+  }
+
+  const lfrl = runtime.lfrl || {};
+  if (runtime.lfrl !== undefined) {
+    assertNoUnknownKeys(lfrl, LFRL_KEYS, 'runtime.lfrl', details);
+    assertType(
+      typeof lfrl.enabled === 'boolean',
+      '`runtime.lfrl.enabled` must be boolean',
+      details
+    );
+    assertType(
+      LFRL_MODES.has(String(lfrl.mode)),
+      '`runtime.lfrl.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Array.isArray(lfrl.rules),
+      '`runtime.lfrl.rules` must be array',
+      details
+    );
+    if (Array.isArray(lfrl.rules)) {
+      lfrl.rules.forEach((rule, idx) => {
+        assertType(
+          typeof rule === 'string' && rule.length > 0,
+          `runtime.lfrl.rules[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(lfrl.max_rules) && lfrl.max_rules > 0,
+      '`runtime.lfrl.max_rules` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(lfrl.max_events) && lfrl.max_events > 0,
+      '`runtime.lfrl.max_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(lfrl.max_matches) && lfrl.max_matches > 0,
+      '`runtime.lfrl.max_matches` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(lfrl.default_within_ms) && lfrl.default_within_ms > 0,
+      '`runtime.lfrl.default_within_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(lfrl.ttl_ms) && lfrl.ttl_ms > 0,
+      '`runtime.lfrl.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof lfrl.block_on_rule_action === 'boolean',
+      '`runtime.lfrl.block_on_rule_action` must be boolean',
+      details
+    );
+    assertType(
+      typeof lfrl.observability === 'boolean',
+      '`runtime.lfrl.observability` must be boolean',
+      details
+    );
+  }
+
+  const selfHealingImmune = runtime.self_healing_immune || {};
+  if (runtime.self_healing_immune !== undefined) {
+    assertNoUnknownKeys(selfHealingImmune, SELF_HEALING_IMMUNE_KEYS, 'runtime.self_healing_immune', details);
+    assertType(
+      typeof selfHealingImmune.enabled === 'boolean',
+      '`runtime.self_healing_immune.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SELF_HEALING_IMMUNE_MODES.has(String(selfHealingImmune.mode)),
+      '`runtime.self_healing_immune.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(selfHealingImmune.ttl_ms) && selfHealingImmune.ttl_ms > 0,
+      '`runtime.self_healing_immune.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(selfHealingImmune.max_signatures) && selfHealingImmune.max_signatures > 0,
+      '`runtime.self_healing_immune.max_signatures` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(selfHealingImmune.max_text_chars) && selfHealingImmune.max_text_chars > 0,
+      '`runtime.self_healing_immune.max_text_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(selfHealingImmune.min_learn_hits) && selfHealingImmune.min_learn_hits > 0,
+      '`runtime.self_healing_immune.min_learn_hits` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof selfHealingImmune.block_on_learned_signature === 'boolean',
+      '`runtime.self_healing_immune.block_on_learned_signature` must be boolean',
+      details
+    );
+    assertType(
+      typeof selfHealingImmune.auto_tune_enabled === 'boolean',
+      '`runtime.self_healing_immune.auto_tune_enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(selfHealingImmune.max_recommendations) && selfHealingImmune.max_recommendations > 0,
+      '`runtime.self_healing_immune.max_recommendations` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof selfHealingImmune.observability === 'boolean',
+      '`runtime.self_healing_immune.observability` must be boolean',
+      details
+    );
+  }
+
   const semanticFirewallDsl = runtime.semantic_firewall_dsl || {};
   if (runtime.semantic_firewall_dsl !== undefined) {
     assertNoUnknownKeys(semanticFirewallDsl, SEMANTIC_FIREWALL_DSL_KEYS, 'runtime.semantic_firewall_dsl', details);
@@ -5377,6 +5852,236 @@ function validateConfigShape(config) {
     assertType(
       typeof budgetAutopilot.observability === 'boolean',
       '`runtime.budget_autopilot.observability` must be boolean',
+      details
+    );
+  }
+
+  const costEfficiencyOptimizer = runtime.cost_efficiency_optimizer || {};
+  if (runtime.cost_efficiency_optimizer !== undefined) {
+    assertNoUnknownKeys(
+      costEfficiencyOptimizer,
+      COST_EFFICIENCY_OPTIMIZER_KEYS,
+      'runtime.cost_efficiency_optimizer',
+      details
+    );
+    assertType(
+      typeof costEfficiencyOptimizer.enabled === 'boolean',
+      '`runtime.cost_efficiency_optimizer.enabled` must be boolean',
+      details
+    );
+    assertType(
+      COST_EFFICIENCY_OPTIMIZER_MODES.has(String(costEfficiencyOptimizer.mode)),
+      '`runtime.cost_efficiency_optimizer.mode` must be monitor|active',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.ttl_ms) && costEfficiencyOptimizer.ttl_ms > 0,
+      '`runtime.cost_efficiency_optimizer.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.max_providers) && costEfficiencyOptimizer.max_providers > 0,
+      '`runtime.cost_efficiency_optimizer.max_providers` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.max_samples_per_provider)
+        && costEfficiencyOptimizer.max_samples_per_provider > 0,
+      '`runtime.cost_efficiency_optimizer.max_samples_per_provider` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.max_prompt_chars) && costEfficiencyOptimizer.max_prompt_chars > 0,
+      '`runtime.cost_efficiency_optimizer.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.chars_per_token) && costEfficiencyOptimizer.chars_per_token > 0,
+      '`runtime.cost_efficiency_optimizer.chars_per_token` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.prompt_bloat_chars) && costEfficiencyOptimizer.prompt_bloat_chars > 0,
+      '`runtime.cost_efficiency_optimizer.prompt_bloat_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(costEfficiencyOptimizer.repetition_warn_ratio))
+        && Number(costEfficiencyOptimizer.repetition_warn_ratio) >= 0
+        && Number(costEfficiencyOptimizer.repetition_warn_ratio) <= 1,
+      '`runtime.cost_efficiency_optimizer.repetition_warn_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(costEfficiencyOptimizer.low_budget_usd)) && Number(costEfficiencyOptimizer.low_budget_usd) >= 0,
+      '`runtime.cost_efficiency_optimizer.low_budget_usd` must be number >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.memory_warn_bytes) && costEfficiencyOptimizer.memory_warn_bytes > 0,
+      '`runtime.cost_efficiency_optimizer.memory_warn_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.memory_critical_bytes) && costEfficiencyOptimizer.memory_critical_bytes > 0,
+      '`runtime.cost_efficiency_optimizer.memory_critical_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof costEfficiencyOptimizer.block_on_critical_memory === 'boolean',
+      '`runtime.cost_efficiency_optimizer.block_on_critical_memory` must be boolean',
+      details
+    );
+    assertType(
+      typeof costEfficiencyOptimizer.block_on_budget_exhausted === 'boolean',
+      '`runtime.cost_efficiency_optimizer.block_on_budget_exhausted` must be boolean',
+      details
+    );
+    assertType(
+      typeof costEfficiencyOptimizer.observability === 'boolean',
+      '`runtime.cost_efficiency_optimizer.observability` must be boolean',
+      details
+    );
+  }
+
+  const zkConfigValidator = runtime.zk_config_validator || {};
+  if (runtime.zk_config_validator !== undefined) {
+    assertNoUnknownKeys(zkConfigValidator, ZK_CONFIG_VALIDATOR_KEYS, 'runtime.zk_config_validator', details);
+    assertType(
+      typeof zkConfigValidator.enabled === 'boolean',
+      '`runtime.zk_config_validator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof zkConfigValidator.hmac_key === 'string',
+      '`runtime.zk_config_validator.hmac_key` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.max_findings) && zkConfigValidator.max_findings > 0,
+      '`runtime.zk_config_validator.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.max_nodes) && zkConfigValidator.max_nodes > 0,
+      '`runtime.zk_config_validator.max_nodes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.max_depth) && zkConfigValidator.max_depth > 0,
+      '`runtime.zk_config_validator.max_depth` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof zkConfigValidator.redaction_text === 'string',
+      '`runtime.zk_config_validator.redaction_text` must be string',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.score_penalty_secret) && zkConfigValidator.score_penalty_secret >= 0,
+      '`runtime.zk_config_validator.score_penalty_secret` must be integer >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.score_penalty_dead_key) && zkConfigValidator.score_penalty_dead_key >= 0,
+      '`runtime.zk_config_validator.score_penalty_dead_key` must be integer >= 0',
+      details
+    );
+    assertType(
+      Number.isInteger(zkConfigValidator.score_penalty_over_config) && zkConfigValidator.score_penalty_over_config >= 0,
+      '`runtime.zk_config_validator.score_penalty_over_config` must be integer >= 0',
+      details
+    );
+    assertType(
+      typeof zkConfigValidator.observability === 'boolean',
+      '`runtime.zk_config_validator.observability` must be boolean',
+      details
+    );
+  }
+
+  const adversarialEvalHarness = runtime.adversarial_eval_harness || {};
+  if (runtime.adversarial_eval_harness !== undefined) {
+    assertNoUnknownKeys(
+      adversarialEvalHarness,
+      ADVERSARIAL_EVAL_HARNESS_KEYS,
+      'runtime.adversarial_eval_harness',
+      details
+    );
+    assertType(
+      typeof adversarialEvalHarness.enabled === 'boolean',
+      '`runtime.adversarial_eval_harness.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(adversarialEvalHarness.max_cases) && adversarialEvalHarness.max_cases > 0,
+      '`runtime.adversarial_eval_harness.max_cases` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(adversarialEvalHarness.max_prompt_chars) && adversarialEvalHarness.max_prompt_chars > 0,
+      '`runtime.adversarial_eval_harness.max_prompt_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(adversarialEvalHarness.max_runs) && adversarialEvalHarness.max_runs > 0,
+      '`runtime.adversarial_eval_harness.max_runs` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(adversarialEvalHarness.schedule_every_requests) && adversarialEvalHarness.schedule_every_requests >= 0,
+      '`runtime.adversarial_eval_harness.schedule_every_requests` must be integer >= 0',
+      details
+    );
+    assertType(
+      typeof adversarialEvalHarness.fail_open === 'boolean',
+      '`runtime.adversarial_eval_harness.fail_open` must be boolean',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(adversarialEvalHarness.regression_drop_threshold))
+        && Number(adversarialEvalHarness.regression_drop_threshold) >= 0
+        && Number(adversarialEvalHarness.regression_drop_threshold) <= 1,
+      '`runtime.adversarial_eval_harness.regression_drop_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      typeof adversarialEvalHarness.observability === 'boolean',
+      '`runtime.adversarial_eval_harness.observability` must be boolean',
+      details
+    );
+  }
+
+  const anomalyTelemetry = runtime.anomaly_telemetry || {};
+  if (runtime.anomaly_telemetry !== undefined) {
+    assertNoUnknownKeys(anomalyTelemetry, ANOMALY_TELEMETRY_KEYS, 'runtime.anomaly_telemetry', details);
+    assertType(
+      typeof anomalyTelemetry.enabled === 'boolean',
+      '`runtime.anomaly_telemetry.enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(anomalyTelemetry.max_events) && anomalyTelemetry.max_events > 0,
+      '`runtime.anomaly_telemetry.max_events` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(anomalyTelemetry.window_ms) && anomalyTelemetry.window_ms > 0,
+      '`runtime.anomaly_telemetry.window_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(anomalyTelemetry.max_engine_buckets) && anomalyTelemetry.max_engine_buckets > 0,
+      '`runtime.anomaly_telemetry.max_engine_buckets` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(anomalyTelemetry.max_timeline_events) && anomalyTelemetry.max_timeline_events > 0,
+      '`runtime.anomaly_telemetry.max_timeline_events` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof anomalyTelemetry.observability === 'boolean',
+      '`runtime.anomaly_telemetry.observability` must be boolean',
       details
     );
   }

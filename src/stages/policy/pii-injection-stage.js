@@ -216,6 +216,132 @@ async function runInjectionAndPolicyStage({
 
   const mcpLikeRequest = isMcpLikeRequest({ req, parsedPath, bodyJson });
 
+  if (server.threatIntelMesh?.isEnabled()) {
+    let threatIntelDecision = null;
+    try {
+      threatIntelDecision = server.threatIntelMesh.evaluate({
+        bodyText,
+        effectiveMode,
+      });
+    } catch (error) {
+      threatIntelDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'threat_intel_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('threat_intel:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (threatIntelDecision?.enabled && server.threatIntelMesh.observability) {
+      res.setHeader(
+        'x-sentinel-threat-intel',
+        threatIntelDecision.detected ? String(threatIntelDecision.reason || 'detected') : 'clean'
+      );
+      res.setHeader('x-sentinel-threat-intel-signatures', String(server.threatIntelMesh.signatures?.size || 0));
+    }
+    if (threatIntelDecision?.detected) {
+      server.stats.threat_intel_detected += 1;
+      warnings.push(`threat_intel:${threatIntelDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (threatIntelDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'threat_intel_mesh',
+        statsBlocked: 'threat_intel_blocked',
+        errorCode: 'THREAT_INTEL_BLOCKED',
+        reason: threatIntelDecision.reason || 'threat_intel_signature_match',
+        auditDecision: 'blocked_threat_intel',
+        auditReasons: (threatIntelDecision.findings || []).map((finding) => String(finding.code || 'threat_intel_signature_match')),
+        auditExtra: {
+          threat_intel_findings: threatIntelDecision.findings || [],
+        },
+        responseExtra: {
+          findings: (threatIntelDecision.findings || []).map((finding) => String(finding.code || 'threat_intel_signature_match')),
+        },
+      });
+    }
+  }
+
+  if (server.selfHealingImmune?.isEnabled()) {
+    let selfHealingDecision = null;
+    try {
+      selfHealingDecision = server.selfHealingImmune.evaluate({
+        bodyText,
+        effectiveMode,
+      });
+    } catch (error) {
+      selfHealingDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'self_healing_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('self_healing:error');
+      server.stats.warnings_total += 1;
+    }
+    if (selfHealingDecision?.enabled && server.selfHealingImmune.observability) {
+      res.setHeader(
+        'x-sentinel-self-healing',
+        selfHealingDecision.detected ? String(selfHealingDecision.reason || 'detected') : 'clean'
+      );
+    }
+    if (selfHealingDecision?.detected) {
+      server.stats.self_healing_detected += 1;
+      warnings.push(`self_healing:${selfHealingDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (selfHealingDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'self_healing_immune',
+        statsBlocked: 'self_healing_blocked',
+        errorCode: 'SELF_HEALING_BLOCKED',
+        reason: selfHealingDecision.reason || 'self_healing_signature_match',
+        auditDecision: 'blocked_self_healing',
+        auditReasons: (selfHealingDecision.findings || []).map((finding) => String(finding.code || 'self_healing_signature_match')),
+        auditExtra: {
+          self_healing_findings: selfHealingDecision.findings || [],
+        },
+        responseExtra: {
+          findings: (selfHealingDecision.findings || []).map((finding) => String(finding.code || 'self_healing_signature_match')),
+        },
+      });
+    }
+  }
+
   if (server.serializationFirewall?.isEnabled()) {
     let serializationDecision = null;
     try {
@@ -592,6 +718,92 @@ async function runInjectionAndPolicyStage({
   }
   const injectionScore = Number(injectionResult?.score || 0);
 
+  if (server.lfrlEngine?.isEnabled()) {
+    const observedToolName = String(
+      bodyJson?.tool?.name || bodyJson?.tool_name || bodyJson?.toolName || ''
+    ).trim();
+    if (observedToolName) {
+      server.lfrlEngine.observe({
+        tool_name: observedToolName,
+      });
+    }
+    let lfrlDecision = null;
+    try {
+      lfrlDecision = server.lfrlEngine.evaluate({
+        context: {
+          request: {
+            method,
+            path: parsedPath?.pathname || '',
+            provider,
+          },
+          metrics: {
+            injection_score: injectionScore,
+          },
+          body: bodyJson && typeof bodyJson === 'object' ? bodyJson : {},
+          patterns: {
+            pii_pattern: '(ssn|social security|api[_-]?key|token)',
+          },
+        },
+        effectiveMode,
+      });
+    } catch (error) {
+      lfrlDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'lfrl_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('lfrl:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (lfrlDecision?.enabled && server.lfrlEngine.observability) {
+      res.setHeader('x-sentinel-lfrl', lfrlDecision.detected ? String(lfrlDecision.reason || 'detected') : 'clean');
+      res.setHeader(
+        'x-sentinel-lfrl-rules',
+        String(Number.isFinite(Number(lfrlDecision.rules_loaded)) ? Number(lfrlDecision.rules_loaded) : 0)
+      );
+    }
+    if (lfrlDecision?.detected) {
+      server.stats.lfrl_matches += 1;
+      warnings.push(`lfrl:${lfrlDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (lfrlDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore,
+        blockedBy: 'lfrl',
+        statsBlocked: 'lfrl_blocked',
+        errorCode: 'LFRL_BLOCKED',
+        reason: lfrlDecision.reason || 'lfrl_rule_match',
+        auditDecision: 'blocked_lfrl',
+        auditReasons: (lfrlDecision.findings || []).map((finding) => String(finding.rule_id || 'lfrl_rule_match')),
+        auditExtra: {
+          lfrl_findings: lfrlDecision.findings || [],
+          lfrl_rules_loaded: lfrlDecision.rules_loaded,
+        },
+        responseExtra: {
+          findings: (lfrlDecision.findings || []).map((finding) => String(finding.rule_id || 'lfrl_rule_match')),
+        },
+      });
+    }
+  }
+
   let rebuffDecision = null;
   if (server.promptRebuff?.isEnabled()) {
     try {
@@ -625,6 +837,15 @@ async function runInjectionAndPolicyStage({
 
     if (rebuffDecision?.detected) {
       server.stats.prompt_rebuff_detected += 1;
+      if (server.selfHealingImmune?.isEnabled()) {
+        server.selfHealingImmune.observeDetection({
+          engine: 'prompt_rebuff',
+          reason: rebuffDecision.reason || 'prompt_rebuff_detected',
+          text: bodyText,
+          blocked: rebuffDecision.shouldBlock === true,
+          severity: rebuffDecision.shouldBlock ? 'high' : 'medium',
+        });
+      }
       warnings.push(`prompt_rebuff:${rebuffDecision.reason || 'detected'}`);
       server.stats.warnings_total += 1;
     }

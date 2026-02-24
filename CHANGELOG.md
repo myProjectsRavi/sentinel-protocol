@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased - 2026-02-24
+
+### Added
+- New monitor-first runtime engines:
+  - `runtime.behavioral_fingerprint`
+  - `runtime.threat_intel_mesh`
+  - `runtime.lfrl`
+  - `runtime.self_healing_immune`
+  - `runtime.cost_efficiency_optimizer`
+  - `runtime.zk_config_validator`
+  - `runtime.adversarial_eval_harness`
+  - `runtime.anomaly_telemetry`
+- New control-plane endpoints:
+  - `GET /_sentinel/anomalies`
+  - `GET /_sentinel/threat-intel`
+  - `GET /_sentinel/zk-config`
+  - `POST /_sentinel/adversarial-eval/run`
+- New engine modules and unit coverage for the runtime controls above.
+
+### Changed
+- Integrated new engines into live stage flow (policy + agentic + audit) with deterministic block/warn behavior.
+- Extended capability introspection and MITRE ATLAS mapping for newly added engines.
+- Extended config defaults + strict schema validation for all new runtime keys (unknown-key rejection preserved).
+
+### Docs
+- Updated OpenAPI contract with new control-plane endpoints.
+- Updated README feature map and control-plane endpoint list.
+- Refreshed V4 evidence doc to reflect full implemented engine set and verification focus.
+
 ## 1.0.0 - 2026-02-19
 
 ### Added

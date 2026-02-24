@@ -59,6 +59,7 @@ class CapabilityIntrospection {
       ['cascade_isolator', server.cascadeIsolator],
       ['agent_identity_federation', server.agentIdentityFederation],
       ['tool_use_anomaly', server.toolUseAnomalyDetector],
+      ['behavioral_fingerprint', server.behavioralFingerprint],
       ['serialization_firewall', server.serializationFirewall],
       ['context_integrity_guardian', server.contextIntegrityGuardian],
       ['tool_schema_validator', server.toolSchemaValidator],
@@ -66,6 +67,9 @@ class CapabilityIntrospection {
       ['supply_chain_validator', server.supplyChainValidator],
       ['sandbox_enforcer', server.sandboxEnforcer],
       ['memory_integrity_monitor', server.memoryIntegrityMonitor],
+      ['threat_intel_mesh', server.threatIntelMesh],
+      ['lfrl', server.lfrlEngine],
+      ['self_healing_immune', server.selfHealingImmune],
       ['output_classifier', server.outputClassifier],
       ['stego_exfil_detector', server.stegoExfilDetector],
       ['reasoning_trace_monitor', server.reasoningTraceMonitor],
@@ -113,6 +117,8 @@ class CapabilityIntrospection {
         canary_tools_enabled: enabled(server.canaryToolTrap),
         mcp_shadow_enabled: enabled(server.mcpShadowDetector),
         mcp_poisoning_enabled: enabled(server.mcpPoisoningDetector),
+        lfrl_enabled: enabled(server.lfrlEngine),
+        threat_intel_mesh_enabled: enabled(server.threatIntelMesh),
       },
     };
 

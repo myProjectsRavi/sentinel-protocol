@@ -4,6 +4,12 @@
 
 Ship the next alien-tech tranche without semantic drift, while preserving local-first determinism, monitor-first rollout, and enterprise evidence quality.
 
+## Status Snapshot (2026-02-24)
+
+- `P0-001` through `P0-003`: completed
+- `P1-004` through `P1-007`: completed
+- `P2-008` through `P2-012`: completed (`P2-012` remains research-track/advisory by design)
+
 ## Ordering
 
 1. `P0-001` Agentic Threat Shield
@@ -46,4 +52,3 @@ npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeo
 - Fast path SLO: `p50 <= 5ms`, `p95 <= 12ms` on 8GB profile.
 - Deep path SLO: `p50 <= 12ms`, `p95 <= 30ms`.
 - Memory: no unbounded maps; enforce TTL/caps for all new accumulators.
-
