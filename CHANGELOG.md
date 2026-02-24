@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased - 2026-02-24
+## 1.1.0 - 2026-02-24
 
 ### Added
 - New monitor-first runtime engines:
