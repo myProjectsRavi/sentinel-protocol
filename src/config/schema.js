@@ -37,6 +37,7 @@ const RUNTIME_KEYS = new Set([
   'cold_start_analyzer',
   'serialization_firewall',
   'context_integrity_guardian',
+  'context_compression_guard',
   'tool_schema_validator',
   'multimodal_injection_shield',
   'supply_chain_validator',
@@ -44,6 +45,7 @@ const RUNTIME_KEYS = new Set([
   'memory_integrity_monitor',
   'mcp_poisoning',
   'mcp_shadow',
+  'mcp_certificate_pinning',
   'memory_poisoning',
   'cascade_isolator',
   'agent_identity_federation',
@@ -420,6 +422,26 @@ const CONTEXT_INTEGRITY_GUARDIAN_KEYS = new Set([
   'observability',
 ]);
 const CONTEXT_INTEGRITY_GUARDIAN_MODES = new Set(['monitor', 'block']);
+const CONTEXT_COMPRESSION_GUARD_KEYS = new Set([
+  'enabled',
+  'mode',
+  'session_header',
+  'fallback_headers',
+  'protected_anchors',
+  'summary_fields',
+  'max_context_chars',
+  'max_summary_chars',
+  'max_sessions',
+  'ttl_ms',
+  'anchor_loss_ratio',
+  'shrink_spike_ratio',
+  'token_budget_warn_ratio',
+  'provider_token_limit',
+  'block_on_anchor_loss',
+  'block_on_summary_injection',
+  'observability',
+]);
+const CONTEXT_COMPRESSION_GUARD_MODES = new Set(['monitor', 'block']);
 const TOOL_SCHEMA_VALIDATOR_KEYS = new Set([
   'enabled',
   'mode',
@@ -528,6 +550,22 @@ const MCP_SHADOW_KEYS = new Set([
   'observability',
 ]);
 const MCP_SHADOW_MODES = new Set(['monitor', 'block']);
+const MCP_CERTIFICATE_PINNING_KEYS = new Set([
+  'enabled',
+  'mode',
+  'server_id_header',
+  'fingerprint_header',
+  'pins',
+  'allow_unpinned_servers',
+  'require_fingerprint_for_pinned_servers',
+  'detect_rotation',
+  'block_on_mismatch',
+  'block_on_rotation',
+  'max_servers',
+  'ttl_ms',
+  'observability',
+]);
+const MCP_CERTIFICATE_PINNING_MODES = new Set(['monitor', 'block']);
 const MEMORY_POISONING_KEYS = new Set([
   'enabled',
   'mode',
@@ -1914,6 +1952,36 @@ function applyDefaults(config) {
   contextIntegrityGuardian.block_on_repetition = contextIntegrityGuardian.block_on_repetition === true;
   contextIntegrityGuardian.observability = contextIntegrityGuardian.observability !== false;
 
+  normalized.runtime.context_compression_guard = normalized.runtime.context_compression_guard || {};
+  const contextCompressionGuard = normalized.runtime.context_compression_guard;
+  contextCompressionGuard.enabled = contextCompressionGuard.enabled === true;
+  contextCompressionGuard.mode = CONTEXT_COMPRESSION_GUARD_MODES.has(String(contextCompressionGuard.mode || '').toLowerCase())
+    ? String(contextCompressionGuard.mode).toLowerCase()
+    : 'monitor';
+  contextCompressionGuard.session_header = String(
+    contextCompressionGuard.session_header || 'x-sentinel-session-id'
+  ).toLowerCase();
+  contextCompressionGuard.fallback_headers = Array.isArray(contextCompressionGuard.fallback_headers)
+    ? contextCompressionGuard.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  contextCompressionGuard.protected_anchors = Array.isArray(contextCompressionGuard.protected_anchors)
+    ? contextCompressionGuard.protected_anchors.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  contextCompressionGuard.summary_fields = Array.isArray(contextCompressionGuard.summary_fields)
+    ? contextCompressionGuard.summary_fields.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['summary', 'context_summary', 'memory_summary', 'compressed_context', 'conversation_summary'];
+  contextCompressionGuard.max_context_chars = Number(contextCompressionGuard.max_context_chars ?? 32768);
+  contextCompressionGuard.max_summary_chars = Number(contextCompressionGuard.max_summary_chars ?? 16384);
+  contextCompressionGuard.max_sessions = Number(contextCompressionGuard.max_sessions ?? 10000);
+  contextCompressionGuard.ttl_ms = Number(contextCompressionGuard.ttl_ms ?? 21600000);
+  contextCompressionGuard.anchor_loss_ratio = Number(contextCompressionGuard.anchor_loss_ratio ?? 0.75);
+  contextCompressionGuard.shrink_spike_ratio = Number(contextCompressionGuard.shrink_spike_ratio ?? 0.35);
+  contextCompressionGuard.token_budget_warn_ratio = Number(contextCompressionGuard.token_budget_warn_ratio ?? 0.85);
+  contextCompressionGuard.provider_token_limit = Number(contextCompressionGuard.provider_token_limit ?? 128000);
+  contextCompressionGuard.block_on_anchor_loss = contextCompressionGuard.block_on_anchor_loss === true;
+  contextCompressionGuard.block_on_summary_injection = contextCompressionGuard.block_on_summary_injection === true;
+  contextCompressionGuard.observability = contextCompressionGuard.observability !== false;
+
   normalized.runtime.tool_schema_validator = normalized.runtime.tool_schema_validator || {};
   const toolSchemaValidator = normalized.runtime.tool_schema_validator;
   toolSchemaValidator.enabled = toolSchemaValidator.enabled === true;
@@ -2045,6 +2113,30 @@ function applyDefaults(config) {
   mcpShadow.name_similarity_distance = Number(mcpShadow.name_similarity_distance ?? 1);
   mcpShadow.max_name_candidates = Number(mcpShadow.max_name_candidates ?? 128);
   mcpShadow.observability = mcpShadow.observability !== false;
+
+  normalized.runtime.mcp_certificate_pinning = normalized.runtime.mcp_certificate_pinning || {};
+  const mcpCertificatePinning = normalized.runtime.mcp_certificate_pinning;
+  mcpCertificatePinning.enabled = mcpCertificatePinning.enabled === true;
+  mcpCertificatePinning.mode = MCP_CERTIFICATE_PINNING_MODES.has(String(mcpCertificatePinning.mode || '').toLowerCase())
+    ? String(mcpCertificatePinning.mode).toLowerCase()
+    : 'monitor';
+  mcpCertificatePinning.server_id_header = String(
+    mcpCertificatePinning.server_id_header || 'x-sentinel-mcp-server-id'
+  ).toLowerCase();
+  mcpCertificatePinning.fingerprint_header = String(
+    mcpCertificatePinning.fingerprint_header || 'x-sentinel-mcp-cert-sha256'
+  ).toLowerCase();
+  mcpCertificatePinning.pins = mcpCertificatePinning.pins && typeof mcpCertificatePinning.pins === 'object' && !Array.isArray(mcpCertificatePinning.pins)
+    ? mcpCertificatePinning.pins
+    : {};
+  mcpCertificatePinning.allow_unpinned_servers = mcpCertificatePinning.allow_unpinned_servers !== false;
+  mcpCertificatePinning.require_fingerprint_for_pinned_servers = mcpCertificatePinning.require_fingerprint_for_pinned_servers !== false;
+  mcpCertificatePinning.detect_rotation = mcpCertificatePinning.detect_rotation !== false;
+  mcpCertificatePinning.block_on_mismatch = mcpCertificatePinning.block_on_mismatch === true;
+  mcpCertificatePinning.block_on_rotation = mcpCertificatePinning.block_on_rotation === true;
+  mcpCertificatePinning.max_servers = Number(mcpCertificatePinning.max_servers ?? 5000);
+  mcpCertificatePinning.ttl_ms = Number(mcpCertificatePinning.ttl_ms ?? 3600000);
+  mcpCertificatePinning.observability = mcpCertificatePinning.observability !== false;
 
   normalized.runtime.memory_poisoning = normalized.runtime.memory_poisoning || {};
   const memoryPoisoning = normalized.runtime.memory_poisoning;
@@ -4383,6 +4475,129 @@ function validateConfigShape(config) {
     );
   }
 
+  const contextCompressionGuard = runtime.context_compression_guard || {};
+  if (runtime.context_compression_guard !== undefined) {
+    assertNoUnknownKeys(contextCompressionGuard, CONTEXT_COMPRESSION_GUARD_KEYS, 'runtime.context_compression_guard', details);
+    assertType(
+      typeof contextCompressionGuard.enabled === 'boolean',
+      '`runtime.context_compression_guard.enabled` must be boolean',
+      details
+    );
+    assertType(
+      CONTEXT_COMPRESSION_GUARD_MODES.has(String(contextCompressionGuard.mode)),
+      '`runtime.context_compression_guard.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof contextCompressionGuard.session_header === 'string' && contextCompressionGuard.session_header.length > 0,
+      '`runtime.context_compression_guard.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(contextCompressionGuard.fallback_headers),
+      '`runtime.context_compression_guard.fallback_headers` must be array',
+      details
+    );
+    if (Array.isArray(contextCompressionGuard.fallback_headers)) {
+      contextCompressionGuard.fallback_headers.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.context_compression_guard.fallback_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(contextCompressionGuard.protected_anchors),
+      '`runtime.context_compression_guard.protected_anchors` must be array',
+      details
+    );
+    if (Array.isArray(contextCompressionGuard.protected_anchors)) {
+      contextCompressionGuard.protected_anchors.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.context_compression_guard.protected_anchors[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(contextCompressionGuard.summary_fields),
+      '`runtime.context_compression_guard.summary_fields` must be array',
+      details
+    );
+    if (Array.isArray(contextCompressionGuard.summary_fields)) {
+      contextCompressionGuard.summary_fields.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.context_compression_guard.summary_fields[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(contextCompressionGuard.max_context_chars) && contextCompressionGuard.max_context_chars > 0,
+      '`runtime.context_compression_guard.max_context_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(contextCompressionGuard.max_summary_chars) && contextCompressionGuard.max_summary_chars > 0,
+      '`runtime.context_compression_guard.max_summary_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(contextCompressionGuard.max_sessions) && contextCompressionGuard.max_sessions > 0,
+      '`runtime.context_compression_guard.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(contextCompressionGuard.ttl_ms) && contextCompressionGuard.ttl_ms > 0,
+      '`runtime.context_compression_guard.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(contextCompressionGuard.anchor_loss_ratio))
+        && Number(contextCompressionGuard.anchor_loss_ratio) >= 0
+        && Number(contextCompressionGuard.anchor_loss_ratio) <= 1,
+      '`runtime.context_compression_guard.anchor_loss_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(contextCompressionGuard.shrink_spike_ratio))
+        && Number(contextCompressionGuard.shrink_spike_ratio) >= 0
+        && Number(contextCompressionGuard.shrink_spike_ratio) <= 1,
+      '`runtime.context_compression_guard.shrink_spike_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(contextCompressionGuard.token_budget_warn_ratio))
+        && Number(contextCompressionGuard.token_budget_warn_ratio) >= 0
+        && Number(contextCompressionGuard.token_budget_warn_ratio) <= 1,
+      '`runtime.context_compression_guard.token_budget_warn_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(contextCompressionGuard.provider_token_limit) && contextCompressionGuard.provider_token_limit > 0,
+      '`runtime.context_compression_guard.provider_token_limit` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof contextCompressionGuard.block_on_anchor_loss === 'boolean',
+      '`runtime.context_compression_guard.block_on_anchor_loss` must be boolean',
+      details
+    );
+    assertType(
+      typeof contextCompressionGuard.block_on_summary_injection === 'boolean',
+      '`runtime.context_compression_guard.block_on_summary_injection` must be boolean',
+      details
+    );
+    assertType(
+      typeof contextCompressionGuard.observability === 'boolean',
+      '`runtime.context_compression_guard.observability` must be boolean',
+      details
+    );
+  }
+
   const toolSchemaValidator = runtime.tool_schema_validator || {};
   if (runtime.tool_schema_validator !== undefined) {
     assertNoUnknownKeys(toolSchemaValidator, TOOL_SCHEMA_VALIDATOR_KEYS, 'runtime.tool_schema_validator', details);
@@ -4905,6 +5120,94 @@ function validateConfigShape(config) {
     assertType(
       typeof mcpShadow.observability === 'boolean',
       '`runtime.mcp_shadow.observability` must be boolean',
+      details
+    );
+  }
+
+  const mcpCertificatePinning = runtime.mcp_certificate_pinning || {};
+  if (runtime.mcp_certificate_pinning !== undefined) {
+    assertNoUnknownKeys(mcpCertificatePinning, MCP_CERTIFICATE_PINNING_KEYS, 'runtime.mcp_certificate_pinning', details);
+    assertType(
+      typeof mcpCertificatePinning.enabled === 'boolean',
+      '`runtime.mcp_certificate_pinning.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MCP_CERTIFICATE_PINNING_MODES.has(String(mcpCertificatePinning.mode)),
+      '`runtime.mcp_certificate_pinning.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.server_id_header === 'string' && mcpCertificatePinning.server_id_header.length > 0,
+      '`runtime.mcp_certificate_pinning.server_id_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.fingerprint_header === 'string' && mcpCertificatePinning.fingerprint_header.length > 0,
+      '`runtime.mcp_certificate_pinning.fingerprint_header` must be non-empty string',
+      details
+    );
+    assertType(
+      mcpCertificatePinning.pins && typeof mcpCertificatePinning.pins === 'object' && !Array.isArray(mcpCertificatePinning.pins),
+      '`runtime.mcp_certificate_pinning.pins` must be object',
+      details
+    );
+    if (mcpCertificatePinning.pins && typeof mcpCertificatePinning.pins === 'object' && !Array.isArray(mcpCertificatePinning.pins)) {
+      for (const [serverId, pins] of Object.entries(mcpCertificatePinning.pins)) {
+        assertType(
+          typeof serverId === 'string' && serverId.length > 0,
+          '`runtime.mcp_certificate_pinning.pins` keys must be non-empty server ids',
+          details
+        );
+        const values = Array.isArray(pins) ? pins : [pins];
+        values.forEach((pin, idx) => {
+          const normalized = String(pin || '').trim();
+          assertType(
+            normalized.length > 0,
+            `runtime.mcp_certificate_pinning.pins.${serverId}[${idx}] must be non-empty`,
+            details
+          );
+        });
+      }
+    }
+    assertType(
+      typeof mcpCertificatePinning.allow_unpinned_servers === 'boolean',
+      '`runtime.mcp_certificate_pinning.allow_unpinned_servers` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.require_fingerprint_for_pinned_servers === 'boolean',
+      '`runtime.mcp_certificate_pinning.require_fingerprint_for_pinned_servers` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.detect_rotation === 'boolean',
+      '`runtime.mcp_certificate_pinning.detect_rotation` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.block_on_mismatch === 'boolean',
+      '`runtime.mcp_certificate_pinning.block_on_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.block_on_rotation === 'boolean',
+      '`runtime.mcp_certificate_pinning.block_on_rotation` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpCertificatePinning.max_servers) && mcpCertificatePinning.max_servers > 0,
+      '`runtime.mcp_certificate_pinning.max_servers` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(mcpCertificatePinning.ttl_ms) && mcpCertificatePinning.ttl_ms > 0,
+      '`runtime.mcp_certificate_pinning.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof mcpCertificatePinning.observability === 'boolean',
+      '`runtime.mcp_certificate_pinning.observability` must be boolean',
       details
     );
   }

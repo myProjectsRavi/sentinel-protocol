@@ -10,6 +10,7 @@ const { PIIProviderEngine } = require('../pii/provider-engine');
 const { resolveProvider } = require('../upstream/router');
 const { MCPPoisoningDetector } = require('../security/mcp-poisoning-detector');
 const { MCPShadowDetector } = require('../security/mcp-shadow-detector');
+const { MCPCertificatePinning } = require('../security/mcp-certificate-pinning');
 
 function safeParseJson(input) {
   try {
@@ -51,6 +52,7 @@ class SentinelMCPGovernance {
     });
     this.mcpPoisoningDetector = new MCPPoisoningDetector(config.runtime?.mcp_poisoning || {});
     this.mcpShadowDetector = new MCPShadowDetector(config.runtime?.mcp_shadow || {});
+    this.mcpCertificatePinning = new MCPCertificatePinning(config.runtime?.mcp_certificate_pinning || {});
   }
 
   async inspectRequest(args = {}) {
@@ -106,6 +108,11 @@ class SentinelMCPGovernance {
       },
       effectiveMode: mode,
     });
+    const mcpCertificateDecision = this.mcpCertificatePinning.inspect({
+      headers,
+      serverId: args.server_id || headers['x-sentinel-mcp-server-id'] || providerName,
+      effectiveMode: mode,
+    });
 
     const policyDecision = this.policyEngine.check({
       method,
@@ -136,6 +143,13 @@ class SentinelMCPGovernance {
       warnings.push(`mcp_shadow:${mcpShadowDecision.reason || 'detected'}`);
       reasons.push(mcpShadowDecision.reason || 'mcp_shadow_detected');
       if (mcpShadowDecision.shouldBlock) {
+        blocked = true;
+      }
+    }
+    if (mcpCertificateDecision.detected) {
+      warnings.push(`mcp_certificate_pinning:${mcpCertificateDecision.reason || 'detected'}`);
+      reasons.push(mcpCertificateDecision.reason || 'mcp_certificate_pinning_detected');
+      if (mcpCertificateDecision.shouldBlock) {
         blocked = true;
       }
     }
@@ -206,6 +220,15 @@ class SentinelMCPGovernance {
           reason: mcpShadowDecision.reason || 'clean',
           findings: mcpShadowDecision.findings || [],
           technique_id: mcpShadowDecision.technique_id || null,
+        },
+        certificate_pinning: {
+          enabled: mcpCertificateDecision.enabled,
+          detected: mcpCertificateDecision.detected,
+          should_block: mcpCertificateDecision.shouldBlock,
+          reason: mcpCertificateDecision.reason || 'clean',
+          findings: mcpCertificateDecision.findings || [],
+          server_id: mcpCertificateDecision.server_id || null,
+          fingerprint_present: mcpCertificateDecision.fingerprint_present === true,
         },
       },
       pii: {

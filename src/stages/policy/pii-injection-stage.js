@@ -485,6 +485,80 @@ async function runInjectionAndPolicyStage({
     }
   }
 
+  if (server.contextCompressionGuard?.isEnabled()) {
+    let contextCompressionDecision = null;
+    try {
+      contextCompressionDecision = server.contextCompressionGuard.evaluate({
+        headers: req.headers || {},
+        bodyJson,
+        bodyText,
+        correlationId,
+        effectiveMode,
+      });
+    } catch (error) {
+      contextCompressionDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'context_compression_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('context_compression:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (contextCompressionDecision?.enabled && server.contextCompressionGuard.observability) {
+      res.setHeader(
+        'x-sentinel-context-compression',
+        contextCompressionDecision.detected ? String(contextCompressionDecision.reason || 'detected') : 'clean'
+      );
+      if (Number.isFinite(Number(contextCompressionDecision.token_budget_ratio))) {
+        res.setHeader('x-sentinel-context-compression-token-ratio', String(contextCompressionDecision.token_budget_ratio));
+      }
+    }
+
+    if (contextCompressionDecision?.detected) {
+      server.stats.context_compression_detected += 1;
+      warnings.push(`context_compression:${contextCompressionDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+
+    if (contextCompressionDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'context_compression_guard',
+        statsBlocked: 'context_compression_blocked',
+        errorCode: 'CONTEXT_COMPRESSION_BLOCKED',
+        reason: contextCompressionDecision.reason || 'context_compression_violation',
+        auditDecision: 'blocked_context_compression',
+        auditReasons: (contextCompressionDecision.findings || []).map((finding) => String(finding.code || 'context_compression_violation')),
+        auditExtra: {
+          context_compression_findings: contextCompressionDecision.findings || [],
+          context_compression_session_id: contextCompressionDecision.session_id,
+          context_compression_anchor_coverage: contextCompressionDecision.anchor_coverage,
+          context_compression_summary_anchor_coverage: contextCompressionDecision.summary_anchor_coverage,
+        },
+        responseExtra: {
+          findings: (contextCompressionDecision.findings || []).map((finding) => String(finding.code || 'context_compression_violation')),
+        },
+      });
+    }
+  }
+
   if (server.toolSchemaValidator?.isEnabled() && mcpLikeRequest) {
     let toolSchemaDecision = null;
     try {
@@ -898,6 +972,106 @@ async function runInjectionAndPolicyStage({
         error: 'PROMPT_REBUFF_BLOCKED',
         reason: rebuffDecision.reason,
         score: rebuffDecision.score,
+        correlation_id: correlationId,
+      });
+      return {
+        handled: true,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore,
+        shadowDecision: null,
+      };
+    }
+  }
+
+  if (server.mcpCertificatePinning?.isEnabled() && isMcpLikeRequest({ req, parsedPath, bodyJson })) {
+    let mcpCertificateDecision = null;
+    try {
+      mcpCertificateDecision = server.mcpCertificatePinning.inspect({
+        headers: req.headers || {},
+        serverId: req.headers?.['x-sentinel-mcp-server-id'] || provider,
+        effectiveMode,
+      });
+    } catch (error) {
+      mcpCertificateDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        findings: [],
+        reason: 'mcp_certificate_pinning_error',
+        error: String(error.message || error),
+      };
+      warnings.push('mcp_certificate_pinning:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (mcpCertificateDecision?.enabled && server.mcpCertificatePinning.observability) {
+      res.setHeader(
+        'x-sentinel-mcp-cert-pinning',
+        mcpCertificateDecision.detected ? String(mcpCertificateDecision.reason || 'detected') : 'clean'
+      );
+      if (mcpCertificateDecision.fingerprint_prefix) {
+        res.setHeader('x-sentinel-mcp-cert-fingerprint', String(mcpCertificateDecision.fingerprint_prefix));
+      }
+    }
+
+    if (mcpCertificateDecision?.detected) {
+      server.stats.mcp_certificate_pinning_detected += 1;
+      if ((mcpCertificateDecision.findings || []).some((finding) => String(finding.code || '').includes('rotation'))) {
+        server.stats.mcp_certificate_pinning_rotation += 1;
+      }
+      warnings.push(`mcp_certificate_pinning:${mcpCertificateDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+
+    if (mcpCertificateDecision?.shouldBlock) {
+      server.stats.blocked_total += 1;
+      server.stats.policy_blocked += 1;
+      server.stats.mcp_certificate_pinning_blocked += 1;
+      res.setHeader('x-sentinel-blocked-by', 'mcp_certificate_pinning');
+      const diagnostics = {
+        errorSource: 'sentinel',
+        upstreamError: false,
+        provider,
+        retryCount: 0,
+        circuitState: server.circuitBreakers.getProviderState(breakerKey).state,
+        correlationId,
+      };
+      responseHeaderDiagnostics(res, diagnostics);
+      await server.maybeNormalizeBlockedLatency({
+        res,
+        statusCode: 403,
+        requestStart,
+      });
+      server.auditLogger.write({
+        timestamp: new Date().toISOString(),
+        correlation_id: correlationId,
+        config_version: server.config.version,
+        mode: effectiveMode,
+        decision: 'blocked_mcp_certificate_pinning',
+        reasons: [String(mcpCertificateDecision.reason || 'mcp_certificate_pinning_detected')],
+        pii_types: [],
+        redactions: 0,
+        duration_ms: Date.now() - requestStart,
+        request_bytes: rawBody.length,
+        response_status: 403,
+        response_bytes: 0,
+        provider,
+        mcp_certificate_findings: (mcpCertificateDecision.findings || []).map((finding) => finding.code),
+        mcp_certificate_server_id: mcpCertificateDecision.server_id,
+      });
+      server.writeStatus();
+      finalizeRequestTelemetry({
+        decision: 'blocked_policy',
+        status: 403,
+        providerName: provider,
+      });
+      res.status(403).json({
+        error: 'MCP_CERTIFICATE_PINNING_DETECTED',
+        reason: mcpCertificateDecision.reason || 'mcp_certificate_pinning_detected',
+        findings: (mcpCertificateDecision.findings || []).map((finding) => finding.code),
         correlation_id: correlationId,
       });
       return {

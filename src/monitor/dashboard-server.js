@@ -111,9 +111,9 @@ const DASHBOARD_HTML = `<!doctype html>
       background: radial-gradient(circle at top, #10331b, #050805 60%);
       color: #b5f7c6;
     }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .wrap { max-width: 1240px; margin: 0 auto; padding: 16px; }
     h1 { margin: 0 0 12px; color: #7fffa5; font-size: 20px; }
-    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 14px; }
     .card {
       background: rgba(9, 24, 13, 0.88);
       border: 1px solid #2f8048;
@@ -122,57 +122,104 @@ const DASHBOARD_HTML = `<!doctype html>
       min-height: 62px;
     }
     .k { color: #75d88f; font-size: 12px; }
-    .v { color: #d8ffe5; font-size: 19px; font-weight: 700; margin-top: 4px; }
-    .row { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+    .v { color: #d8ffe5; font-size: 18px; font-weight: 700; margin-top: 4px; }
+    .row { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
     th, td { border-bottom: 1px solid #1f4f2d; padding: 6px 4px; text-align: left; }
     th { color: #8fd2a3; }
     .danger { color: #ff8b8b; }
     .ok { color: #8fffa8; }
+    .panel-title { margin-bottom: 8px; color: #a4f4be; font-size: 12px; }
+    .muted { color: #7db58b; }
+    code { color: #bce7ff; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Sentinel Live Matrix</h1>
     <div class="k" style="margin-bottom:10px;">Playground: <a href="http://127.0.0.1:8787/_sentinel/playground" style="color:#9ed9ff;">/_sentinel/playground</a></div>
+
     <div class="grid">
       <div class="card"><div class="k">Requests</div><div id="req" class="v">0</div></div>
       <div class="card"><div class="k">Blocked</div><div id="blk" class="v">0</div></div>
       <div class="card"><div class="k">Semantic Cache Hits</div><div id="sch" class="v">0</div></div>
+      <div class="card"><div class="k">Anomalies (5m)</div><div id="an5" class="v">0</div></div>
+      <div class="card"><div class="k">Forensic Snapshots</div><div id="forc" class="v">0</div></div>
       <div class="card"><div class="k">Estimated Savings (USD)</div><div id="sav" class="v">0.0000</div></div>
     </div>
+
+    <div class="row3" style="margin-bottom:10px;">
+      <div class="card"><div class="k">MCP Shadow Detections</div><div id="mcpShadow" class="v">0</div></div>
+      <div class="card"><div class="k">MCP Cert Pinning Detections</div><div id="mcpPin" class="v">0</div></div>
+      <div class="card"><div class="k">Context Compression Detections</div><div id="ctxComp" class="v">0</div></div>
+    </div>
+
     <div class="row">
       <div class="card">
-        <div class="k">Recent Requests</div>
+        <div class="panel-title">Recent Requests</div>
         <table>
           <thead><tr><th>Time</th><th>Status</th><th>Decision</th><th>Reason</th></tr></thead>
           <tbody id="recent"></tbody>
         </table>
       </div>
       <div class="card">
-        <div class="k">Top PII Types</div>
+        <div class="panel-title">Top PII Types</div>
         <table>
           <thead><tr><th>Type</th><th>Hits</th></tr></thead>
           <tbody id="pii"></tbody>
         </table>
       </div>
     </div>
+
+    <div class="row">
+      <div class="card">
+        <div class="panel-title">Anomaly Heatmap</div>
+        <table>
+          <thead><tr><th>Engine</th><th>Events</th></tr></thead>
+          <tbody id="heatmap"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="panel-title">Forensic Snapshot Timeline</div>
+        <table>
+          <thead><tr><th>Captured</th><th>Decision</th><th>Reason</th></tr></thead>
+          <tbody id="forensics"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px;">
+      <div class="panel-title">Hints</div>
+      <div class="muted">Use <code>sentinel forensic replay --snapshot ... --overrides ...</code> for what-if analysis and <code>/_sentinel/forensic/replay</code> for live runtime replay.</div>
+    </div>
   </div>
   <script>
     async function tick() {
-      const [statusRes, recentRes] = await Promise.all([
+      const [statusRes, recentRes, anomalyRes, forensicRes] = await Promise.all([
         fetch('/api/status', { cache: 'no-store' }),
         fetch('/api/recent', { cache: 'no-store' }),
+        fetch('/api/anomalies', { cache: 'no-store' }),
+        fetch('/api/forensics', { cache: 'no-store' }),
       ]);
-      if (!statusRes.ok || !recentRes.ok) return;
+      if (!statusRes.ok || !recentRes.ok || !anomalyRes.ok || !forensicRes.ok) return;
+
       const status = await statusRes.json();
       const recent = await recentRes.json();
+      const anomalies = await anomalyRes.json();
+      const forensics = await forensicRes.json();
       const c = status.counters || {};
 
       document.getElementById('req').textContent = String(c.requests_total || 0);
       document.getElementById('blk').textContent = String(c.blocked_total || 0);
       document.getElementById('sch').textContent = String(c.semantic_cache_hits || 0);
       document.getElementById('sav').textContent = String(recent.estimated_savings_usd || 0);
+      document.getElementById('an5').textContent = String(anomalies.recent_5m_events || 0);
+      document.getElementById('forc').textContent = String((forensics.snapshots || []).length || 0);
+
+      document.getElementById('mcpShadow').textContent = String(c.mcp_shadow_detected || 0);
+      document.getElementById('mcpPin').textContent = String(c.mcp_certificate_pinning_detected || 0);
+      document.getElementById('ctxComp').textContent = String(c.context_compression_detected || 0);
 
       const recentBody = document.getElementById('recent');
       recentBody.innerHTML = '';
@@ -193,6 +240,24 @@ const DASHBOARD_HTML = `<!doctype html>
         tr.innerHTML = '<td>' + String(item[0]) + '</td><td>' + String(item[1]) + '</td>';
         piiBody.appendChild(tr);
       }
+
+      const heatmapBody = document.getElementById('heatmap');
+      heatmapBody.innerHTML = '';
+      for (const item of (anomalies.engine_heatmap || []).slice(0, 10)) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + String(item.engine || 'unknown') + '</td><td>' + String(item.count || 0) + '</td>';
+        heatmapBody.appendChild(tr);
+      }
+
+      const forensicBody = document.getElementById('forensics');
+      forensicBody.innerHTML = '';
+      for (const item of (forensics.snapshots || []).slice(0, 10)) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + String((item.captured_at || '').replace('T', ' ').replace('Z', '')) + '</td>'
+          + '<td>' + String(item.decision || '--') + '</td>'
+          + '<td>' + String(item.reason || '--') + '</td>';
+        forensicBody.appendChild(tr);
+      }
     }
     tick();
     setInterval(tick, 1000);
@@ -207,6 +272,12 @@ class DashboardServer {
     this.allowRemote = options.allowRemote === true;
     this.authToken = String(options.authToken || '');
     this.statusProvider = typeof options.statusProvider === 'function' ? options.statusProvider : () => ({});
+    this.anomaliesProvider = typeof options.anomaliesProvider === 'function'
+      ? options.anomaliesProvider
+      : () => ({ enabled: false, total_events: 0, recent_5m_events: 0, engine_heatmap: [] });
+    this.forensicsProvider = typeof options.forensicsProvider === 'function'
+      ? options.forensicsProvider
+      : () => ({ enabled: false, snapshots: [] });
     this.accessLogger = typeof options.accessLogger === 'function' ? options.accessLogger : null;
     this.auditTailer = new LogTailer(options.auditPath || AUDIT_LOG_PATH, {
       maxEntries: Number(options.maxAuditEntries || 300),
@@ -239,6 +310,14 @@ class DashboardServer {
         top_pii: topPii,
         estimated_savings_usd: estimateSavings(status?.counters || {}),
       });
+    });
+
+    this.app.get('/api/anomalies', (req, res) => {
+      res.json(this.anomaliesProvider());
+    });
+
+    this.app.get('/api/forensics', (req, res) => {
+      res.json(this.forensicsProvider());
     });
 
     this.app.get('/health', (req, res) => {

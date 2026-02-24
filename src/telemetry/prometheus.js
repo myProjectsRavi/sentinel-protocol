@@ -122,6 +122,21 @@ class PrometheusExporter {
       counters.mcp_shadow_name_collision
     );
     appendCounter(
+      'sentinel_mcp_certificate_pinning_detected_total',
+      'Total MCP certificate pinning detections',
+      counters.mcp_certificate_pinning_detected
+    );
+    appendCounter(
+      'sentinel_mcp_certificate_pinning_blocked_total',
+      'Total requests blocked by MCP certificate pinning',
+      counters.mcp_certificate_pinning_blocked
+    );
+    appendCounter(
+      'sentinel_mcp_certificate_pinning_rotation_total',
+      'Total MCP certificate rotation detections',
+      counters.mcp_certificate_pinning_rotation
+    );
+    appendCounter(
       'sentinel_prompt_rebuff_detected_total',
       'Total requests where prompt rebuff detected elevated risk',
       counters.prompt_rebuff_detected
@@ -175,6 +190,16 @@ class PrometheusExporter {
       'sentinel_output_schema_validator_blocked_total',
       'Total responses blocked by output schema validator',
       counters.output_schema_validator_blocked
+    );
+    appendCounter(
+      'sentinel_context_compression_detected_total',
+      'Total requests where context compression guard detected risk',
+      counters.context_compression_detected
+    );
+    appendCounter(
+      'sentinel_context_compression_blocked_total',
+      'Total requests blocked by context compression guard',
+      counters.context_compression_blocked
     );
 
     const agentCounters =

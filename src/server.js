@@ -61,11 +61,13 @@ const { AgentIdentityFederation } = require('./security/agent-identity-federatio
 const { ToolUseAnomalyDetector } = require('./security/tool-use-anomaly');
 const { SerializationFirewall } = require('./security/serialization-firewall');
 const { ContextIntegrityGuardian } = require('./security/context-integrity-guardian');
+const { ContextCompressionGuard } = require('./security/context-compression-guard');
 const { ToolSchemaValidator } = require('./security/tool-schema-validator');
 const { MultiModalInjectionShield } = require('./security/multimodal-injection-shield');
 const { SupplyChainValidator } = require('./security/supply-chain-validator');
 const { SandboxEnforcer } = require('./security/sandbox-enforcer');
 const { MemoryIntegrityMonitor } = require('./security/memory-integrity-monitor');
+const { MCPCertificatePinning } = require('./security/mcp-certificate-pinning');
 const { OutputClassifier } = require('./egress/output-classifier');
 const { StegoExfilDetector } = require('./egress/stego-exfil-detector');
 const { ReasoningTraceMonitor } = require('./egress/reasoning-trace-monitor');
@@ -497,11 +499,16 @@ class SentinelServer {
       serialization_firewall_blocked: 0,
       context_integrity_detected: 0,
       context_integrity_blocked: 0,
+      context_compression_detected: 0,
+      context_compression_blocked: 0,
       tool_schema_detected: 0,
       tool_schema_blocked: 0,
       tool_schema_sanitized: 0,
       multimodal_injection_detected: 0,
       multimodal_injection_blocked: 0,
+      mcp_certificate_pinning_detected: 0,
+      mcp_certificate_pinning_blocked: 0,
+      mcp_certificate_pinning_rotation: 0,
       supply_chain_detected: 0,
       supply_chain_blocked: 0,
       sandbox_enforcer_detected: 0,
@@ -698,6 +705,11 @@ class SentinelServer {
     this.promptRebuff = optionalEngine('promptRebuff', 'prompt_rebuff', (engineConfig) => new PromptRebuffEngine(engineConfig));
     this.mcpPoisoningDetector = optionalEngine('mcpPoisoningDetector', 'mcp_poisoning', (engineConfig) => new MCPPoisoningDetector(engineConfig));
     this.mcpShadowDetector = optionalEngine('mcpShadowDetector', 'mcp_shadow', (engineConfig) => new MCPShadowDetector(engineConfig));
+    this.mcpCertificatePinning = optionalEngine(
+      'mcpCertificatePinning',
+      'mcp_certificate_pinning',
+      (engineConfig) => new MCPCertificatePinning(engineConfig)
+    );
     this.memoryPoisoningSentinel = optionalEngine(
       'memoryPoisoningSentinel',
       'memory_poisoning',
@@ -733,6 +745,11 @@ class SentinelServer {
     );
     this.serializationFirewall = optionalEngine('serializationFirewall', 'serialization_firewall', (engineConfig) => new SerializationFirewall(engineConfig));
     this.contextIntegrityGuardian = optionalEngine('contextIntegrityGuardian', 'context_integrity_guardian', (engineConfig) => new ContextIntegrityGuardian(engineConfig));
+    this.contextCompressionGuard = optionalEngine(
+      'contextCompressionGuard',
+      'context_compression_guard',
+      (engineConfig) => new ContextCompressionGuard(engineConfig)
+    );
     this.toolSchemaValidator = optionalEngine('toolSchemaValidator', 'tool_schema_validator', (engineConfig) => new ToolSchemaValidator(engineConfig));
     this.multimodalInjectionShield = optionalEngine(
       'multimodalInjectionShield',
@@ -1083,6 +1100,8 @@ class SentinelServer {
       mcp_poisoning_mode: this.mcpPoisoningDetector.mode,
       mcp_shadow_enabled: this.mcpShadowDetector.isEnabled(),
       mcp_shadow_mode: this.mcpShadowDetector.mode,
+      mcp_certificate_pinning_enabled: this.mcpCertificatePinning.isEnabled(),
+      mcp_certificate_pinning_mode: this.mcpCertificatePinning.mode,
       memory_poisoning_enabled: this.memoryPoisoningSentinel.isEnabled(),
       memory_poisoning_mode: this.memoryPoisoningSentinel.mode,
       cascade_isolator_enabled: this.cascadeIsolator.isEnabled(),
@@ -1097,6 +1116,8 @@ class SentinelServer {
       serialization_firewall_mode: this.serializationFirewall.mode,
       context_integrity_guardian_enabled: this.contextIntegrityGuardian.isEnabled(),
       context_integrity_guardian_mode: this.contextIntegrityGuardian.mode,
+      context_compression_guard_enabled: this.contextCompressionGuard.isEnabled(),
+      context_compression_guard_mode: this.contextCompressionGuard.mode,
       tool_schema_validator_enabled: this.toolSchemaValidator.isEnabled(),
       tool_schema_validator_mode: this.toolSchemaValidator.mode,
       multimodal_injection_shield_enabled: this.multimodalInjectionShield.isEnabled(),
@@ -1728,6 +1749,28 @@ class SentinelServer {
     );
 
     await runEngine(
+      'context_compression_guard',
+      () =>
+        this.contextCompressionGuard.evaluate({
+          headers: {},
+          bodyJson:
+            bodyJson && typeof bodyJson === 'object'
+              ? bodyJson
+              : {
+                messages: [
+                  {
+                    role: 'user',
+                    content: text,
+                  },
+                ],
+              },
+          bodyText: text,
+          correlationId: requestId,
+          effectiveMode,
+        })
+    );
+
+    await runEngine(
       'tool_schema_validator',
       () =>
         this.toolSchemaValidator.evaluate({
@@ -1809,6 +1852,61 @@ class SentinelServer {
         risk,
       },
       engines,
+    };
+  }
+
+  buildForensicEvaluators() {
+    const defaultInjectionThreshold = Number(this.config?.injection?.threshold ?? 0.8);
+    const defaultPromptRebuffThreshold = Number(this.config?.runtime?.prompt_rebuff?.block_threshold ?? 0.85);
+    return [
+      {
+        name: 'injection_threshold_probe',
+        run({ decision = {}, overrides = {} }) {
+          const score = Number(
+            decision.injection_score
+            || decision.prompt_rebuff_score
+            || decision.policy?.injection_score
+            || 0
+          );
+          const threshold = Number(
+            overrides.injection_threshold ?? defaultInjectionThreshold
+          );
+          return {
+            blocked: score >= threshold,
+            score,
+            threshold,
+          };
+        },
+      },
+      {
+        name: 'prompt_rebuff_probe',
+        run({ decision = {}, overrides = {} }) {
+          const score = Number(decision.prompt_rebuff_score || 0);
+          const threshold = Number(
+            overrides.prompt_rebuff_threshold ?? defaultPromptRebuffThreshold
+          );
+          return {
+            blocked: score >= threshold,
+            score,
+            threshold,
+          };
+        },
+      },
+    ];
+  }
+
+  buildForensicReplay({ snapshot = {}, overrides = {} } = {}) {
+    const replay = this.forensicDebugger.replay(
+      snapshot,
+      this.buildForensicEvaluators(),
+      overrides
+    );
+    const replayDecision = replay.results[0]?.result || {};
+    const diff = this.forensicDebugger.diff(snapshot.decision || {}, replayDecision);
+    return {
+      snapshot_id: snapshot.id || null,
+      replay,
+      diff,
     };
   }
 
@@ -2050,6 +2148,79 @@ class SentinelServer {
         }
       }
       res.status(200).json(result);
+    });
+
+    this.app.get('/_sentinel/forensic/snapshots', (req, res) => {
+      if (!this.forensicDebugger?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'FORENSIC_DEBUGGER_DISABLED',
+        });
+        return;
+      }
+      const requested = Number(req.query?.limit);
+      const limit = Number.isFinite(requested)
+        ? Math.max(1, Math.min(Math.floor(requested), 200))
+        : 50;
+      const snapshots = this.forensicDebugger.listSnapshots({ limit });
+      res.status(200).json({
+        count: snapshots.length,
+        snapshots,
+      });
+    });
+
+    this.app.get('/_sentinel/forensic/snapshots/:id', (req, res) => {
+      if (!this.forensicDebugger?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'FORENSIC_DEBUGGER_DISABLED',
+        });
+        return;
+      }
+      const snapshotId = String(req.params?.id || '');
+      const includePayload = String(req.query?.include_payload || '').toLowerCase() === 'true';
+      const snapshot = this.forensicDebugger.getSnapshot(snapshotId, {
+        includePayload,
+      });
+      if (!snapshot) {
+        res.status(404).json({
+          error: 'FORENSIC_SNAPSHOT_NOT_FOUND',
+        });
+        return;
+      }
+      res.status(200).json(snapshot);
+    });
+
+    this.app.post('/_sentinel/forensic/replay', (req, res) => {
+      if (!this.forensicDebugger?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'FORENSIC_DEBUGGER_DISABLED',
+        });
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const snapshotId = String(payload.snapshot_id || '');
+      const snapshot = snapshotId
+        ? this.forensicDebugger.getSnapshot(snapshotId, { includePayload: true })
+        : this.forensicDebugger.latestSnapshot({ includePayload: true });
+
+      if (!snapshot) {
+        res.status(404).json({
+          error: 'FORENSIC_SNAPSHOT_NOT_FOUND',
+        });
+        return;
+      }
+      const overrides = payload.overrides && typeof payload.overrides === 'object'
+        ? payload.overrides
+        : {};
+      const report = this.buildForensicReplay({
+        snapshot,
+        overrides,
+      });
+      res.status(200).json(report);
     });
 
     this.app.get('/_sentinel/metrics', (req, res) => {
@@ -3315,6 +3486,20 @@ class SentinelServer {
         allowRemote: dashboardConfig.allow_remote === true,
         authToken: dashboardConfig.auth_token,
         statusProvider: () => this.currentStatusPayload(),
+        anomaliesProvider: () =>
+          this.anomalyTelemetry?.isEnabled?.()
+            ? this.anomalyTelemetry.snapshot()
+            : { enabled: false, events_total: 0, heatmap: [] },
+        forensicsProvider: () =>
+          this.forensicDebugger?.isEnabled?.()
+            ? {
+              enabled: true,
+              snapshots: this.forensicDebugger.listSnapshots({ limit: 20 }),
+            }
+            : {
+              enabled: false,
+              snapshots: [],
+            },
         accessLogger: (event) => this.recordDashboardAccess(event),
       });
       this.dashboardServer

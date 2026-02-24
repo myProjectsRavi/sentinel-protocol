@@ -68,6 +68,13 @@ Playground UI:
 http://127.0.0.1:8787/_sentinel/playground
 ```
 
+Runtime forensic APIs:
+
+```text
+http://127.0.0.1:8787/_sentinel/forensic/snapshots
+http://127.0.0.1:8787/_sentinel/forensic/replay
+```
+
 ## VS Code Extension (Scaffold)
 
 Files:

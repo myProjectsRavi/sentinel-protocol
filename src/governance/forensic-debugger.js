@@ -93,6 +93,58 @@ class ForensicDebugger {
     return snapshot;
   }
 
+  listSnapshots({ limit = 50 } = {}) {
+    const max = clampPositiveInt(limit, 50, 1, 1000);
+    const tail = this.snapshots.slice(Math.max(0, this.snapshots.length - max)).reverse();
+    return tail.map((snapshot) => ({
+      id: snapshot.id,
+      captured_at: snapshot.captured_at,
+      config_version: snapshot.config_version,
+      decision: snapshot.decision?.decision || null,
+      reason: snapshot.decision?.reason || null,
+      provider: snapshot.decision?.provider || null,
+      response_status: snapshot.decision?.response_status || null,
+      fingerprint: snapshot.fingerprint,
+    }));
+  }
+
+  getSnapshot(snapshotId, { includePayload = false } = {}) {
+    const id = String(snapshotId || '').trim();
+    if (!id) {
+      return null;
+    }
+    const snapshot = this.snapshots.find((item) => String(item?.id || '') === id);
+    if (!snapshot) {
+      return null;
+    }
+    if (includePayload) {
+      return JSON.parse(JSON.stringify(snapshot));
+    }
+    return {
+      id: snapshot.id,
+      captured_at: snapshot.captured_at,
+      config_version: snapshot.config_version,
+      decision: snapshot.decision?.decision || null,
+      reason: snapshot.decision?.reason || null,
+      provider: snapshot.decision?.provider || null,
+      response_status: snapshot.decision?.response_status || null,
+      fingerprint: snapshot.fingerprint,
+    };
+  }
+
+  latestSnapshot({ includePayload = false } = {}) {
+    if (this.snapshots.length === 0) {
+      return null;
+    }
+    const snapshot = this.snapshots[this.snapshots.length - 1];
+    if (includePayload) {
+      return JSON.parse(JSON.stringify(snapshot));
+    }
+    return this.getSnapshot(snapshot.id, {
+      includePayload: false,
+    });
+  }
+
   replay(snapshot, evaluators = [], overrides = {}) {
     const snap = snapshot && typeof snapshot === 'object' ? snapshot : {};
     const results = [];

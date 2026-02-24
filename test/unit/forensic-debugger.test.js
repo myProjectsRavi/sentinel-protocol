@@ -89,4 +89,37 @@ describe('ForensicDebugger', () => {
     expect(snapshot.request.headers.authorization).toBe('[REDACTED]');
     expect(snapshot.request.body.password).toBe('[REDACTED]');
   });
+
+  test('lists and retrieves snapshots for runtime replay workflows', () => {
+    const debuggerEngine = new ForensicDebugger({
+      enabled: true,
+      max_snapshots: 10,
+    });
+    const snapshot = debuggerEngine.capture({
+      request: {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        body: { prompt: 'hello world' },
+      },
+      decision: {
+        decision: 'blocked_policy',
+        reason: 'injection_detected',
+        response_status: 403,
+      },
+      configVersion: 1,
+      summaryOnly: false,
+    });
+
+    const list = debuggerEngine.listSnapshots({ limit: 5 });
+    expect(list.length).toBe(1);
+    expect(list[0].id).toBe(snapshot.id);
+    expect(list[0].decision).toBe('blocked_policy');
+
+    const full = debuggerEngine.getSnapshot(snapshot.id, { includePayload: true });
+    expect(full.id).toBe(snapshot.id);
+    expect(full.request.path).toBe('/v1/chat/completions');
+
+    const latest = debuggerEngine.latestSnapshot({ includePayload: false });
+    expect(latest.id).toBe(snapshot.id);
+  });
 });

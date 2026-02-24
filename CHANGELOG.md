@@ -17,6 +17,13 @@
   - `GET /_sentinel/threat-intel`
   - `GET /_sentinel/zk-config`
   - `POST /_sentinel/adversarial-eval/run`
+  - `GET /_sentinel/forensic/snapshots`
+  - `GET /_sentinel/forensic/snapshots/{snapshotId}`
+  - `POST /_sentinel/forensic/replay`
+- Phase 2 security/runtime additions:
+  - `runtime.context_compression_guard` (safety-anchor loss detection during context compaction)
+  - `runtime.mcp_certificate_pinning` (cert fingerprint pinning for MCP-labeled traffic)
+  - rich dashboard API surfaces for anomaly + forensic snapshot panels
 - New engine modules and unit coverage for the runtime controls above.
 - Config profile system (`minimal|standard|paranoid`) with deterministic overlays.
 - One-command bootstrap CLI flow: `sentinel bootstrap --profile <name>`.

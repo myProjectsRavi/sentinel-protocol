@@ -335,6 +335,24 @@ runtime:
     block_on_anchor_loss: false
     block_on_repetition: false
     observability: true
+  context_compression_guard:
+    enabled: false
+    mode: monitor # monitor | block
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    protected_anchors: []
+    summary_fields: [summary, context_summary, memory_summary, compressed_context, conversation_summary]
+    max_context_chars: 32768
+    max_summary_chars: 16384
+    max_sessions: 10000
+    ttl_ms: 21600000
+    anchor_loss_ratio: 0.75
+    shrink_spike_ratio: 0.35
+    token_budget_warn_ratio: 0.85
+    provider_token_limit: 128000
+    block_on_anchor_loss: false
+    block_on_summary_injection: false
+    observability: true
   tool_schema_validator:
     enabled: false
     mode: monitor # monitor | block
@@ -428,6 +446,20 @@ runtime:
     min_tool_name_length: 4
     name_similarity_distance: 1
     max_name_candidates: 128
+    observability: true
+  mcp_certificate_pinning:
+    enabled: false
+    mode: monitor # monitor | block
+    server_id_header: x-sentinel-mcp-server-id
+    fingerprint_header: x-sentinel-mcp-cert-sha256
+    pins: {}
+    allow_unpinned_servers: true
+    require_fingerprint_for_pinned_servers: true
+    detect_rotation: true
+    block_on_mismatch: false
+    block_on_rotation: false
+    max_servers: 5000
+    ttl_ms: 3600000
     observability: true
   memory_poisoning:
     enabled: false

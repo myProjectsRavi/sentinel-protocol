@@ -228,6 +228,79 @@ paths:
                 additionalProperties: true
         '404':
           description: Adversarial eval harness disabled.
+  /_sentinel/forensic/snapshots:
+    get:
+      summary: List forensic snapshots captured in runtime
+      operationId: listForensicSnapshots
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        '200':
+          description: Forensic snapshot list.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Forensic debugger disabled.
+  /_sentinel/forensic/snapshots/{snapshotId}:
+    get:
+      summary: Get forensic snapshot by id
+      operationId: getForensicSnapshot
+      parameters:
+        - name: snapshotId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: include_payload
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Forensic snapshot payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Snapshot not found or debugger disabled.
+  /_sentinel/forensic/replay:
+    post:
+      summary: Replay forensic snapshot with optional what-if overrides
+      operationId: replayForensicSnapshot
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                snapshot_id:
+                  type: string
+                overrides:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Forensic replay report and diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Snapshot not found or debugger disabled.
   /_sentinel/playground:
     get:
       summary: Interactive local prompt playground UI

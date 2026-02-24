@@ -479,6 +479,9 @@ Sentinel supports websocket interception (Phase A) and streaming protections:
 - `GET /_sentinel/threat-intel`
 - `GET /_sentinel/zk-config`
 - `POST /_sentinel/adversarial-eval/run`
+- `GET /_sentinel/forensic/snapshots`
+- `GET /_sentinel/forensic/snapshots/{snapshotId}`
+- `POST /_sentinel/forensic/replay`
 - `GET /_sentinel/playground`
 - `POST /_sentinel/playground/analyze`
 
@@ -492,6 +495,15 @@ OpenAPI contract: `docs/openapi.yaml`
 - Python framework adapters (zero-dependency):
   - `python/sentinel_protocol_adapters/callbacks.py`
   - `examples/python-adapters-integration.py`
+
+## Enterprise Surfaces (Phase 2)
+
+- Context Compression Guard (`runtime.context_compression_guard`) to detect safety-anchor loss during summarization/compaction.
+- MCP Certificate Pinning (`runtime.mcp_certificate_pinning`) to enforce expected cert fingerprints per MCP server ID.
+- Runtime Forensic Replay APIs:
+  - `/_sentinel/forensic/snapshots`
+  - `/_sentinel/forensic/replay`
+- Rich dashboard panels for anomalies + forensics timelines (read-only, localhost-first).
 
 ## CLI Reference (Most Used)
 
