@@ -1,6 +1,7 @@
 const fs = require('fs');
 
 const { loadAndValidateConfig } = require('./config/loader');
+const { applyConfigProfile } = require('./config/profiles');
 const { SentinelServer } = require('./server');
 const { createSentinel } = require('./embed');
 const { PolicyBundle } = require('./governance/policy-bundle');
@@ -78,6 +79,16 @@ function loadConfigForStart(options = {}) {
     allowMigration: true,
     writeMigrated: true,
   });
+
+  if (options.profile) {
+    const profiled = applyConfigProfile(loaded.config, options.profile);
+    loaded.config = profiled.config;
+    loaded.profile = {
+      name: profiled.profile,
+      enabledRuntimeEngines: profiled.enabledRuntimeEngines,
+      totalRuntimeEngines: profiled.totalRuntimeEngines,
+    };
+  }
 
   if (options.modeOverride) {
     loaded.config.mode = options.modeOverride;

@@ -55,4 +55,17 @@ describe('SentinelServer start', () => {
 
     await expect(sentinel.stop()).resolves.toBeUndefined();
   });
+
+  test('reports lazy engine loading state in status payload', () => {
+    const loaded = loadAndValidateConfig({
+      configPath: PROJECT_DEFAULT_CONFIG,
+      allowMigration: false,
+      writeMigrated: false,
+    });
+    const sentinel = new SentinelServer(loaded.config, { runDoctor: false });
+    const status = sentinel.currentStatusPayload();
+    expect(status.lazy_engine_loading_enabled).toBe(true);
+    expect(Number(status.lazy_engine_skipped)).toBeGreaterThan(0);
+    expect(Array.isArray(status.lazy_engine_skipped_keys)).toBe(true);
+  });
 });

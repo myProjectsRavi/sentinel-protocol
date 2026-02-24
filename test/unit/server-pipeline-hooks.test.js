@@ -53,13 +53,21 @@ describe('server pipeline stage orchestration', () => {
     );
 
     const constructorWiring = [
-      'this.serializationFirewall = new SerializationFirewall',
-      'this.contextIntegrityGuardian = new ContextIntegrityGuardian',
-      'this.toolSchemaValidator = new ToolSchemaValidator',
-      'this.multimodalInjectionShield = new MultiModalInjectionShield',
-      'this.supplyChainValidator = new SupplyChainValidator',
-      'this.sandboxEnforcer = new SandboxEnforcer',
-      'this.memoryIntegrityMonitor = new MemoryIntegrityMonitor',
+      "this.serializationFirewall = optionalEngine('serializationFirewall'",
+      "'serialization_firewall'",
+      "this.contextIntegrityGuardian = optionalEngine('contextIntegrityGuardian'",
+      "'context_integrity_guardian'",
+      "this.toolSchemaValidator = optionalEngine('toolSchemaValidator'",
+      "'tool_schema_validator'",
+      "this.multimodalInjectionShield = optionalEngine(",
+      "'multimodalInjectionShield'",
+      "'multimodal_injection_shield'",
+      "this.supplyChainValidator = optionalEngine('supplyChainValidator'",
+      "'supply_chain_validator'",
+      "this.sandboxEnforcer = optionalEngine('sandboxEnforcer'",
+      "'sandbox_enforcer'",
+      "this.memoryIntegrityMonitor = optionalEngine('memoryIntegrityMonitor'",
+      "'memory_integrity_monitor'",
     ];
     for (const marker of constructorWiring) {
       expect(serverSource).toContain(marker);

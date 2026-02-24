@@ -18,15 +18,24 @@
   - `GET /_sentinel/zk-config`
   - `POST /_sentinel/adversarial-eval/run`
 - New engine modules and unit coverage for the runtime controls above.
+- Config profile system (`minimal|standard|paranoid`) with deterministic overlays.
+- One-command bootstrap CLI flow: `sentinel bootstrap --profile <name>`.
+- Lazy optional-engine loading with runtime visibility counters and status output.
+- Cost optimizer memory-budget extensions:
+  - hard RSS cap (`memory_hard_cap_bytes`)
+  - deterministic engine shedding (`shed_on_memory_pressure`, `shed_engine_order`)
+  - restore path after memory recovery.
 
 ### Changed
 - Integrated new engines into live stage flow (policy + agentic + audit) with deterministic block/warn behavior.
 - Extended capability introspection and MITRE ATLAS mapping for newly added engines.
 - Extended config defaults + strict schema validation for all new runtime keys (unknown-key rejection preserved).
+- `startServer` now supports runtime profile overlay selection before mode/vcr overrides.
 
 ### Docs
 - Updated OpenAPI contract with new control-plane endpoints.
 - Updated README feature map and control-plane endpoint list.
+- Updated README quickstart and CLI references for bootstrap/profile flows.
 - Refreshed V4 evidence doc to reflect full implemented engine set and verification focus.
 
 ## 1.0.0 - 2026-02-19

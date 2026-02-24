@@ -749,6 +749,11 @@ const COST_EFFICIENCY_OPTIMIZER_KEYS = new Set([
   'low_budget_usd',
   'memory_warn_bytes',
   'memory_critical_bytes',
+  'memory_hard_cap_bytes',
+  'shed_on_memory_pressure',
+  'max_shed_engines',
+  'shed_cooldown_ms',
+  'shed_engine_order',
   'block_on_critical_memory',
   'block_on_budget_exhausted',
   'observability',
@@ -2307,6 +2312,13 @@ function applyDefaults(config) {
   costEfficiencyOptimizer.low_budget_usd = Number(costEfficiencyOptimizer.low_budget_usd ?? 2);
   costEfficiencyOptimizer.memory_warn_bytes = Number(costEfficiencyOptimizer.memory_warn_bytes ?? 6 * 1024 * 1024 * 1024);
   costEfficiencyOptimizer.memory_critical_bytes = Number(costEfficiencyOptimizer.memory_critical_bytes ?? 7 * 1024 * 1024 * 1024);
+  costEfficiencyOptimizer.memory_hard_cap_bytes = Number(costEfficiencyOptimizer.memory_hard_cap_bytes ?? 0);
+  costEfficiencyOptimizer.shed_on_memory_pressure = costEfficiencyOptimizer.shed_on_memory_pressure !== false;
+  costEfficiencyOptimizer.max_shed_engines = Number(costEfficiencyOptimizer.max_shed_engines ?? 16);
+  costEfficiencyOptimizer.shed_cooldown_ms = Number(costEfficiencyOptimizer.shed_cooldown_ms ?? 30000);
+  costEfficiencyOptimizer.shed_engine_order = Array.isArray(costEfficiencyOptimizer.shed_engine_order)
+    ? costEfficiencyOptimizer.shed_engine_order.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
   costEfficiencyOptimizer.block_on_critical_memory = costEfficiencyOptimizer.block_on_critical_memory === true;
   costEfficiencyOptimizer.block_on_budget_exhausted = costEfficiencyOptimizer.block_on_budget_exhausted === true;
   costEfficiencyOptimizer.observability = costEfficiencyOptimizer.observability !== false;
@@ -5927,6 +5939,51 @@ function validateConfigShape(config) {
       '`runtime.cost_efficiency_optimizer.memory_critical_bytes` must be integer > 0',
       details
     );
+    assertType(
+      costEfficiencyOptimizer.memory_critical_bytes >= costEfficiencyOptimizer.memory_warn_bytes,
+      '`runtime.cost_efficiency_optimizer.memory_critical_bytes` must be >= memory_warn_bytes',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.memory_hard_cap_bytes) && costEfficiencyOptimizer.memory_hard_cap_bytes >= 0,
+      '`runtime.cost_efficiency_optimizer.memory_hard_cap_bytes` must be integer >= 0',
+      details
+    );
+    assertType(
+      costEfficiencyOptimizer.memory_hard_cap_bytes === 0
+        || costEfficiencyOptimizer.memory_hard_cap_bytes >= costEfficiencyOptimizer.memory_critical_bytes,
+      '`runtime.cost_efficiency_optimizer.memory_hard_cap_bytes` must be 0 or >= memory_critical_bytes',
+      details
+    );
+    assertType(
+      typeof costEfficiencyOptimizer.shed_on_memory_pressure === 'boolean',
+      '`runtime.cost_efficiency_optimizer.shed_on_memory_pressure` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.max_shed_engines) && costEfficiencyOptimizer.max_shed_engines > 0,
+      '`runtime.cost_efficiency_optimizer.max_shed_engines` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(costEfficiencyOptimizer.shed_cooldown_ms) && costEfficiencyOptimizer.shed_cooldown_ms > 0,
+      '`runtime.cost_efficiency_optimizer.shed_cooldown_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(costEfficiencyOptimizer.shed_engine_order),
+      '`runtime.cost_efficiency_optimizer.shed_engine_order` must be array',
+      details
+    );
+    if (Array.isArray(costEfficiencyOptimizer.shed_engine_order)) {
+      costEfficiencyOptimizer.shed_engine_order.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.trim().length > 0,
+          `runtime.cost_efficiency_optimizer.shed_engine_order[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
     assertType(
       typeof costEfficiencyOptimizer.block_on_critical_memory === 'boolean',
       '`runtime.cost_efficiency_optimizer.block_on_critical_memory` must be boolean',

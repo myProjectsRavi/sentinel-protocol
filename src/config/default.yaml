@@ -620,6 +620,11 @@ runtime:
     low_budget_usd: 2
     memory_warn_bytes: 6442450944
     memory_critical_bytes: 7516192768
+    memory_hard_cap_bytes: 0
+    shed_on_memory_pressure: true
+    max_shed_engines: 16
+    shed_cooldown_ms: 30000
+    shed_engine_order: []
     block_on_critical_memory: false
     block_on_budget_exhausted: false
     observability: true

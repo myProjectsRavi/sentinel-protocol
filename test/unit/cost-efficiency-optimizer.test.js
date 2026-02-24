@@ -35,4 +35,38 @@ describe('CostEfficiencyOptimizer', () => {
     expect(recommendation.enabled).toBe(true);
     expect(recommendation.recommendation.provider).toBe('fast-provider');
   });
+
+  test('emits hard-cap memory signal and shedding recommendation in active mode', () => {
+    const optimizer = new CostEfficiencyOptimizer({
+      enabled: true,
+      mode: 'active',
+      memory_warn_bytes: 1,
+      memory_critical_bytes: 2,
+      memory_hard_cap_bytes: 3,
+      shed_on_memory_pressure: true,
+      max_shed_engines: 7,
+      shed_cooldown_ms: 2500,
+      shed_engine_order: ['anomaly_telemetry', 'output_classifier'],
+    });
+
+    const originalMemoryUsage = process.memoryUsage;
+    process.memoryUsage = jest.fn(() => ({ rss: 4 }));
+    try {
+      const decision = optimizer.evaluate({
+        provider: 'openai',
+        bodyText: 'hello world',
+        effectiveMode: 'enforce',
+      });
+      expect(decision.memory_level).toBe('hard_cap');
+      expect(decision.shed_recommended).toBe(true);
+      expect(decision.shouldBlock).toBe(true);
+      expect(decision.findings.some((item) => item.code === 'cost_memory_hard_cap')).toBe(true);
+      const snapshot = optimizer.snapshot();
+      expect(snapshot.memory_hard_cap_bytes).toBe(3);
+      expect(snapshot.max_shed_engines).toBe(7);
+      expect(snapshot.shed_cooldown_ms).toBe(2500);
+    } finally {
+      process.memoryUsage = originalMemoryUsage;
+    }
+  });
 });

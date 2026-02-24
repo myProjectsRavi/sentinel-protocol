@@ -132,18 +132,24 @@ async function main() {
   }
 
   try {
-    runChecked('npx', ['--yes', '--package', tarballPath, 'sentinel', 'init', '--force'], {
-      cwd: root,
-      env,
-    });
     const configPath = path.join(sentinelHome, 'sentinel.yaml');
-    if (!fs.existsSync(configPath)) {
-      throw new Error(`expected config not created: ${configPath}`);
-    }
 
     const child = spawn(
       'npx',
-      ['--yes', '--package', tarballPath, 'sentinel', 'start', '--config', configPath, '--port', '0', '--skip-doctor'],
+      [
+        '--yes',
+        '--package',
+        tarballPath,
+        'sentinel',
+        'bootstrap',
+        '--config',
+        configPath,
+        '--force',
+        '--profile',
+        'minimal',
+        '--port',
+        '0',
+      ],
       {
         cwd: root,
         env,
@@ -158,6 +164,9 @@ async function main() {
 
     const statusPath = path.join(sentinelHome, 'status.json');
     await waitForServerReady(statusPath);
+    if (!fs.existsSync(configPath)) {
+      throw new Error(`expected config not created: ${configPath}`);
+    }
 
     await terminateSpawnedProcess(child, output);
     process.stdout.write('npx bootstrap validation passed.\n');

@@ -12,6 +12,17 @@ function clampRatio(value, fallback, min = 0, max = 1) {
   return parsed;
 }
 
+function clampPositiveIntOrZero(value, fallback = 0, max = Number.MAX_SAFE_INTEGER) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  if (parsed <= 0) {
+    return 0;
+  }
+  return Math.min(max, Math.floor(parsed));
+}
+
 function percentile(values = [], p = 0.95) {
   if (!Array.isArray(values) || values.length === 0) {
     return 0;
@@ -105,6 +116,13 @@ class CostEfficiencyOptimizer {
       : 2;
     this.memoryWarnBytes = clampPositiveInt(config.memory_warn_bytes, 6 * 1024 * 1024 * 1024, 32 * 1024 * 1024, Number.MAX_SAFE_INTEGER);
     this.memoryCriticalBytes = clampPositiveInt(config.memory_critical_bytes, 7 * 1024 * 1024 * 1024, 64 * 1024 * 1024, Number.MAX_SAFE_INTEGER);
+    this.memoryHardCapBytes = clampPositiveIntOrZero(config.memory_hard_cap_bytes, 0, Number.MAX_SAFE_INTEGER);
+    this.shedOnMemoryPressure = config.shed_on_memory_pressure !== false;
+    this.maxShedEngines = clampPositiveInt(config.max_shed_engines, 16, 1, 512);
+    this.shedCooldownMs = clampPositiveInt(config.shed_cooldown_ms, 30000, 1000, 3600000);
+    this.shedEngineOrder = Array.isArray(config.shed_engine_order)
+      ? config.shed_engine_order.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 256)
+      : [];
     this.blockOnCriticalMemory = config.block_on_critical_memory === true;
     this.blockOnBudgetExhausted = config.block_on_budget_exhausted === true;
     this.observability = config.observability !== false;
@@ -236,6 +254,7 @@ class CostEfficiencyOptimizer {
     const repetitionRatio = calculateRepetitionRatio(promptText);
     const rssBytes = Number(process.memoryUsage()?.rss || 0);
     const findings = [];
+    let memoryLevel = 'normal';
 
     if (promptChars >= this.promptBloatChars) {
       findings.push({
@@ -254,12 +273,25 @@ class CostEfficiencyOptimizer {
       });
     }
     if (rssBytes >= this.memoryWarnBytes) {
+      memoryLevel = 'warn';
       findings.push({
         code: 'cost_memory_pressure',
         rss_bytes: rssBytes,
         warn_threshold: this.memoryWarnBytes,
         critical_threshold: this.memoryCriticalBytes,
         blockEligible: this.blockOnCriticalMemory && rssBytes >= this.memoryCriticalBytes,
+      });
+    }
+    if (rssBytes >= this.memoryCriticalBytes) {
+      memoryLevel = 'critical';
+    }
+    if (this.memoryHardCapBytes > 0 && rssBytes >= this.memoryHardCapBytes) {
+      memoryLevel = 'hard_cap';
+      findings.push({
+        code: 'cost_memory_hard_cap',
+        rss_bytes: rssBytes,
+        hard_cap_bytes: this.memoryHardCapBytes,
+        blockEligible: true,
       });
     }
     if (Number.isFinite(Number(budgetRemainingUsd))) {
@@ -282,11 +314,16 @@ class CostEfficiencyOptimizer {
     });
     const routeRecommendation = this.recommendRoute({});
     const detected = findings.length > 0;
+    const hardCapExceeded = memoryLevel === 'hard_cap';
     const shouldBlock =
       detected &&
       this.mode === 'active' &&
-      String(effectiveMode || '').toLowerCase() === 'enforce' &&
+      (hardCapExceeded || String(effectiveMode || '').toLowerCase() === 'enforce') &&
       findings.some((item) => item.blockEligible === true);
+    const shedRecommended =
+      this.shedOnMemoryPressure &&
+      this.mode === 'active' &&
+      (memoryLevel === 'critical' || memoryLevel === 'hard_cap');
 
     return {
       enabled: true,
@@ -299,6 +336,12 @@ class CostEfficiencyOptimizer {
       prompt_chars: promptChars,
       repetition_ratio: Number(repetitionRatio.toFixed(6)),
       memory_rss_bytes: rssBytes,
+      memory_level: memoryLevel,
+      memory_hard_cap_bytes: this.memoryHardCapBytes,
+      shed_recommended: shedRecommended,
+      shed_max_engines: this.maxShedEngines,
+      shed_cooldown_ms: this.shedCooldownMs,
+      shed_engine_order: this.shedEngineOrder.slice(0, 64),
       route_recommendation: routeRecommendation.recommendation,
     };
   }
@@ -318,6 +361,12 @@ class CostEfficiencyOptimizer {
     return {
       enabled: this.isEnabled(),
       mode: this.mode,
+      memory_warn_bytes: this.memoryWarnBytes,
+      memory_critical_bytes: this.memoryCriticalBytes,
+      memory_hard_cap_bytes: this.memoryHardCapBytes,
+      shed_on_memory_pressure: this.shedOnMemoryPressure,
+      max_shed_engines: this.maxShedEngines,
+      shed_cooldown_ms: this.shedCooldownMs,
       providers,
     };
   }

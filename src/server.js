@@ -134,6 +134,94 @@ const {
   ensureSentinelHome,
 } = require('./utils/paths');
 
+const DEFAULT_ENGINE_DECISION = Object.freeze({
+  enabled: false,
+  detected: false,
+  shouldBlock: false,
+  reason: 'disabled',
+  findings: [],
+});
+
+const DEFAULT_SHED_ENGINE_ORDER = Object.freeze([
+  'anomaly_telemetry',
+  'attack_corpus_evolver',
+  'threat_graph',
+  'evidence_vault',
+  'forensic_debugger',
+  'adversarial_eval_harness',
+  'semantic_drift_canary',
+  'output_schema_validator',
+  'output_classifier',
+  'budget_autopilot',
+  'agent_observability',
+  'capability_introspection',
+  'policy_gradient_analyzer',
+]);
+
+function createDisabledRuntimeEngine(options = {}) {
+  const extras = options.extras && typeof options.extras === 'object' ? options.extras : {};
+  const mode = String(options.mode || 'monitor').toLowerCase();
+  const base = {
+    enabled: false,
+    mode,
+    observability: false,
+    exposeVerifyEndpoint: false,
+    exposePublicKeyEndpoint: false,
+    signStreamTrailers: false,
+    nonStreamDelayMs: 0,
+    trustedNodes: new Map(),
+    allowedClockSkewMs: 0,
+    compiledRules: [],
+    signatures: new Map(),
+    snapshots: [],
+    action: 'warn',
+    ...extras,
+    isEnabled: () => false,
+    inspect: () => DEFAULT_ENGINE_DECISION,
+    evaluate: () => DEFAULT_ENGINE_DECISION,
+    track: () => DEFAULT_ENGINE_DECISION,
+    latest: () => null,
+    snapshot: () => ({ enabled: false }),
+    snapshotMetrics: () => ({ enabled: false }),
+    getStats: () => ({ enabled: false }),
+    getPublicMetadata: () => ({ enabled: false }),
+    create: () => null,
+    verify: () => ({ valid: false, reason: 'disabled' }),
+    createEnvelope: () => null,
+    verifyEnvelope: () => ({ valid: false, reason: 'disabled' }),
+    exportSnapshot: () => ({ enabled: false, signatures: [] }),
+    safeExport: () => ({ enabled: false, score: 100, findings: [] }),
+    run: () => ({ enabled: false }),
+    maybeRun: () => null,
+    append: () => null,
+    ingest: () => {},
+    ingestAuditEvent: () => null,
+    observeAuditEvent: () => {},
+    observe: () => {},
+    recommend: () => ({ enabled: false }),
+    recommendRoute: () => ({ enabled: false, recommendation: null, candidates: [] }),
+    lookup: () => null,
+    store: () => null,
+    flush: async () => {},
+    injectForwardHeaders: (headers = {}) => ({ ...headers }),
+    startRequest: () => null,
+    finishRequest: () => {},
+    emitLifecycle: () => {},
+  };
+
+  return new Proxy(base, {
+    get(target, property) {
+      if (Reflect.has(target, property)) {
+        return Reflect.get(target, property);
+      }
+      if (typeof property === 'symbol') {
+        return undefined;
+      }
+      return () => DEFAULT_ENGINE_DECISION;
+    },
+  });
+}
+
 class SentinelServer {
   constructor(config, options = {}) {
     ensureSentinelHome();
@@ -266,6 +354,8 @@ class SentinelServer {
       budget_autopilot_recommendations: 0,
       cost_efficiency_detected: 0,
       cost_efficiency_blocked: 0,
+      cost_efficiency_memory_shed: 0,
+      cost_efficiency_memory_restored: 0,
       evidence_vault_entries: 0,
       threat_graph_events: 0,
       attack_corpus_candidates: 0,
@@ -317,7 +407,17 @@ class SentinelServer {
       dashboard_requests_total: 0,
       dashboard_api_requests_total: 0,
       dashboard_denied_total: 0,
+      lazy_engine_loaded: 0,
+      lazy_engine_skipped: 0,
     };
+    this.lazyEngineState = {
+      enabled: true,
+      loaded: [],
+      skipped: [],
+    };
+    this.memoryShedState = new Map();
+    this.lastMemoryShedAt = 0;
+    this.shedEngineOrderRuntimeKeys = [];
 
     this.rateLimiter = new InMemoryRateLimiter(config.runtime?.rate_limiter || {});
     this.policyEngine = new PolicyEngine(config, this.rateLimiter);
@@ -369,80 +469,183 @@ class SentinelServer {
     this.rawAuditWrite = this.auditLogger.write.bind(this.auditLogger);
     this.auditLogger.write = (payload) => writeAudit(this, payload);
     this.vcrStore = new VCRStore(this.config.runtime?.vcr || {});
-    this.semanticCache = new SemanticCache(this.config.runtime?.semantic_cache || {}, {
-      scanWorkerPool: this.scanWorkerPool,
-    });
     this.budgetStore = new BudgetStore(this.config.runtime?.budget || {});
     this.aibom = new AIBOMGenerator();
-    this.loopBreaker = new LoopBreaker(this.config.runtime?.loop_breaker || {});
-    this.autoImmune = new AutoImmune(this.config.runtime?.auto_immune || {});
-    this.deceptionEngine = new DeceptionEngine(this.config.runtime?.deception || {});
-    this.provenanceSigner = new ProvenanceSigner(this.config.runtime?.provenance || {});
-    this.honeytokenInjector = new HoneytokenInjector(this.config.runtime?.honeytoken || {});
-    this.polymorphicPrompt = new PolymorphicPromptEngine(this.config.runtime?.polymorphic_prompt || {});
-    this.syntheticPoisoner = new SyntheticPoisoner(this.config.runtime?.synthetic_poisoning || {});
-    this.cognitiveRollback = new CognitiveRollback(this.config.runtime?.cognitive_rollback || {});
-    this.latencyNormalizer = new LatencyNormalizer(this.config.runtime?.latency_normalization || {});
+    const runtimeConfig = this.config.runtime || {};
+    this.runtimeEngineKeyByProp = new Map();
+    const optionalEngine = (propName, runtimeKey, factory, engineOptions = {}) => {
+      this.runtimeEngineKeyByProp.set(propName, runtimeKey);
+      const engineConfig = runtimeConfig[runtimeKey] && typeof runtimeConfig[runtimeKey] === 'object'
+        ? runtimeConfig[runtimeKey]
+        : {};
+      const mode = typeof engineConfig.mode === 'string' ? engineConfig.mode : (engineOptions.mode || 'monitor');
+      if (engineConfig.enabled === true) {
+        try {
+          const instance = factory(engineConfig);
+          this.lazyEngineState.loaded.push(runtimeKey);
+          return instance;
+        } catch (error) {
+          logger.warn('Runtime engine failed to initialize; disabling for this run', {
+            runtime_key: runtimeKey,
+            error: error.message,
+          });
+        }
+      }
+      this.lazyEngineState.skipped.push(runtimeKey);
+      return createDisabledRuntimeEngine({
+        mode,
+        extras: engineOptions.disabledExtras || {},
+      });
+    };
+
+    this.semanticCache = optionalEngine('semanticCache', 'semantic_cache', (engineConfig) => new SemanticCache(engineConfig, {
+      scanWorkerPool: this.scanWorkerPool,
+    }), {
+      disabledExtras: {
+        lookup: async () => null,
+        store: () => {},
+      },
+    });
+    this.loopBreaker = optionalEngine('loopBreaker', 'loop_breaker', (engineConfig) => new LoopBreaker(engineConfig), {
+      disabledExtras: { enabled: false },
+    });
+    this.autoImmune = optionalEngine('autoImmune', 'auto_immune', (engineConfig) => new AutoImmune(engineConfig));
+    this.deceptionEngine = optionalEngine('deceptionEngine', 'deception', (engineConfig) => new DeceptionEngine(engineConfig));
+    this.provenanceSigner = optionalEngine('provenanceSigner', 'provenance', (engineConfig) => new ProvenanceSigner(engineConfig), {
+      disabledExtras: { exposePublicKeyEndpoint: false, signStreamTrailers: false },
+    });
+    this.honeytokenInjector = optionalEngine('honeytokenInjector', 'honeytoken', (engineConfig) => new HoneytokenInjector(engineConfig));
+    this.polymorphicPrompt = optionalEngine(
+      'polymorphicPrompt',
+      'polymorphic_prompt',
+      (engineConfig) => new PolymorphicPromptEngine(engineConfig)
+    );
+    this.syntheticPoisoner = optionalEngine('syntheticPoisoner', 'synthetic_poisoning', (engineConfig) => new SyntheticPoisoner(engineConfig));
+    this.cognitiveRollback = optionalEngine('cognitiveRollback', 'cognitive_rollback', (engineConfig) => new CognitiveRollback(engineConfig));
+    this.latencyNormalizer = optionalEngine('latencyNormalizer', 'latency_normalization', (engineConfig) => new LatencyNormalizer(engineConfig));
     const embedText = this.createEmbeddingDelegate();
-    this.intentThrottle = new IntentThrottle(this.config.runtime?.intent_throttle || {}, {
+    this.intentThrottle = optionalEngine('intentThrottle', 'intent_throttle', (engineConfig) => new IntentThrottle(engineConfig, {
       embedText,
-    });
-    this.intentDrift = new IntentDriftDetector(this.config.runtime?.intent_drift || {}, {
+    }));
+    this.intentDrift = optionalEngine('intentDrift', 'intent_drift', (engineConfig) => new IntentDriftDetector(engineConfig, {
       embedText,
+    }));
+    this.canaryToolTrap = optionalEngine('canaryToolTrap', 'canary_tools', (engineConfig) => new CanaryToolTrap(engineConfig));
+    this.promptRebuff = optionalEngine('promptRebuff', 'prompt_rebuff', (engineConfig) => new PromptRebuffEngine(engineConfig));
+    this.mcpPoisoningDetector = optionalEngine('mcpPoisoningDetector', 'mcp_poisoning', (engineConfig) => new MCPPoisoningDetector(engineConfig));
+    this.mcpShadowDetector = optionalEngine('mcpShadowDetector', 'mcp_shadow', (engineConfig) => new MCPShadowDetector(engineConfig));
+    this.memoryPoisoningSentinel = optionalEngine(
+      'memoryPoisoningSentinel',
+      'memory_poisoning',
+      (engineConfig) => new MemoryPoisoningSentinel(engineConfig)
+    );
+    this.cascadeIsolator = optionalEngine('cascadeIsolator', 'cascade_isolator', (engineConfig) => new CascadeIsolator(engineConfig));
+    this.agentIdentityFederation = optionalEngine(
+      'agentIdentityFederation',
+      'agent_identity_federation',
+      (engineConfig) => new AgentIdentityFederation(engineConfig)
+    );
+    this.toolUseAnomalyDetector = optionalEngine('toolUseAnomalyDetector', 'tool_use_anomaly', (engineConfig) => new ToolUseAnomalyDetector(engineConfig));
+    this.behavioralFingerprint = optionalEngine('behavioralFingerprint', 'behavioral_fingerprint', (engineConfig) => new BehavioralFingerprint(engineConfig));
+    this.threatIntelMesh = optionalEngine('threatIntelMesh', 'threat_intel_mesh', (engineConfig) => new ThreatIntelMesh(engineConfig), {
+      disabledExtras: {
+        signatures: new Map(),
+      },
     });
-    this.canaryToolTrap = new CanaryToolTrap(this.config.runtime?.canary_tools || {});
-    this.promptRebuff = new PromptRebuffEngine(this.config.runtime?.prompt_rebuff || {});
-    this.mcpPoisoningDetector = new MCPPoisoningDetector(this.config.runtime?.mcp_poisoning || {});
-    this.mcpShadowDetector = new MCPShadowDetector(this.config.runtime?.mcp_shadow || {});
-    this.memoryPoisoningSentinel = new MemoryPoisoningSentinel(this.config.runtime?.memory_poisoning || {});
-    this.cascadeIsolator = new CascadeIsolator(this.config.runtime?.cascade_isolator || {});
-    this.agentIdentityFederation = new AgentIdentityFederation(this.config.runtime?.agent_identity_federation || {});
-    this.toolUseAnomalyDetector = new ToolUseAnomalyDetector(this.config.runtime?.tool_use_anomaly || {});
-    this.behavioralFingerprint = new BehavioralFingerprint(this.config.runtime?.behavioral_fingerprint || {});
-    this.threatIntelMesh = new ThreatIntelMesh(this.config.runtime?.threat_intel_mesh || {});
-    this.lfrlEngine = new LFRLEngine(this.config.runtime?.lfrl || {});
-    this.selfHealingImmune = new SelfHealingImmuneSystem(this.config.runtime?.self_healing_immune || {});
-    this.serializationFirewall = new SerializationFirewall(this.config.runtime?.serialization_firewall || {});
-    this.contextIntegrityGuardian = new ContextIntegrityGuardian(this.config.runtime?.context_integrity_guardian || {});
-    this.toolSchemaValidator = new ToolSchemaValidator(this.config.runtime?.tool_schema_validator || {});
-    this.multimodalInjectionShield = new MultiModalInjectionShield(this.config.runtime?.multimodal_injection_shield || {});
-    this.supplyChainValidator = new SupplyChainValidator(this.config.runtime?.supply_chain_validator || {});
-    this.sandboxEnforcer = new SandboxEnforcer(this.config.runtime?.sandbox_enforcer || {});
-    this.memoryIntegrityMonitor = new MemoryIntegrityMonitor(this.config.runtime?.memory_integrity_monitor || {});
-    this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
-    this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
-    this.budgetAutopilot = new BudgetAutopilot(this.config.runtime?.budget_autopilot || {});
-    this.costEfficiencyOptimizer = new CostEfficiencyOptimizer(this.config.runtime?.cost_efficiency_optimizer || {});
-    this.evidenceVault = new EvidenceVault(this.config.runtime?.evidence_vault || {});
-    this.threatPropagationGraph = new ThreatPropagationGraph(this.config.runtime?.threat_graph || {});
-    this.attackCorpusEvolver = new AttackCorpusEvolver(this.config.runtime?.attack_corpus_evolver || {});
-    this.forensicDebugger = new ForensicDebugger(this.config.runtime?.forensic_debugger || {});
-    this.adversarialEvalHarness = new AdversarialEvalHarness(this.config.runtime?.adversarial_eval_harness || {});
-    this.anomalyTelemetry = new AnomalyTelemetry(this.config.runtime?.anomaly_telemetry || {});
-    this.zkConfigValidator = new ZKConfigValidator(this.config.runtime?.zk_config_validator || {});
-    this.parallaxValidator = new ParallaxValidator(this.config.runtime?.parallax || {}, {
+    this.lfrlEngine = optionalEngine('lfrlEngine', 'lfrl', (engineConfig) => new LFRLEngine(engineConfig), {
+      disabledExtras: {
+        compiledRules: [],
+      },
+    });
+    this.selfHealingImmune = optionalEngine(
+      'selfHealingImmune',
+      'self_healing_immune',
+      (engineConfig) => new SelfHealingImmuneSystem(engineConfig),
+      {
+        disabledExtras: {
+          signatures: new Map(),
+        },
+      }
+    );
+    this.serializationFirewall = optionalEngine('serializationFirewall', 'serialization_firewall', (engineConfig) => new SerializationFirewall(engineConfig));
+    this.contextIntegrityGuardian = optionalEngine('contextIntegrityGuardian', 'context_integrity_guardian', (engineConfig) => new ContextIntegrityGuardian(engineConfig));
+    this.toolSchemaValidator = optionalEngine('toolSchemaValidator', 'tool_schema_validator', (engineConfig) => new ToolSchemaValidator(engineConfig));
+    this.multimodalInjectionShield = optionalEngine(
+      'multimodalInjectionShield',
+      'multimodal_injection_shield',
+      (engineConfig) => new MultiModalInjectionShield(engineConfig)
+    );
+    this.supplyChainValidator = optionalEngine('supplyChainValidator', 'supply_chain_validator', (engineConfig) => new SupplyChainValidator(engineConfig));
+    this.sandboxEnforcer = optionalEngine('sandboxEnforcer', 'sandbox_enforcer', (engineConfig) => new SandboxEnforcer(engineConfig));
+    this.memoryIntegrityMonitor = optionalEngine('memoryIntegrityMonitor', 'memory_integrity_monitor', (engineConfig) => new MemoryIntegrityMonitor(engineConfig));
+    this.outputClassifier = optionalEngine('outputClassifier', 'output_classifier', (engineConfig) => new OutputClassifier(engineConfig));
+    this.outputSchemaValidator = optionalEngine('outputSchemaValidator', 'output_schema_validator', (engineConfig) => new OutputSchemaValidator(engineConfig));
+    this.budgetAutopilot = optionalEngine('budgetAutopilot', 'budget_autopilot', (engineConfig) => new BudgetAutopilot(engineConfig));
+    this.costEfficiencyOptimizer = optionalEngine(
+      'costEfficiencyOptimizer',
+      'cost_efficiency_optimizer',
+      (engineConfig) => new CostEfficiencyOptimizer(engineConfig),
+      {
+        mode: 'monitor',
+        disabledExtras: {
+          mode: 'monitor',
+        },
+      }
+    );
+    this.evidenceVault = optionalEngine('evidenceVault', 'evidence_vault', (engineConfig) => new EvidenceVault(engineConfig));
+    this.threatPropagationGraph = optionalEngine('threatPropagationGraph', 'threat_graph', (engineConfig) => new ThreatPropagationGraph(engineConfig));
+    this.attackCorpusEvolver = optionalEngine('attackCorpusEvolver', 'attack_corpus_evolver', (engineConfig) => new AttackCorpusEvolver(engineConfig));
+    this.forensicDebugger = optionalEngine('forensicDebugger', 'forensic_debugger', (engineConfig) => new ForensicDebugger(engineConfig));
+    this.adversarialEvalHarness = optionalEngine(
+      'adversarialEvalHarness',
+      'adversarial_eval_harness',
+      (engineConfig) => new AdversarialEvalHarness(engineConfig)
+    );
+    this.anomalyTelemetry = optionalEngine('anomalyTelemetry', 'anomaly_telemetry', (engineConfig) => new AnomalyTelemetry(engineConfig));
+    this.zkConfigValidator = optionalEngine('zkConfigValidator', 'zk_config_validator', (engineConfig) => new ZKConfigValidator(engineConfig));
+    this.parallaxValidator = optionalEngine('parallaxValidator', 'parallax', (engineConfig) => new ParallaxValidator(engineConfig, {
       upstreamClient: this.upstreamClient,
       config: this.config,
-    });
-    this.omniShield = new OmniShield(this.config.runtime?.omni_shield || {});
-    this.experimentalSandbox = new ExperimentalSandbox(this.config.runtime?.sandbox_experimental || {});
-    this.shadowOS = new ShadowOS(this.config.runtime?.shadow_os || {});
-    this.epistemicAnchor = new EpistemicAnchor(this.config.runtime?.epistemic_anchor || {}, {
+    }));
+    this.omniShield = optionalEngine('omniShield', 'omni_shield', (engineConfig) => new OmniShield(engineConfig));
+    this.experimentalSandbox = optionalEngine('experimentalSandbox', 'sandbox_experimental', (engineConfig) => new ExperimentalSandbox(engineConfig));
+    this.shadowOS = optionalEngine('shadowOS', 'shadow_os', (engineConfig) => new ShadowOS(engineConfig));
+    this.epistemicAnchor = optionalEngine('epistemicAnchor', 'epistemic_anchor', (engineConfig) => new EpistemicAnchor(engineConfig, {
       embedText,
+    }));
+    this.agenticThreatShield = optionalEngine('agenticThreatShield', 'agentic_threat_shield', (engineConfig) => new AgenticThreatShield(engineConfig));
+    this.a2aCardVerifier = optionalEngine('a2aCardVerifier', 'a2a_card_verifier', (engineConfig) => new A2ACardVerifier(engineConfig));
+    this.consensusProtocol = optionalEngine('consensusProtocol', 'consensus_protocol', (engineConfig) => new ConsensusProtocol(engineConfig));
+    this.crossTenantIsolator = optionalEngine('crossTenantIsolator', 'cross_tenant_isolator', (engineConfig) => new CrossTenantIsolator(engineConfig));
+    this.coldStartAnalyzer = optionalEngine('coldStartAnalyzer', 'cold_start_analyzer', (engineConfig) => new ColdStartAnalyzer(engineConfig));
+    this.stegoExfilDetector = optionalEngine('stegoExfilDetector', 'stego_exfil_detector', (engineConfig) => new StegoExfilDetector(engineConfig));
+    this.reasoningTraceMonitor = optionalEngine('reasoningTraceMonitor', 'reasoning_trace_monitor', (engineConfig) => new ReasoningTraceMonitor(engineConfig));
+    this.hallucinationTripwire = optionalEngine('hallucinationTripwire', 'hallucination_tripwire', (engineConfig) => new HallucinationTripwire(engineConfig));
+    this.semanticDriftCanary = optionalEngine('semanticDriftCanary', 'semantic_drift_canary', (engineConfig) => new SemanticDriftCanary(engineConfig));
+    this.outputProvenanceSigner = optionalEngine(
+      'outputProvenanceSigner',
+      'output_provenance',
+      (engineConfig) => new OutputProvenanceSigner(engineConfig),
+      {
+        disabledExtras: { exposeVerifyEndpoint: false },
+      }
+    );
+    this.computeAttestation = optionalEngine('computeAttestation', 'compute_attestation', (engineConfig) => new ComputeAttestation(engineConfig), {
+      disabledExtras: { exposeVerifyEndpoint: false },
     });
-    this.agenticThreatShield = new AgenticThreatShield(this.config.runtime?.agentic_threat_shield || {});
-    this.a2aCardVerifier = new A2ACardVerifier(this.config.runtime?.a2a_card_verifier || {});
-    this.consensusProtocol = new ConsensusProtocol(this.config.runtime?.consensus_protocol || {});
-    this.crossTenantIsolator = new CrossTenantIsolator(this.config.runtime?.cross_tenant_isolator || {});
-    this.coldStartAnalyzer = new ColdStartAnalyzer(this.config.runtime?.cold_start_analyzer || {});
-    this.stegoExfilDetector = new StegoExfilDetector(this.config.runtime?.stego_exfil_detector || {});
-    this.reasoningTraceMonitor = new ReasoningTraceMonitor(this.config.runtime?.reasoning_trace_monitor || {});
-    this.hallucinationTripwire = new HallucinationTripwire(this.config.runtime?.hallucination_tripwire || {});
-    this.semanticDriftCanary = new SemanticDriftCanary(this.config.runtime?.semantic_drift_canary || {});
-    this.outputProvenanceSigner = new OutputProvenanceSigner(this.config.runtime?.output_provenance || {});
-    this.computeAttestation = new ComputeAttestation(this.config.runtime?.compute_attestation || {});
-    this.capabilityIntrospection = new CapabilityIntrospection(this.config.runtime?.capability_introspection || {});
-    this.policyGradientAnalyzer = new PolicyGradientAnalyzer(this.config.runtime?.policy_gradient_analyzer || {});
+    this.capabilityIntrospection = optionalEngine(
+      'capabilityIntrospection',
+      'capability_introspection',
+      (engineConfig) => new CapabilityIntrospection(engineConfig)
+    );
+    this.policyGradientAnalyzer = optionalEngine(
+      'policyGradientAnalyzer',
+      'policy_gradient_analyzer',
+      (engineConfig) => new PolicyGradientAnalyzer(engineConfig)
+    );
+    this.stats.lazy_engine_loaded = this.lazyEngineState.loaded.length;
+    this.stats.lazy_engine_skipped = this.lazyEngineState.skipped.length;
+    this.shedEngineOrderRuntimeKeys = this.resolveShedEngineOrder();
     this.refreshZkConfigAssessment();
     if (this.config.runtime?.semantic_cache?.enabled === true && !this.semanticCache.isEnabled()) {
       logger.warn('Semantic cache disabled at runtime because worker pool is unavailable', {
@@ -543,6 +746,107 @@ class SentinelServer {
     this.zkConfigAssessment = assessment;
     this.stats.zk_config_findings = Array.isArray(assessment?.findings) ? assessment.findings.length : 0;
     return assessment;
+  }
+
+  resolveShedEngineOrder() {
+    const configuredOrder = Array.isArray(this.costEfficiencyOptimizer?.shedEngineOrder)
+      ? this.costEfficiencyOptimizer.shedEngineOrder
+      : [];
+    const runtimeKeys = configuredOrder.length > 0 ? configuredOrder : DEFAULT_SHED_ENGINE_ORDER;
+    const order = [];
+    for (const runtimeKey of runtimeKeys) {
+      const propName = Array.from(this.runtimeEngineKeyByProp.entries())
+        .find(([, key]) => key === runtimeKey)?.[0];
+      if (!propName || order.includes(propName)) {
+        continue;
+      }
+      order.push(propName);
+    }
+    return order;
+  }
+
+  applyMemoryPressurePolicy({ decision, warnings, res }) {
+    if (!decision || typeof decision !== 'object' || !this.costEfficiencyOptimizer?.isEnabled?.()) {
+      return { shed: 0, restored: 0 };
+    }
+
+    const rss = Number(decision.memory_rss_bytes || 0);
+    const level = String(decision.memory_level || 'normal');
+    const restoreThreshold = Math.floor(
+      Math.max(
+        1,
+        Number(this.costEfficiencyOptimizer.memoryWarnBytes || 0) * 0.85
+      )
+    );
+    const now = Date.now();
+    const cooldownMs = Number(this.costEfficiencyOptimizer.shedCooldownMs || 30000);
+    let shed = 0;
+    let restored = 0;
+
+    const canActNow = (now - this.lastMemoryShedAt) >= cooldownMs;
+    if (canActNow && this.costEfficiencyOptimizer.shedOnMemoryPressure === true && (level === 'critical' || level === 'hard_cap')) {
+      const maxShed = Number(this.costEfficiencyOptimizer.maxShedEngines || 16);
+      const targetShedCount = level === 'hard_cap' ? 3 : 1;
+      for (const propName of this.shedEngineOrderRuntimeKeys) {
+        if (shed >= targetShedCount || this.memoryShedState.size >= maxShed) {
+          break;
+        }
+        if (this.memoryShedState.has(propName)) {
+          continue;
+        }
+        const engine = this[propName];
+        if (!engine || typeof engine.isEnabled !== 'function' || !engine.isEnabled()) {
+          continue;
+        }
+        const previous = {
+          enabled: engine.enabled === true,
+          mode: typeof engine.mode === 'string' ? engine.mode : 'monitor',
+        };
+        engine.enabled = false;
+        if (typeof engine.mode === 'string') {
+          engine.mode = 'monitor';
+        }
+        this.memoryShedState.set(propName, previous);
+        shed += 1;
+      }
+      if (shed > 0) {
+        this.lastMemoryShedAt = now;
+        this.stats.cost_efficiency_memory_shed += shed;
+        warnings.push(`cost_memory_shed:${shed}`);
+        this.stats.warnings_total += 1;
+        if (res && this.costEfficiencyOptimizer.observability) {
+          res.setHeader('x-sentinel-memory-shed', String(shed));
+          res.setHeader('x-sentinel-memory-shed-active', String(this.memoryShedState.size));
+        }
+      }
+    }
+
+    if (this.memoryShedState.size > 0 && level === 'normal' && rss > 0 && rss <= restoreThreshold && canActNow) {
+      for (const [propName, previous] of this.memoryShedState.entries()) {
+        const engine = this[propName];
+        if (!engine) {
+          this.memoryShedState.delete(propName);
+          continue;
+        }
+        engine.enabled = previous.enabled === true;
+        if (typeof engine.mode === 'string') {
+          engine.mode = previous.mode || engine.mode;
+        }
+        this.memoryShedState.delete(propName);
+        restored += 1;
+      }
+      if (restored > 0) {
+        this.lastMemoryShedAt = now;
+        this.stats.cost_efficiency_memory_restored += restored;
+        warnings.push(`cost_memory_restored:${restored}`);
+        this.stats.warnings_total += 1;
+        if (res && this.costEfficiencyOptimizer.observability) {
+          res.setHeader('x-sentinel-memory-restored', String(restored));
+          res.setHeader('x-sentinel-memory-shed-active', String(this.memoryShedState.size));
+        }
+      }
+    }
+    return { shed, restored };
   }
 
   currentStatusPayload() {
@@ -669,6 +973,15 @@ class SentinelServer {
       cost_efficiency_optimizer_enabled: this.costEfficiencyOptimizer.isEnabled(),
       cost_efficiency_optimizer_mode: this.costEfficiencyOptimizer.mode,
       cost_efficiency_optimizer_snapshot: this.costEfficiencyOptimizer.snapshot(),
+      memory_shed_active_engines: this.memoryShedState.size,
+      memory_shed_order: this.shedEngineOrderRuntimeKeys
+        .map((propName) => this.runtimeEngineKeyByProp.get(propName))
+        .filter(Boolean),
+      lazy_engine_loading_enabled: this.lazyEngineState.enabled,
+      lazy_engine_loaded: this.lazyEngineState.loaded.length,
+      lazy_engine_skipped: this.lazyEngineState.skipped.length,
+      lazy_engine_loaded_keys: this.lazyEngineState.loaded.slice(0, 256),
+      lazy_engine_skipped_keys: this.lazyEngineState.skipped.slice(0, 256),
       evidence_vault_enabled: this.evidenceVault.isEnabled(),
       evidence_vault_stats: this.evidenceVault.getStats(),
       threat_graph_enabled: this.threatPropagationGraph.isEnabled(),
@@ -1588,6 +1901,13 @@ class SentinelServer {
           this.stats.cost_efficiency_detected += 1;
           warnings.push(`cost_efficiency:${costEfficiencyDecision.reason || 'detected'}`);
           this.stats.warnings_total += 1;
+        }
+        if (costEfficiencyDecision?.enabled) {
+          this.applyMemoryPressurePolicy({
+            decision: costEfficiencyDecision,
+            warnings,
+            res,
+          });
         }
         if (costEfficiencyDecision?.shouldBlock) {
           this.stats.blocked_total += 1;

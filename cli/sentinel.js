@@ -6,6 +6,7 @@ const yaml = require('js-yaml');
 const { Command } = require('commander');
 
 const { ensureDefaultConfigExists, loadAndValidateConfig, readYamlConfig, writeYamlConfig } = require('../src/config/loader');
+const { PROFILE_NAMES, applyConfigProfile } = require('../src/config/profiles');
 const { migrateConfig } = require('../src/config/migrations');
 const { ConfigValidationError } = require('../src/config/schema');
 const { SemanticScanner } = require('../src/engines/semantic-scanner');
@@ -61,17 +62,58 @@ function emitOutput(payload, outPath) {
   return null;
 }
 
+function detectFramework(projectRoot = process.cwd()) {
+  const packageJsonPath = path.join(projectRoot, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const deps = {
+      ...(parsed.dependencies || {}),
+      ...(parsed.devDependencies || {}),
+    };
+    const has = (name) => Object.prototype.hasOwnProperty.call(deps, name);
+    if (has('next')) return 'nextjs';
+    if (has('fastify')) return 'fastify';
+    if (has('koa')) return 'koa';
+    if (has('express')) return 'express';
+    if (has('@hono/node-server') || has('hono')) return 'hono';
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 program
   .command('init')
   .description('Create default sentinel.yaml in ~/.sentinel')
   .option('--force', 'Overwrite existing config')
+  .option('--profile <name>', 'Config profile: minimal|standard|paranoid')
   .action((options) => {
-    const result = ensureDefaultConfigExists(DEFAULT_CONFIG_PATH, Boolean(options.force));
-    if (result.created) {
-      console.log(`Created config: ${result.path}`);
-      return;
+    try {
+      const result = ensureDefaultConfigExists(DEFAULT_CONFIG_PATH, Boolean(options.force));
+      if (options.profile) {
+        const profileName = String(options.profile || '').toLowerCase();
+        if (!PROFILE_NAMES.has(profileName)) {
+          throw new Error(`Invalid --profile value "${options.profile}". Use minimal|standard|paranoid.`);
+        }
+        const parsed = readYamlConfig(result.path);
+        const profiled = applyConfigProfile(parsed, profileName);
+        writeYamlConfig(result.path, profiled.config);
+        console.log(
+          `Applied profile: ${profiled.profile} (${profiled.enabledRuntimeEngines}/${profiled.totalRuntimeEngines} runtime engines enabled)`
+        );
+      }
+      if (result.created) {
+        console.log(`Created config: ${result.path}`);
+        return;
+      }
+      console.log(`Config already exists: ${result.path}`);
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
     }
-    console.log(`Config already exists: ${result.path}`);
   });
 
 program
@@ -85,6 +127,7 @@ program
   .option('--record', 'Enable VCR record mode (writes deterministic tape)')
   .option('--replay', 'Enable VCR replay mode (reads deterministic tape)')
   .option('--dashboard', 'Enable local dashboard server for this run')
+  .option('--profile <name>', 'Runtime profile: minimal|standard|paranoid')
   .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
   .option('--skip-doctor', 'Skip startup doctor checks (not recommended)')
   .action((options) => {
@@ -100,6 +143,7 @@ program
         modeOverride: options.mode,
         vcrMode,
         dashboardEnabled: options.dashboard === true ? true : undefined,
+        profile: options.profile,
         dryRun: options.dryRun,
         failOpen: options.failOpen,
         shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,
@@ -121,6 +165,61 @@ program
             console.log(`[WARN] ${check.id}: ${check.message}`);
           }
         }
+      }
+      if (result.loaded?.profile?.name) {
+        console.log(
+          `Profile loaded: ${result.loaded.profile.name} (${result.loaded.profile.enabledRuntimeEngines}/${result.loaded.profile.totalRuntimeEngines} runtime engines enabled)`
+        );
+      }
+    } catch (error) {
+      console.error(error.message);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('bootstrap')
+  .description('Initialize config, run doctor checks, and start Sentinel (one-command path)')
+  .option('--config <path>', 'Config path', DEFAULT_CONFIG_PATH)
+  .option('--force', 'Overwrite existing config')
+  .option('--profile <name>', 'Profile to apply on bootstrap: minimal|standard|paranoid', 'minimal')
+  .option('--port <port>', 'Port override')
+  .option('--mode <mode>', 'Mode override (monitor|warn|enforce)')
+  .option('--dashboard', 'Enable local dashboard server for this run')
+  .option('--shutdown-timeout-ms <ms>', 'Forced shutdown timeout in milliseconds', '15000')
+  .action((options) => {
+    try {
+      const bootstrapPath = options.config || DEFAULT_CONFIG_PATH;
+      const initResult = ensureDefaultConfigExists(bootstrapPath, Boolean(options.force));
+      const profileName = String(options.profile || 'minimal').toLowerCase();
+      if (!PROFILE_NAMES.has(profileName)) {
+        throw new Error(`Invalid --profile value "${options.profile}". Use minimal|standard|paranoid.`);
+      }
+      const parsed = readYamlConfig(bootstrapPath);
+      const profiled = applyConfigProfile(parsed, profileName);
+      writeYamlConfig(bootstrapPath, profiled.config);
+      const shutdownTimeoutMs = Number(options.shutdownTimeoutMs);
+      const startResult = startServer({
+        configPath: bootstrapPath,
+        port: options.port,
+        modeOverride: options.mode,
+        dashboardEnabled: options.dashboard === true ? true : undefined,
+        profile: profileName,
+        shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,
+        runDoctor: true,
+      });
+
+      console.log(initResult.created ? `Created config: ${bootstrapPath}` : `Using config: ${bootstrapPath}`);
+      console.log(
+        `Bootstrap profile: ${profiled.profile} (${profiled.enabledRuntimeEngines}/${profiled.totalRuntimeEngines} runtime engines enabled)`
+      );
+      const framework = detectFramework(process.cwd());
+      if (framework) {
+        console.log(`Detected framework: ${framework}`);
+      }
+      if (startResult.doctor) {
+        const summary = startResult.doctor.summary;
+        console.log(`Doctor summary: pass=${summary.pass} warn=${summary.warn} fail=${summary.fail}`);
       }
     } catch (error) {
       console.error(error.message);

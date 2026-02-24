@@ -19,6 +19,12 @@ If you are shipping AI features locally every day, Sentinel helps you ship faste
 If you want the fastest reliable path (without global install assumptions), run:
 
 ```bash
+npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+```
+
+Equivalent explicit flow:
+
+```bash
 npx --yes --package sentinel-protocol sentinel init --force
 npx --yes --package sentinel-protocol sentinel doctor
 npx --yes --package sentinel-protocol sentinel start --dashboard
@@ -138,7 +144,7 @@ This is a governance perimeter, not just another model wrapper.
 | Adaptive defense controls | behavioral fingerprinting, threat-intel mesh signatures, LFRL correlation rules, self-healing immune learning loop |
 | Runtime introspection controls | anomaly telemetry snapshot, ZK config assessment export, adversarial eval harness, capability introspection |
 | Privacy and trust | two-way vault detokenization, differential privacy research track (advisory), provenance/policy signing |
-| Reliability and cost | retry, circuit breaker, failover, loop breaker, intent throttle/drift, rate limiter, budget controls, cost-efficiency optimizer |
+| Reliability and cost | retry, circuit breaker, failover, loop breaker, intent throttle/drift, rate limiter, budget controls, cost-efficiency optimizer with hard memory-cap shedding |
 | Transport hardening | DNS rebinding defenses, header scrubbing, websocket interception (policy parity with HTTP), stream guards |
 | Developer proof system | red-team (JSON + HTML), CI coverage gate, benchmark regression gate, SBOM (CycloneDX + SPDX), reliability reports |
 
@@ -155,6 +161,22 @@ Sentinel improves local developer workflow immediately:
 - predictable behavior from config contracts and monitor-first rollouts
 
 You can run it on your laptop in minutes and keep your current SDK/app code with minimal changes.
+
+## Profiles (minimal | standard | paranoid)
+
+Sentinel now supports deterministic profile overlays:
+
+- `minimal`: 4GB-device friendly defaults with a 512MB hard RSS cap and automatic low-priority engine shedding.
+- `standard`: keeps project defaults unchanged.
+- `paranoid`: enforce-first preset with broad runtime engine enablement.
+
+Examples:
+
+```bash
+npx --yes --package sentinel-protocol sentinel init --force --profile minimal
+npx --yes --package sentinel-protocol sentinel start --profile minimal
+npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+```
 
 ## Quick Start (Primary Path: npx)
 
@@ -429,6 +451,7 @@ OpenAPI contract: `docs/openapi.yaml`
 # init and start
 sentinel init
 sentinel start --dashboard
+sentinel bootstrap --profile minimal --dashboard
 
 # safety and diagnostics
 sentinel doctor
