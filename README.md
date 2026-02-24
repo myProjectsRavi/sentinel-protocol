@@ -18,7 +18,22 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 <br />
 
-![Sentinel Protocol in Action](docs/assets/sentinel-hero.gif)
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║                    SENTINEL PROTOCOL v1.1.0                        ║
+║                                                                    ║
+║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
+║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
+║  │  Agent   │   │   PII · Injection · Tools │   │  Anthropic   │    ║
+║  │  MCP     │◀──│   Budget · Audit · Mesh   │◀──│  Google      │    ║
+║  └──────────┘   └──────────────────────────┘   │  Ollama      │    ║
+║                         │                      │  Any LLM     │    ║
+║                    Runs 100% on                └──────────────┘    ║
+║                    YOUR machine                                    ║
+║                    No cloud. No SaaS.                              ║
+║                    No data leaves.                                 ║
+╚══════════════════════════════════════════════════════════════════════╝
+```
 
 </div>
 
@@ -34,12 +49,16 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 | **Security Engines** | **81** |
 | **Test Suites** | **139** (567 tests, 0 failures) |
 | **Linted Files** | **306** (0 warnings) |
-| **Dependencies** | **9** total |
+| **Runtime Dependencies** | **9** total |
 | **OWASP LLM Top 10** | **10/10** covered |
 | **Setup Time** | **90 seconds** |
 | **Proxy Overhead** | **< 5ms** (p95) |
+| **Cloud Dependency** | **None** — runs 100% on your machine |
+| **Data Sent to Cloud** | **Zero** — all processing is local |
 
 </div>
+
+> **🔒 Everything runs on YOUR machine.** Sentinel never phones home, never sends telemetry, and never routes your data through external servers. Clone it, run it, own it.
 
 ---
 
@@ -568,6 +587,53 @@ runtime:
 pii:
   enabled: true
   provider_mode: local
+```
+
+</details>
+
+<details>
+<summary><strong>🛡️ Enhanced PII Protection (Optional — PII Firewall Edge API)</strong></summary>
+
+Sentinel ships with a **free, local PII scanner** that works out of the box with zero dependencies.
+
+For teams that need **enterprise-grade PII detection** with higher accuracy, broader entity coverage, and regulatory-grade redaction, you can optionally enable the [PII Firewall Edge API](https://rapidapi.com/image-zero-trust-security-labs/api/pii-firewall-edge) as an enhanced provider:
+
+```yaml
+pii:
+  enabled: true
+  provider_mode: hybrid      # Uses API when available, falls back to local
+  rapidapi:
+    endpoint: https://pii-firewall-edge.p.rapidapi.com/redact
+    host: pii-firewall-edge.p.rapidapi.com
+    fallback_to_local: true   # Always falls back to local if API is unreachable
+    api_key: ""               # Set via SENTINEL_RAPIDAPI_KEY env var
+```
+
+**Setup:**
+
+```bash
+# 1. Subscribe to the API (free tier available)
+#    https://rapidapi.com/image-zero-trust-security-labs/api/pii-firewall-edge
+
+# 2. Set your RapidAPI key
+export SENTINEL_RAPIDAPI_KEY="your-rapidapi-key-here"
+
+# 3. Update sentinel.yaml to use hybrid mode (shown above)
+
+# 4. Restart Sentinel — enhanced PII detection is now active
+```
+
+| Feature | Local (Default) | PII Firewall Edge (Optional) |
+|---|:---:|:---:|
+| **Cost** | Free | Free tier + paid plans |
+| **Setup** | Zero config | 2 minutes |
+| **Accuracy** | Good (40+ patterns) | Enterprise-grade |
+| **Network** | None | API call to RapidAPI |
+| **Fallback** | — | Auto-falls back to local |
+| **Best for** | Development, local-only | Production, compliance-critical |
+
+> **💡 Note:** The local PII scanner is production-capable on its own. The API is purely optional for teams that want the highest possible detection accuracy. Sentinel always falls back to local if the API is unavailable.
+
 
 injection:
   enabled: true
@@ -994,6 +1060,27 @@ Sentinel has 81 security engines (more than all competitors combined), runs full
 
 </details>
 
+<details>
+<summary><strong>Does Sentinel send any data to external servers?</strong></summary>
+
+No. Sentinel runs **entirely on your local machine**. All 81 security engines process data locally. The only outbound network calls are the ones YOUR app already makes to LLM providers (OpenAI, Anthropic, etc.) — Sentinel just sits in the middle, on your machine, inspecting them. No telemetry, no analytics, no phone-home.
+
+</details>
+
+<details>
+<summary><strong>Who hosts the endpoints?</strong></summary>
+
+You do. Every endpoint (`/_sentinel/health`, `/_sentinel/playground`, etc.) is served from YOUR local machine on `127.0.0.1`. Nothing is hosted externally. When you `git clone` and run Sentinel, everything runs on your hardware.
+
+</details>
+
+<details>
+<summary><strong>Is there any liability for running this?</strong></summary>
+
+Sentinel is MIT-licensed open-source software provided "as is" without warranty. You clone the code, you run it on your machine, you control it entirely. There is no SaaS component, no external dependency for security decisions, and no data ever leaves your device unless you explicitly configure it.
+
+</details>
+
 ---
 
 ## 🤝 Contributing
@@ -1008,6 +1095,17 @@ We welcome contributions! See:
 
 ---
 
+## 🌍 Open Source
+
+Sentinel Protocol is **fully open-source** under the [MIT License](LICENSE).
+
+- ✅ **Free forever** — no paid tiers, no feature gates, no "enterprise edition"
+- ✅ **Fork-friendly** — modify, extend, redistribute without restriction
+- ✅ **Self-contained** — clone → run → protected. No accounts, no sign-ups
+- ✅ **Community-driven** — PRs, issues, and feature requests welcome
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
@@ -1017,7 +1115,8 @@ We welcome contributions! See:
 <div align="center">
 
 **Built with obsessive engineering discipline.**<br />
-**75,000+ lines. 81 engines. 567 tests. 9 dependencies. Zero compromises.**
+**75,000+ lines. 81 engines. 567 tests. 9 dependencies. Zero compromises.**<br />
+**Clone it. Run it locally. Own your AI security.**
 
 <br />
 
