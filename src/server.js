@@ -361,19 +361,19 @@ function createDisabledRuntimeEngine(options = {}) {
     run: () => ({ enabled: false }),
     maybeRun: () => null,
     append: () => null,
-    ingest: () => {},
+    ingest: () => { },
     ingestAuditEvent: () => null,
-    observeAuditEvent: () => {},
-    observe: () => {},
+    observeAuditEvent: () => { },
+    observe: () => { },
     recommend: () => ({ enabled: false }),
     recommendRoute: () => ({ enabled: false, recommendation: null, candidates: [] }),
     lookup: () => null,
     store: () => null,
-    flush: async () => {},
+    flush: async () => { },
     injectForwardHeaders: (headers = {}) => ({ ...headers }),
     startRequest: () => null,
-    finishRequest: () => {},
-    emitLifecycle: () => {},
+    finishRequest: () => { },
+    emitLifecycle: () => { },
   };
 
   return new Proxy(base, {
@@ -679,7 +679,7 @@ class SentinelServer {
     }), {
       disabledExtras: {
         lookup: async () => null,
-        store: () => {},
+        store: () => { },
       },
     });
     this.loopBreaker = optionalEngine('loopBreaker', 'loop_breaker', (engineConfig) => new LoopBreaker(engineConfig), {
@@ -1113,10 +1113,10 @@ class SentinelServer {
         : {};
     const budgetAutopilotRecommendation = this.budgetAutopilot.isEnabled()
       ? this.budgetAutopilot.recommend({
-          budgetRemainingUsd: Number(budgetSnapshot.remainingUsd || 0),
-          slaP95Ms: Number(budgetAutopilotConfig.sla_p95_ms || 2000),
-          horizonHours: Number(budgetAutopilotConfig.horizon_hours || 24),
-        })
+        budgetRemainingUsd: Number(budgetSnapshot.remainingUsd || 0),
+        slaP95Ms: Number(budgetAutopilotConfig.sla_p95_ms || 2000),
+        horizonHours: Number(budgetAutopilotConfig.horizon_hours || 24),
+      })
       : null;
     const recommendationProvider = budgetAutopilotRecommendation?.recommendation || null;
     if (recommendationProvider && recommendationProvider !== this.lastBudgetAutopilotRecommendation) {
@@ -1622,8 +1622,8 @@ class SentinelServer {
       });
       const proofContext =
         streamProof &&
-        typeof streamProof.update === 'function' &&
-        typeof streamProof.finalize === 'function'
+          typeof streamProof.update === 'function' &&
+          typeof streamProof.finalize === 'function'
           ? streamProof
           : null;
       const canAddTrailers =
@@ -3199,7 +3199,7 @@ class SentinelServer {
           method,
           requestBodyBuffer: effectiveBodyBuffer,
         }),
-      provider);
+        provider);
       if (budgetEstimateStageExecution.handled) {
         return;
       }
@@ -3286,7 +3286,7 @@ class SentinelServer {
       try {
         const vcrLookupStageExecution = await runOrchestratedStage('vcr_lookup', async () =>
           this.vcrStore.lookup(vcrRequestMeta),
-        provider);
+          provider);
         if (vcrLookupStageExecution.handled) {
           return;
         }
@@ -3362,7 +3362,7 @@ class SentinelServer {
                 bodyJson,
                 bodyText,
               }),
-            provider);
+              provider);
             if (semanticLookupStageExecution.handled) {
               return;
             }
@@ -3413,7 +3413,7 @@ class SentinelServer {
               wantsStream,
               forwardHeaders: effectiveForwardHeaders,
             }),
-          provider);
+            provider);
           if (upstreamForwardStageExecution.handled) {
             return;
           }
@@ -3452,51 +3452,51 @@ class SentinelServer {
           correlationId,
           finalizeRequestTelemetry,
           auditPayload: {
-          timestamp: new Date().toISOString(),
-          correlation_id: correlationId,
-          config_version: this.config.version,
-          mode: effectiveMode,
-          decision: 'upstream_error',
-          reasons: [upstream.body.error || 'upstream_error'],
-          pii_types: piiTypes,
-          redactions: redactedCount,
-          duration_ms: durationMs,
-          request_bytes: bodyBuffer.length,
-          response_status: upstream.status,
-          response_bytes: Buffer.byteLength(JSON.stringify(upstream.body)),
-          provider: routedProvider,
-          upstream_target: routedTarget,
-          failover_used: upstream.route?.failoverUsed === true,
-          route_source: routePlan.routeSource,
-          route_group: routePlan.selectedGroup || undefined,
-          route_contract: routePlan.desiredContract,
-          requested_target: routePlan.requestedTarget,
-          honeytoken_applied: Boolean(honeytokenDecision),
-          honeytoken_mode: honeytokenDecision?.mode,
-          honeytoken_token_hash: honeytokenDecision?.token_hash,
-          canary_tool_injected: Boolean(canaryToolDecision),
-          canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
-          canary_tool_triggered: Boolean(canaryTriggered?.triggered),
-          parallax_evaluated: Boolean(parallaxDecision?.evaluated),
-          parallax_veto: Boolean(parallaxDecision?.veto),
-          parallax_risk: parallaxDecision?.risk,
-          parallax_secondary_provider: parallaxDecision?.secondaryProvider,
-          parallax_high_risk_tools: parallaxDecision?.highRiskTools,
-          cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
-          cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
-          cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
-          cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
-          omni_shield_detected: Boolean(omniShieldDecision?.detected),
-          omni_shield_findings: omniShieldDecision?.findings,
-          intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
-          intent_drift_reason: intentDriftDecision?.reason,
-          intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
-          intent_drift_distance: intentDriftDecision?.distance,
-          intent_drift_threshold: intentDriftDecision?.threshold,
-          intent_drift_turn_count: intentDriftDecision?.turnCount,
-          sandbox_detected: Boolean(sandboxDecision?.detected),
-          sandbox_findings: sandboxDecision?.findings,
-        },
+            timestamp: new Date().toISOString(),
+            correlation_id: correlationId,
+            config_version: this.config.version,
+            mode: effectiveMode,
+            decision: 'upstream_error',
+            reasons: [upstream.body.error || 'upstream_error'],
+            pii_types: piiTypes,
+            redactions: redactedCount,
+            duration_ms: durationMs,
+            request_bytes: bodyBuffer.length,
+            response_status: upstream.status,
+            response_bytes: Buffer.byteLength(JSON.stringify(upstream.body)),
+            provider: routedProvider,
+            upstream_target: routedTarget,
+            failover_used: upstream.route?.failoverUsed === true,
+            route_source: routePlan.routeSource,
+            route_group: routePlan.selectedGroup || undefined,
+            route_contract: routePlan.desiredContract,
+            requested_target: routePlan.requestedTarget,
+            honeytoken_applied: Boolean(honeytokenDecision),
+            honeytoken_mode: honeytokenDecision?.mode,
+            honeytoken_token_hash: honeytokenDecision?.token_hash,
+            canary_tool_injected: Boolean(canaryToolDecision),
+            canary_tool_name: canaryToolDecision?.tool_name || canaryTriggered?.toolName,
+            canary_tool_triggered: Boolean(canaryTriggered?.triggered),
+            parallax_evaluated: Boolean(parallaxDecision?.evaluated),
+            parallax_veto: Boolean(parallaxDecision?.veto),
+            parallax_risk: parallaxDecision?.risk,
+            parallax_secondary_provider: parallaxDecision?.secondaryProvider,
+            parallax_high_risk_tools: parallaxDecision?.highRiskTools,
+            cognitive_rollback_suggested: Boolean(cognitiveRollbackDecision?.applicable),
+            cognitive_rollback_mode: cognitiveRollbackDecision?.mode,
+            cognitive_rollback_trigger: cognitiveRollbackDecision?.trigger,
+            cognitive_rollback_dropped_messages: cognitiveRollbackDecision?.droppedMessages,
+            omni_shield_detected: Boolean(omniShieldDecision?.detected),
+            omni_shield_findings: omniShieldDecision?.findings,
+            intent_drift_evaluated: Boolean(intentDriftDecision?.evaluated),
+            intent_drift_reason: intentDriftDecision?.reason,
+            intent_drift_drifted: Boolean(intentDriftDecision?.drifted),
+            intent_drift_distance: intentDriftDecision?.distance,
+            intent_drift_threshold: intentDriftDecision?.threshold,
+            intent_drift_turn_count: intentDriftDecision?.turnCount,
+            sandbox_detected: Boolean(sandboxDecision?.detected),
+            sandbox_findings: sandboxDecision?.findings,
+          },
         });
       }
 
@@ -3537,7 +3537,7 @@ class SentinelServer {
           routedTarget,
           finalizeRequestTelemetry,
         }),
-      routedProvider);
+        routedProvider);
       if (streamStageExecution.handled) {
         return;
       }
@@ -3618,6 +3618,21 @@ class SentinelServer {
       });
       this.writeStatus();
     });
+    if (typeof this.server?.on === 'function') {
+      this.server.on('error', (error) => {
+        if (error.code === 'EADDRINUSE') {
+          console.error(`\n  ⛔  Port ${port} is already in use.\n`);
+          console.error(`  Another Sentinel instance (or another process) is occupying ${host}:${port}.`);
+          console.error(`  Fix with one of:\n`);
+          console.error(`    sentinel stop               # stop the existing Sentinel instance`);
+          console.error(`    lsof -ti:${port} | xargs kill  # force-kill whatever is on the port`);
+          console.error(`    sentinel bootstrap --port ${Number(port) + 10}  # use a different port\n`);
+        } else {
+          console.error(`\n  ⛔  Server failed to start: ${error.message}\n`);
+        }
+        process.exitCode = 1;
+      });
+    }
     if (typeof this.server?.on === 'function') {
       this.server.on('connection', (socket) => {
         this.serverSockets.add(socket);
