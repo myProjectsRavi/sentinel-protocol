@@ -138,6 +138,25 @@ npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --das
 - 📊 Live dashboard at `http://127.0.0.1:8788`
 - 🎮 Playground at `http://127.0.0.1:8787/_sentinel/playground`
 
+### Choose Your Security Level
+
+```bash
+# 🟢 Minimal — lightweight, 8 engines, great for laptops (monitor only)
+npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+
+# 🟡 Standard — balanced, ~20 engines, staging/production ready
+npx --yes --package sentinel-protocol sentinel bootstrap --profile standard --dashboard
+
+# 🔴 Paranoid — all 81 engines, enforce mode, maximum security
+npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
+```
+
+| | Minimal | Standard | Paranoid |
+|---|:---:|:---:|:---:|
+| **Engines** | 8 | ~20 | All 81 |
+| **Mode** | Monitor (log only) | Monitor | Enforce (blocks threats) |
+| **Best for** | Dev laptops, getting started | Staging, production | Security audits, compliance |
+
 ### Verify It's Running
 
 ```bash
