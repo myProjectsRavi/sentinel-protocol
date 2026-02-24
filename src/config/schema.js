@@ -35,6 +35,13 @@ const RUNTIME_KEYS = new Set([
   'consensus_protocol',
   'cross_tenant_isolator',
   'cold_start_analyzer',
+  'serialization_firewall',
+  'context_integrity_guardian',
+  'tool_schema_validator',
+  'multimodal_injection_shield',
+  'supply_chain_validator',
+  'sandbox_enforcer',
+  'memory_integrity_monitor',
   'mcp_poisoning',
   'mcp_shadow',
   'memory_poisoning',
@@ -370,6 +377,111 @@ const COLD_START_ANALYZER_KEYS = new Set([
   'observability',
 ]);
 const COLD_START_ANALYZER_MODES = new Set(['monitor', 'block']);
+const SERIALIZATION_FIREWALL_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_bytes',
+  'max_nesting_depth',
+  'max_object_nodes',
+  'metadata_ratio_threshold',
+  'allowed_formats',
+  'expected_root_keys',
+  'block_on_type_confusion',
+  'block_on_depth_bomb',
+  'block_on_format_violation',
+  'block_on_metadata_anomaly',
+  'block_on_schema_mismatch',
+  'observability',
+]);
+const SERIALIZATION_FIREWALL_MODES = new Set(['monitor', 'block']);
+const CONTEXT_INTEGRITY_GUARDIAN_KEYS = new Set([
+  'enabled',
+  'mode',
+  'session_header',
+  'fallback_headers',
+  'required_anchors',
+  'max_context_chars',
+  'max_sessions',
+  'ttl_ms',
+  'repetition_threshold',
+  'token_budget_warn_ratio',
+  'provider_token_limit',
+  'block_on_anchor_loss',
+  'block_on_repetition',
+  'observability',
+]);
+const CONTEXT_INTEGRITY_GUARDIAN_MODES = new Set(['monitor', 'block']);
+const TOOL_SCHEMA_VALIDATOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_tools',
+  'max_schema_bytes',
+  'max_param_name_chars',
+  'ttl_ms',
+  'max_servers',
+  'block_on_dangerous_parameter',
+  'block_on_schema_drift',
+  'block_on_capability_boundary',
+  'detect_schema_drift',
+  'sanitize_in_monitor',
+  'observability',
+]);
+const TOOL_SCHEMA_VALIDATOR_MODES = new Set(['monitor', 'block']);
+const MULTIMODAL_INJECTION_SHIELD_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_scan_bytes',
+  'max_findings',
+  'base64_entropy_threshold',
+  'max_decoded_base64_bytes',
+  'block_on_mime_mismatch',
+  'block_on_suspicious_metadata',
+  'block_on_base64_injection',
+  'observability',
+]);
+const MULTIMODAL_INJECTION_SHIELD_MODES = new Set(['monitor', 'block']);
+const SUPPLY_CHAIN_VALIDATOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'project_root',
+  'max_module_entries',
+  'check_every_requests',
+  'block_on_lockfile_drift',
+  'block_on_blocked_package',
+  'require_lockfile',
+  'blocked_packages',
+  'lock_files',
+  'observability',
+]);
+const SUPPLY_CHAIN_VALIDATOR_MODES = new Set(['monitor', 'block']);
+const SANDBOX_ENFORCER_KEYS = new Set([
+  'enabled',
+  'mode',
+  'max_argument_bytes',
+  'allowed_paths',
+  'allowed_domains',
+  'blocked_ports',
+  'block_on_path_escape',
+  'block_on_network_escape',
+  'observability',
+]);
+const SANDBOX_ENFORCER_MODES = new Set(['monitor', 'block']);
+const MEMORY_INTEGRITY_MONITOR_KEYS = new Set([
+  'enabled',
+  'mode',
+  'session_header',
+  'agent_header',
+  'chain_header',
+  'max_memory_chars',
+  'ttl_ms',
+  'max_sessions',
+  'max_growth_ratio',
+  'block_on_chain_break',
+  'block_on_growth',
+  'block_on_owner_mismatch',
+  'observability',
+]);
+const MEMORY_INTEGRITY_MONITOR_MODES = new Set(['monitor', 'block']);
 const MCP_POISONING_KEYS = new Set([
   'enabled',
   'mode',
@@ -1635,6 +1747,145 @@ function applyDefaults(config) {
     : ['semantic_cache', 'intent_drift', 'intent_throttle', 'agent_observability'];
   coldStartAnalyzer.block_during_cold_start = coldStartAnalyzer.block_during_cold_start === true;
   coldStartAnalyzer.observability = coldStartAnalyzer.observability !== false;
+
+  normalized.runtime.serialization_firewall = normalized.runtime.serialization_firewall || {};
+  const serializationFirewall = normalized.runtime.serialization_firewall;
+  serializationFirewall.enabled = serializationFirewall.enabled === true;
+  serializationFirewall.mode = SERIALIZATION_FIREWALL_MODES.has(String(serializationFirewall.mode || '').toLowerCase())
+    ? String(serializationFirewall.mode).toLowerCase()
+    : 'monitor';
+  serializationFirewall.max_scan_bytes = Number(serializationFirewall.max_scan_bytes ?? 262144);
+  serializationFirewall.max_nesting_depth = Number(serializationFirewall.max_nesting_depth ?? 50);
+  serializationFirewall.max_object_nodes = Number(serializationFirewall.max_object_nodes ?? 200000);
+  serializationFirewall.metadata_ratio_threshold = Number(serializationFirewall.metadata_ratio_threshold ?? 0.8);
+  serializationFirewall.allowed_formats = Array.isArray(serializationFirewall.allowed_formats)
+    ? serializationFirewall.allowed_formats.map((item) => String(item || '').toLowerCase().trim()).filter(Boolean)
+    : ['json', 'yaml', 'unknown'];
+  serializationFirewall.expected_root_keys = Array.isArray(serializationFirewall.expected_root_keys)
+    ? serializationFirewall.expected_root_keys.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  serializationFirewall.block_on_type_confusion = serializationFirewall.block_on_type_confusion === true;
+  serializationFirewall.block_on_depth_bomb = serializationFirewall.block_on_depth_bomb === true;
+  serializationFirewall.block_on_format_violation = serializationFirewall.block_on_format_violation === true;
+  serializationFirewall.block_on_metadata_anomaly = serializationFirewall.block_on_metadata_anomaly === true;
+  serializationFirewall.block_on_schema_mismatch = serializationFirewall.block_on_schema_mismatch === true;
+  serializationFirewall.observability = serializationFirewall.observability !== false;
+
+  normalized.runtime.context_integrity_guardian = normalized.runtime.context_integrity_guardian || {};
+  const contextIntegrityGuardian = normalized.runtime.context_integrity_guardian;
+  contextIntegrityGuardian.enabled = contextIntegrityGuardian.enabled === true;
+  contextIntegrityGuardian.mode = CONTEXT_INTEGRITY_GUARDIAN_MODES.has(String(contextIntegrityGuardian.mode || '').toLowerCase())
+    ? String(contextIntegrityGuardian.mode).toLowerCase()
+    : 'monitor';
+  contextIntegrityGuardian.session_header = String(
+    contextIntegrityGuardian.session_header || 'x-sentinel-session-id'
+  ).toLowerCase();
+  contextIntegrityGuardian.fallback_headers = Array.isArray(contextIntegrityGuardian.fallback_headers)
+    ? contextIntegrityGuardian.fallback_headers.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : ['x-sentinel-agent-id', 'x-forwarded-for', 'user-agent'];
+  contextIntegrityGuardian.required_anchors = Array.isArray(contextIntegrityGuardian.required_anchors)
+    ? contextIntegrityGuardian.required_anchors.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  contextIntegrityGuardian.max_context_chars = Number(contextIntegrityGuardian.max_context_chars ?? 32768);
+  contextIntegrityGuardian.max_sessions = Number(contextIntegrityGuardian.max_sessions ?? 10000);
+  contextIntegrityGuardian.ttl_ms = Number(contextIntegrityGuardian.ttl_ms ?? 21600000);
+  contextIntegrityGuardian.repetition_threshold = Number(contextIntegrityGuardian.repetition_threshold ?? 0.35);
+  contextIntegrityGuardian.token_budget_warn_ratio = Number(contextIntegrityGuardian.token_budget_warn_ratio ?? 0.85);
+  contextIntegrityGuardian.provider_token_limit = Number(contextIntegrityGuardian.provider_token_limit ?? 128000);
+  contextIntegrityGuardian.block_on_anchor_loss = contextIntegrityGuardian.block_on_anchor_loss === true;
+  contextIntegrityGuardian.block_on_repetition = contextIntegrityGuardian.block_on_repetition === true;
+  contextIntegrityGuardian.observability = contextIntegrityGuardian.observability !== false;
+
+  normalized.runtime.tool_schema_validator = normalized.runtime.tool_schema_validator || {};
+  const toolSchemaValidator = normalized.runtime.tool_schema_validator;
+  toolSchemaValidator.enabled = toolSchemaValidator.enabled === true;
+  toolSchemaValidator.mode = TOOL_SCHEMA_VALIDATOR_MODES.has(String(toolSchemaValidator.mode || '').toLowerCase())
+    ? String(toolSchemaValidator.mode).toLowerCase()
+    : 'monitor';
+  toolSchemaValidator.max_tools = Number(toolSchemaValidator.max_tools ?? 64);
+  toolSchemaValidator.max_schema_bytes = Number(toolSchemaValidator.max_schema_bytes ?? 131072);
+  toolSchemaValidator.max_param_name_chars = Number(toolSchemaValidator.max_param_name_chars ?? 128);
+  toolSchemaValidator.ttl_ms = Number(toolSchemaValidator.ttl_ms ?? 3600000);
+  toolSchemaValidator.max_servers = Number(toolSchemaValidator.max_servers ?? 5000);
+  toolSchemaValidator.block_on_dangerous_parameter = toolSchemaValidator.block_on_dangerous_parameter === true;
+  toolSchemaValidator.block_on_schema_drift = toolSchemaValidator.block_on_schema_drift === true;
+  toolSchemaValidator.block_on_capability_boundary = toolSchemaValidator.block_on_capability_boundary === true;
+  toolSchemaValidator.detect_schema_drift = toolSchemaValidator.detect_schema_drift !== false;
+  toolSchemaValidator.sanitize_in_monitor = toolSchemaValidator.sanitize_in_monitor !== false;
+  toolSchemaValidator.observability = toolSchemaValidator.observability !== false;
+
+  normalized.runtime.multimodal_injection_shield = normalized.runtime.multimodal_injection_shield || {};
+  const multimodalInjectionShield = normalized.runtime.multimodal_injection_shield;
+  multimodalInjectionShield.enabled = multimodalInjectionShield.enabled === true;
+  multimodalInjectionShield.mode = MULTIMODAL_INJECTION_SHIELD_MODES.has(String(multimodalInjectionShield.mode || '').toLowerCase())
+    ? String(multimodalInjectionShield.mode).toLowerCase()
+    : 'monitor';
+  multimodalInjectionShield.max_scan_bytes = Number(multimodalInjectionShield.max_scan_bytes ?? 262144);
+  multimodalInjectionShield.max_findings = Number(multimodalInjectionShield.max_findings ?? 16);
+  multimodalInjectionShield.base64_entropy_threshold = Number(multimodalInjectionShield.base64_entropy_threshold ?? 0.55);
+  multimodalInjectionShield.max_decoded_base64_bytes = Number(multimodalInjectionShield.max_decoded_base64_bytes ?? 32768);
+  multimodalInjectionShield.block_on_mime_mismatch = multimodalInjectionShield.block_on_mime_mismatch === true;
+  multimodalInjectionShield.block_on_suspicious_metadata = multimodalInjectionShield.block_on_suspicious_metadata === true;
+  multimodalInjectionShield.block_on_base64_injection = multimodalInjectionShield.block_on_base64_injection === true;
+  multimodalInjectionShield.observability = multimodalInjectionShield.observability !== false;
+
+  normalized.runtime.supply_chain_validator = normalized.runtime.supply_chain_validator || {};
+  const supplyChainValidator = normalized.runtime.supply_chain_validator;
+  supplyChainValidator.enabled = supplyChainValidator.enabled === true;
+  supplyChainValidator.mode = SUPPLY_CHAIN_VALIDATOR_MODES.has(String(supplyChainValidator.mode || '').toLowerCase())
+    ? String(supplyChainValidator.mode).toLowerCase()
+    : 'monitor';
+  supplyChainValidator.project_root = String(supplyChainValidator.project_root || process.cwd());
+  supplyChainValidator.max_module_entries = Number(supplyChainValidator.max_module_entries ?? 10000);
+  supplyChainValidator.check_every_requests = Number(supplyChainValidator.check_every_requests ?? 100);
+  supplyChainValidator.block_on_lockfile_drift = supplyChainValidator.block_on_lockfile_drift === true;
+  supplyChainValidator.block_on_blocked_package = supplyChainValidator.block_on_blocked_package === true;
+  supplyChainValidator.require_lockfile = supplyChainValidator.require_lockfile === true;
+  supplyChainValidator.blocked_packages = Array.isArray(supplyChainValidator.blocked_packages)
+    ? supplyChainValidator.blocked_packages.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  supplyChainValidator.lock_files = Array.isArray(supplyChainValidator.lock_files)
+    ? supplyChainValidator.lock_files.map((item) => String(item || '').trim()).filter(Boolean)
+    : ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
+  supplyChainValidator.observability = supplyChainValidator.observability !== false;
+
+  normalized.runtime.sandbox_enforcer = normalized.runtime.sandbox_enforcer || {};
+  const sandboxEnforcer = normalized.runtime.sandbox_enforcer;
+  sandboxEnforcer.enabled = sandboxEnforcer.enabled === true;
+  sandboxEnforcer.mode = SANDBOX_ENFORCER_MODES.has(String(sandboxEnforcer.mode || '').toLowerCase())
+    ? String(sandboxEnforcer.mode).toLowerCase()
+    : 'monitor';
+  sandboxEnforcer.max_argument_bytes = Number(sandboxEnforcer.max_argument_bytes ?? 65536);
+  sandboxEnforcer.allowed_paths = Array.isArray(sandboxEnforcer.allowed_paths)
+    ? sandboxEnforcer.allowed_paths.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  sandboxEnforcer.allowed_domains = Array.isArray(sandboxEnforcer.allowed_domains)
+    ? sandboxEnforcer.allowed_domains.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  sandboxEnforcer.blocked_ports = Array.isArray(sandboxEnforcer.blocked_ports)
+    ? sandboxEnforcer.blocked_ports.map((item) => Number(item)).filter((item) => Number.isInteger(item))
+    : [22, 2375, 3306, 5432];
+  sandboxEnforcer.block_on_path_escape = sandboxEnforcer.block_on_path_escape === true;
+  sandboxEnforcer.block_on_network_escape = sandboxEnforcer.block_on_network_escape === true;
+  sandboxEnforcer.observability = sandboxEnforcer.observability !== false;
+
+  normalized.runtime.memory_integrity_monitor = normalized.runtime.memory_integrity_monitor || {};
+  const memoryIntegrityMonitor = normalized.runtime.memory_integrity_monitor;
+  memoryIntegrityMonitor.enabled = memoryIntegrityMonitor.enabled === true;
+  memoryIntegrityMonitor.mode = MEMORY_INTEGRITY_MONITOR_MODES.has(String(memoryIntegrityMonitor.mode || '').toLowerCase())
+    ? String(memoryIntegrityMonitor.mode).toLowerCase()
+    : 'monitor';
+  memoryIntegrityMonitor.session_header = String(memoryIntegrityMonitor.session_header || 'x-sentinel-session-id').toLowerCase();
+  memoryIntegrityMonitor.agent_header = String(memoryIntegrityMonitor.agent_header || 'x-sentinel-agent-id').toLowerCase();
+  memoryIntegrityMonitor.chain_header = String(memoryIntegrityMonitor.chain_header || 'x-sentinel-memory-chain').toLowerCase();
+  memoryIntegrityMonitor.max_memory_chars = Number(memoryIntegrityMonitor.max_memory_chars ?? 32768);
+  memoryIntegrityMonitor.ttl_ms = Number(memoryIntegrityMonitor.ttl_ms ?? 21600000);
+  memoryIntegrityMonitor.max_sessions = Number(memoryIntegrityMonitor.max_sessions ?? 10000);
+  memoryIntegrityMonitor.max_growth_ratio = Number(memoryIntegrityMonitor.max_growth_ratio ?? 4);
+  memoryIntegrityMonitor.block_on_chain_break = memoryIntegrityMonitor.block_on_chain_break === true;
+  memoryIntegrityMonitor.block_on_growth = memoryIntegrityMonitor.block_on_growth === true;
+  memoryIntegrityMonitor.block_on_owner_mismatch = memoryIntegrityMonitor.block_on_owner_mismatch === true;
+  memoryIntegrityMonitor.observability = memoryIntegrityMonitor.observability !== false;
 
   normalized.runtime.mcp_poisoning = normalized.runtime.mcp_poisoning || {};
   const mcpPoisoning = normalized.runtime.mcp_poisoning;
@@ -3687,6 +3938,556 @@ function validateConfigShape(config) {
     assertType(
       typeof coldStartAnalyzer.observability === 'boolean',
       '`runtime.cold_start_analyzer.observability` must be boolean',
+      details
+    );
+  }
+
+  const serializationFirewall = runtime.serialization_firewall || {};
+  if (runtime.serialization_firewall !== undefined) {
+    assertNoUnknownKeys(serializationFirewall, SERIALIZATION_FIREWALL_KEYS, 'runtime.serialization_firewall', details);
+    assertType(
+      typeof serializationFirewall.enabled === 'boolean',
+      '`runtime.serialization_firewall.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SERIALIZATION_FIREWALL_MODES.has(String(serializationFirewall.mode)),
+      '`runtime.serialization_firewall.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(serializationFirewall.max_scan_bytes) && serializationFirewall.max_scan_bytes > 0,
+      '`runtime.serialization_firewall.max_scan_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(serializationFirewall.max_nesting_depth) && serializationFirewall.max_nesting_depth > 0,
+      '`runtime.serialization_firewall.max_nesting_depth` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(serializationFirewall.max_object_nodes) && serializationFirewall.max_object_nodes > 0,
+      '`runtime.serialization_firewall.max_object_nodes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(serializationFirewall.metadata_ratio_threshold))
+        && Number(serializationFirewall.metadata_ratio_threshold) >= 0,
+      '`runtime.serialization_firewall.metadata_ratio_threshold` must be number >= 0',
+      details
+    );
+    assertType(
+      Array.isArray(serializationFirewall.allowed_formats),
+      '`runtime.serialization_firewall.allowed_formats` must be array',
+      details
+    );
+    if (Array.isArray(serializationFirewall.allowed_formats)) {
+      serializationFirewall.allowed_formats.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.serialization_firewall.allowed_formats[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(serializationFirewall.expected_root_keys),
+      '`runtime.serialization_firewall.expected_root_keys` must be array',
+      details
+    );
+    if (Array.isArray(serializationFirewall.expected_root_keys)) {
+      serializationFirewall.expected_root_keys.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.serialization_firewall.expected_root_keys[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof serializationFirewall.block_on_type_confusion === 'boolean',
+      '`runtime.serialization_firewall.block_on_type_confusion` must be boolean',
+      details
+    );
+    assertType(
+      typeof serializationFirewall.block_on_depth_bomb === 'boolean',
+      '`runtime.serialization_firewall.block_on_depth_bomb` must be boolean',
+      details
+    );
+    assertType(
+      typeof serializationFirewall.block_on_format_violation === 'boolean',
+      '`runtime.serialization_firewall.block_on_format_violation` must be boolean',
+      details
+    );
+    assertType(
+      typeof serializationFirewall.block_on_metadata_anomaly === 'boolean',
+      '`runtime.serialization_firewall.block_on_metadata_anomaly` must be boolean',
+      details
+    );
+    assertType(
+      typeof serializationFirewall.block_on_schema_mismatch === 'boolean',
+      '`runtime.serialization_firewall.block_on_schema_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof serializationFirewall.observability === 'boolean',
+      '`runtime.serialization_firewall.observability` must be boolean',
+      details
+    );
+  }
+
+  const contextIntegrityGuardian = runtime.context_integrity_guardian || {};
+  if (runtime.context_integrity_guardian !== undefined) {
+    assertNoUnknownKeys(contextIntegrityGuardian, CONTEXT_INTEGRITY_GUARDIAN_KEYS, 'runtime.context_integrity_guardian', details);
+    assertType(
+      typeof contextIntegrityGuardian.enabled === 'boolean',
+      '`runtime.context_integrity_guardian.enabled` must be boolean',
+      details
+    );
+    assertType(
+      CONTEXT_INTEGRITY_GUARDIAN_MODES.has(String(contextIntegrityGuardian.mode)),
+      '`runtime.context_integrity_guardian.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof contextIntegrityGuardian.session_header === 'string' && contextIntegrityGuardian.session_header.length > 0,
+      '`runtime.context_integrity_guardian.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Array.isArray(contextIntegrityGuardian.fallback_headers),
+      '`runtime.context_integrity_guardian.fallback_headers` must be array',
+      details
+    );
+    if (Array.isArray(contextIntegrityGuardian.fallback_headers)) {
+      contextIntegrityGuardian.fallback_headers.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.context_integrity_guardian.fallback_headers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(contextIntegrityGuardian.required_anchors),
+      '`runtime.context_integrity_guardian.required_anchors` must be array',
+      details
+    );
+    if (Array.isArray(contextIntegrityGuardian.required_anchors)) {
+      contextIntegrityGuardian.required_anchors.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.context_integrity_guardian.required_anchors[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Number.isInteger(contextIntegrityGuardian.max_context_chars) && contextIntegrityGuardian.max_context_chars > 0,
+      '`runtime.context_integrity_guardian.max_context_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(contextIntegrityGuardian.max_sessions) && contextIntegrityGuardian.max_sessions > 0,
+      '`runtime.context_integrity_guardian.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(contextIntegrityGuardian.ttl_ms) && contextIntegrityGuardian.ttl_ms > 0,
+      '`runtime.context_integrity_guardian.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(contextIntegrityGuardian.repetition_threshold))
+        && Number(contextIntegrityGuardian.repetition_threshold) >= 0
+        && Number(contextIntegrityGuardian.repetition_threshold) <= 1,
+      '`runtime.context_integrity_guardian.repetition_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(contextIntegrityGuardian.token_budget_warn_ratio))
+        && Number(contextIntegrityGuardian.token_budget_warn_ratio) >= 0
+        && Number(contextIntegrityGuardian.token_budget_warn_ratio) <= 1,
+      '`runtime.context_integrity_guardian.token_budget_warn_ratio` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(contextIntegrityGuardian.provider_token_limit) && contextIntegrityGuardian.provider_token_limit > 0,
+      '`runtime.context_integrity_guardian.provider_token_limit` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof contextIntegrityGuardian.block_on_anchor_loss === 'boolean',
+      '`runtime.context_integrity_guardian.block_on_anchor_loss` must be boolean',
+      details
+    );
+    assertType(
+      typeof contextIntegrityGuardian.block_on_repetition === 'boolean',
+      '`runtime.context_integrity_guardian.block_on_repetition` must be boolean',
+      details
+    );
+    assertType(
+      typeof contextIntegrityGuardian.observability === 'boolean',
+      '`runtime.context_integrity_guardian.observability` must be boolean',
+      details
+    );
+  }
+
+  const toolSchemaValidator = runtime.tool_schema_validator || {};
+  if (runtime.tool_schema_validator !== undefined) {
+    assertNoUnknownKeys(toolSchemaValidator, TOOL_SCHEMA_VALIDATOR_KEYS, 'runtime.tool_schema_validator', details);
+    assertType(
+      typeof toolSchemaValidator.enabled === 'boolean',
+      '`runtime.tool_schema_validator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      TOOL_SCHEMA_VALIDATOR_MODES.has(String(toolSchemaValidator.mode)),
+      '`runtime.tool_schema_validator.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(toolSchemaValidator.max_tools) && toolSchemaValidator.max_tools > 0,
+      '`runtime.tool_schema_validator.max_tools` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolSchemaValidator.max_schema_bytes) && toolSchemaValidator.max_schema_bytes > 0,
+      '`runtime.tool_schema_validator.max_schema_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolSchemaValidator.max_param_name_chars) && toolSchemaValidator.max_param_name_chars > 0,
+      '`runtime.tool_schema_validator.max_param_name_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolSchemaValidator.ttl_ms) && toolSchemaValidator.ttl_ms > 0,
+      '`runtime.tool_schema_validator.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(toolSchemaValidator.max_servers) && toolSchemaValidator.max_servers > 0,
+      '`runtime.tool_schema_validator.max_servers` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.block_on_dangerous_parameter === 'boolean',
+      '`runtime.tool_schema_validator.block_on_dangerous_parameter` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.block_on_schema_drift === 'boolean',
+      '`runtime.tool_schema_validator.block_on_schema_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.block_on_capability_boundary === 'boolean',
+      '`runtime.tool_schema_validator.block_on_capability_boundary` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.detect_schema_drift === 'boolean',
+      '`runtime.tool_schema_validator.detect_schema_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.sanitize_in_monitor === 'boolean',
+      '`runtime.tool_schema_validator.sanitize_in_monitor` must be boolean',
+      details
+    );
+    assertType(
+      typeof toolSchemaValidator.observability === 'boolean',
+      '`runtime.tool_schema_validator.observability` must be boolean',
+      details
+    );
+  }
+
+  const multimodalInjectionShield = runtime.multimodal_injection_shield || {};
+  if (runtime.multimodal_injection_shield !== undefined) {
+    assertNoUnknownKeys(
+      multimodalInjectionShield,
+      MULTIMODAL_INJECTION_SHIELD_KEYS,
+      'runtime.multimodal_injection_shield',
+      details
+    );
+    assertType(
+      typeof multimodalInjectionShield.enabled === 'boolean',
+      '`runtime.multimodal_injection_shield.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MULTIMODAL_INJECTION_SHIELD_MODES.has(String(multimodalInjectionShield.mode)),
+      '`runtime.multimodal_injection_shield.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(multimodalInjectionShield.max_scan_bytes) && multimodalInjectionShield.max_scan_bytes > 0,
+      '`runtime.multimodal_injection_shield.max_scan_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(multimodalInjectionShield.max_findings) && multimodalInjectionShield.max_findings > 0,
+      '`runtime.multimodal_injection_shield.max_findings` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(multimodalInjectionShield.base64_entropy_threshold))
+        && Number(multimodalInjectionShield.base64_entropy_threshold) >= 0
+        && Number(multimodalInjectionShield.base64_entropy_threshold) <= 1,
+      '`runtime.multimodal_injection_shield.base64_entropy_threshold` must be number between 0 and 1',
+      details
+    );
+    assertType(
+      Number.isInteger(multimodalInjectionShield.max_decoded_base64_bytes)
+        && multimodalInjectionShield.max_decoded_base64_bytes > 0,
+      '`runtime.multimodal_injection_shield.max_decoded_base64_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof multimodalInjectionShield.block_on_mime_mismatch === 'boolean',
+      '`runtime.multimodal_injection_shield.block_on_mime_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof multimodalInjectionShield.block_on_suspicious_metadata === 'boolean',
+      '`runtime.multimodal_injection_shield.block_on_suspicious_metadata` must be boolean',
+      details
+    );
+    assertType(
+      typeof multimodalInjectionShield.block_on_base64_injection === 'boolean',
+      '`runtime.multimodal_injection_shield.block_on_base64_injection` must be boolean',
+      details
+    );
+    assertType(
+      typeof multimodalInjectionShield.observability === 'boolean',
+      '`runtime.multimodal_injection_shield.observability` must be boolean',
+      details
+    );
+  }
+
+  const supplyChainValidator = runtime.supply_chain_validator || {};
+  if (runtime.supply_chain_validator !== undefined) {
+    assertNoUnknownKeys(supplyChainValidator, SUPPLY_CHAIN_VALIDATOR_KEYS, 'runtime.supply_chain_validator', details);
+    assertType(
+      typeof supplyChainValidator.enabled === 'boolean',
+      '`runtime.supply_chain_validator.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SUPPLY_CHAIN_VALIDATOR_MODES.has(String(supplyChainValidator.mode)),
+      '`runtime.supply_chain_validator.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof supplyChainValidator.project_root === 'string' && supplyChainValidator.project_root.length > 0,
+      '`runtime.supply_chain_validator.project_root` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(supplyChainValidator.max_module_entries) && supplyChainValidator.max_module_entries > 0,
+      '`runtime.supply_chain_validator.max_module_entries` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(supplyChainValidator.check_every_requests) && supplyChainValidator.check_every_requests > 0,
+      '`runtime.supply_chain_validator.check_every_requests` must be integer > 0',
+      details
+    );
+    assertType(
+      typeof supplyChainValidator.block_on_lockfile_drift === 'boolean',
+      '`runtime.supply_chain_validator.block_on_lockfile_drift` must be boolean',
+      details
+    );
+    assertType(
+      typeof supplyChainValidator.block_on_blocked_package === 'boolean',
+      '`runtime.supply_chain_validator.block_on_blocked_package` must be boolean',
+      details
+    );
+    assertType(
+      typeof supplyChainValidator.require_lockfile === 'boolean',
+      '`runtime.supply_chain_validator.require_lockfile` must be boolean',
+      details
+    );
+    assertType(
+      Array.isArray(supplyChainValidator.blocked_packages),
+      '`runtime.supply_chain_validator.blocked_packages` must be array',
+      details
+    );
+    if (Array.isArray(supplyChainValidator.blocked_packages)) {
+      supplyChainValidator.blocked_packages.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.supply_chain_validator.blocked_packages[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(supplyChainValidator.lock_files),
+      '`runtime.supply_chain_validator.lock_files` must be array',
+      details
+    );
+    if (Array.isArray(supplyChainValidator.lock_files)) {
+      supplyChainValidator.lock_files.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.supply_chain_validator.lock_files[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof supplyChainValidator.observability === 'boolean',
+      '`runtime.supply_chain_validator.observability` must be boolean',
+      details
+    );
+  }
+
+  const sandboxEnforcer = runtime.sandbox_enforcer || {};
+  if (runtime.sandbox_enforcer !== undefined) {
+    assertNoUnknownKeys(sandboxEnforcer, SANDBOX_ENFORCER_KEYS, 'runtime.sandbox_enforcer', details);
+    assertType(
+      typeof sandboxEnforcer.enabled === 'boolean',
+      '`runtime.sandbox_enforcer.enabled` must be boolean',
+      details
+    );
+    assertType(
+      SANDBOX_ENFORCER_MODES.has(String(sandboxEnforcer.mode)),
+      '`runtime.sandbox_enforcer.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      Number.isInteger(sandboxEnforcer.max_argument_bytes) && sandboxEnforcer.max_argument_bytes > 0,
+      '`runtime.sandbox_enforcer.max_argument_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Array.isArray(sandboxEnforcer.allowed_paths),
+      '`runtime.sandbox_enforcer.allowed_paths` must be array',
+      details
+    );
+    if (Array.isArray(sandboxEnforcer.allowed_paths)) {
+      sandboxEnforcer.allowed_paths.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.sandbox_enforcer.allowed_paths[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(sandboxEnforcer.allowed_domains),
+      '`runtime.sandbox_enforcer.allowed_domains` must be array',
+      details
+    );
+    if (Array.isArray(sandboxEnforcer.allowed_domains)) {
+      sandboxEnforcer.allowed_domains.forEach((value, idx) => {
+        assertType(
+          typeof value === 'string' && value.length > 0,
+          `runtime.sandbox_enforcer.allowed_domains[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      Array.isArray(sandboxEnforcer.blocked_ports),
+      '`runtime.sandbox_enforcer.blocked_ports` must be array',
+      details
+    );
+    if (Array.isArray(sandboxEnforcer.blocked_ports)) {
+      sandboxEnforcer.blocked_ports.forEach((value, idx) => {
+        assertType(
+          Number.isInteger(value) && value > 0 && value <= 65535,
+          `runtime.sandbox_enforcer.blocked_ports[${idx}] must be integer in range 1..65535`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof sandboxEnforcer.block_on_path_escape === 'boolean',
+      '`runtime.sandbox_enforcer.block_on_path_escape` must be boolean',
+      details
+    );
+    assertType(
+      typeof sandboxEnforcer.block_on_network_escape === 'boolean',
+      '`runtime.sandbox_enforcer.block_on_network_escape` must be boolean',
+      details
+    );
+    assertType(
+      typeof sandboxEnforcer.observability === 'boolean',
+      '`runtime.sandbox_enforcer.observability` must be boolean',
+      details
+    );
+  }
+
+  const memoryIntegrityMonitor = runtime.memory_integrity_monitor || {};
+  if (runtime.memory_integrity_monitor !== undefined) {
+    assertNoUnknownKeys(memoryIntegrityMonitor, MEMORY_INTEGRITY_MONITOR_KEYS, 'runtime.memory_integrity_monitor', details);
+    assertType(
+      typeof memoryIntegrityMonitor.enabled === 'boolean',
+      '`runtime.memory_integrity_monitor.enabled` must be boolean',
+      details
+    );
+    assertType(
+      MEMORY_INTEGRITY_MONITOR_MODES.has(String(memoryIntegrityMonitor.mode)),
+      '`runtime.memory_integrity_monitor.mode` must be monitor|block',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.session_header === 'string' && memoryIntegrityMonitor.session_header.length > 0,
+      '`runtime.memory_integrity_monitor.session_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.agent_header === 'string' && memoryIntegrityMonitor.agent_header.length > 0,
+      '`runtime.memory_integrity_monitor.agent_header` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.chain_header === 'string' && memoryIntegrityMonitor.chain_header.length > 0,
+      '`runtime.memory_integrity_monitor.chain_header` must be non-empty string',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryIntegrityMonitor.max_memory_chars) && memoryIntegrityMonitor.max_memory_chars > 0,
+      '`runtime.memory_integrity_monitor.max_memory_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryIntegrityMonitor.ttl_ms) && memoryIntegrityMonitor.ttl_ms > 0,
+      '`runtime.memory_integrity_monitor.ttl_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(memoryIntegrityMonitor.max_sessions) && memoryIntegrityMonitor.max_sessions > 0,
+      '`runtime.memory_integrity_monitor.max_sessions` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isFinite(Number(memoryIntegrityMonitor.max_growth_ratio))
+        && Number(memoryIntegrityMonitor.max_growth_ratio) >= 1,
+      '`runtime.memory_integrity_monitor.max_growth_ratio` must be number >= 1',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.block_on_chain_break === 'boolean',
+      '`runtime.memory_integrity_monitor.block_on_chain_break` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.block_on_growth === 'boolean',
+      '`runtime.memory_integrity_monitor.block_on_growth` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.block_on_owner_mismatch === 'boolean',
+      '`runtime.memory_integrity_monitor.block_on_owner_mismatch` must be boolean',
+      details
+    );
+    assertType(
+      typeof memoryIntegrityMonitor.observability === 'boolean',
+      '`runtime.memory_integrity_monitor.observability` must be boolean',
       details
     );
   }

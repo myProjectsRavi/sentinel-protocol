@@ -51,6 +51,7 @@
     "perf:p1:gate": "node ./scripts/perf-p1-gate.js",
     "perf:p2:gate": "node ./scripts/perf-p2-gate.js",
     "perf:p3:gate": "node ./scripts/perf-p3-gate.js",
+    "perf:v4:phasea:gate": "node ./scripts/perf-v4-phasea-gate.js",
     "reliability": "node ./scripts/reliability-proof.js",
     "ci:bootstrap:npx": "node ./scripts/ci-validate-npx-bootstrap.js",
     "sbom:cyclonedx": "npm sbom --sbom-format=cyclonedx",

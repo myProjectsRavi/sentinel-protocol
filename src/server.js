@@ -57,6 +57,13 @@ const { MemoryPoisoningSentinel } = require('./security/memory-poisoning-sentine
 const { CascadeIsolator } = require('./security/cascade-isolator');
 const { AgentIdentityFederation } = require('./security/agent-identity-federation');
 const { ToolUseAnomalyDetector } = require('./security/tool-use-anomaly');
+const { SerializationFirewall } = require('./security/serialization-firewall');
+const { ContextIntegrityGuardian } = require('./security/context-integrity-guardian');
+const { ToolSchemaValidator } = require('./security/tool-schema-validator');
+const { MultiModalInjectionShield } = require('./security/multimodal-injection-shield');
+const { SupplyChainValidator } = require('./security/supply-chain-validator');
+const { SandboxEnforcer } = require('./security/sandbox-enforcer');
+const { MemoryIntegrityMonitor } = require('./security/memory-integrity-monitor');
 const { OutputClassifier } = require('./egress/output-classifier');
 const { StegoExfilDetector } = require('./egress/stego-exfil-detector');
 const { ReasoningTraceMonitor } = require('./egress/reasoning-trace-monitor');
@@ -224,6 +231,21 @@ class SentinelServer {
       agent_identity_blocked: 0,
       tool_use_anomaly_detected: 0,
       tool_use_anomaly_blocked: 0,
+      serialization_firewall_detected: 0,
+      serialization_firewall_blocked: 0,
+      context_integrity_detected: 0,
+      context_integrity_blocked: 0,
+      tool_schema_detected: 0,
+      tool_schema_blocked: 0,
+      tool_schema_sanitized: 0,
+      multimodal_injection_detected: 0,
+      multimodal_injection_blocked: 0,
+      supply_chain_detected: 0,
+      supply_chain_blocked: 0,
+      sandbox_enforcer_detected: 0,
+      sandbox_enforcer_blocked: 0,
+      memory_integrity_detected: 0,
+      memory_integrity_blocked: 0,
       semantic_dsl_matched: 0,
       budget_autopilot_recommendations: 0,
       evidence_vault_entries: 0,
@@ -354,6 +376,13 @@ class SentinelServer {
     this.cascadeIsolator = new CascadeIsolator(this.config.runtime?.cascade_isolator || {});
     this.agentIdentityFederation = new AgentIdentityFederation(this.config.runtime?.agent_identity_federation || {});
     this.toolUseAnomalyDetector = new ToolUseAnomalyDetector(this.config.runtime?.tool_use_anomaly || {});
+    this.serializationFirewall = new SerializationFirewall(this.config.runtime?.serialization_firewall || {});
+    this.contextIntegrityGuardian = new ContextIntegrityGuardian(this.config.runtime?.context_integrity_guardian || {});
+    this.toolSchemaValidator = new ToolSchemaValidator(this.config.runtime?.tool_schema_validator || {});
+    this.multimodalInjectionShield = new MultiModalInjectionShield(this.config.runtime?.multimodal_injection_shield || {});
+    this.supplyChainValidator = new SupplyChainValidator(this.config.runtime?.supply_chain_validator || {});
+    this.sandboxEnforcer = new SandboxEnforcer(this.config.runtime?.sandbox_enforcer || {});
+    this.memoryIntegrityMonitor = new MemoryIntegrityMonitor(this.config.runtime?.memory_integrity_monitor || {});
     this.outputClassifier = new OutputClassifier(this.config.runtime?.output_classifier || {});
     this.outputSchemaValidator = new OutputSchemaValidator(this.config.runtime?.output_schema_validator || {});
     this.budgetAutopilot = new BudgetAutopilot(this.config.runtime?.budget_autopilot || {});
@@ -548,6 +577,20 @@ class SentinelServer {
       agent_identity_federation_mode: this.agentIdentityFederation.mode,
       tool_use_anomaly_enabled: this.toolUseAnomalyDetector.isEnabled(),
       tool_use_anomaly_mode: this.toolUseAnomalyDetector.mode,
+      serialization_firewall_enabled: this.serializationFirewall.isEnabled(),
+      serialization_firewall_mode: this.serializationFirewall.mode,
+      context_integrity_guardian_enabled: this.contextIntegrityGuardian.isEnabled(),
+      context_integrity_guardian_mode: this.contextIntegrityGuardian.mode,
+      tool_schema_validator_enabled: this.toolSchemaValidator.isEnabled(),
+      tool_schema_validator_mode: this.toolSchemaValidator.mode,
+      multimodal_injection_shield_enabled: this.multimodalInjectionShield.isEnabled(),
+      multimodal_injection_shield_mode: this.multimodalInjectionShield.mode,
+      supply_chain_validator_enabled: this.supplyChainValidator.isEnabled(),
+      supply_chain_validator_mode: this.supplyChainValidator.mode,
+      sandbox_enforcer_enabled: this.sandboxEnforcer.isEnabled(),
+      sandbox_enforcer_mode: this.sandboxEnforcer.mode,
+      memory_integrity_monitor_enabled: this.memoryIntegrityMonitor.isEnabled(),
+      memory_integrity_monitor_mode: this.memoryIntegrityMonitor.mode,
       semantic_firewall_dsl_enabled: this.config.runtime?.semantic_firewall_dsl?.enabled === true,
       prompt_rebuff_enabled: this.promptRebuff.isEnabled(),
       prompt_rebuff_mode: this.promptRebuff.mode,
@@ -1549,6 +1592,7 @@ class SentinelServer {
           req,
           res,
           bodyJson,
+          bodyText,
           effectiveMode,
           provider,
           breakerKey,

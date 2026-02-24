@@ -146,6 +146,48 @@ const ENGINE_TECHNIQUE_MAP = Object.freeze({
     name: 'High-Entropy Secret Exfiltration',
     severity: 'high',
   }),
+  serialization_firewall: Object.freeze({
+    technique_id: 'AML.T0017.000',
+    tactic: 'Execution',
+    name: 'Serialization and Deserialization Exploit Attempt',
+    severity: 'high',
+  }),
+  context_integrity_guardian: Object.freeze({
+    technique_id: 'AML.T0034.000',
+    tactic: 'Impact',
+    name: 'Context Window Integrity Degradation',
+    severity: 'medium',
+  }),
+  tool_schema_validator: Object.freeze({
+    technique_id: 'AML.T0018.000',
+    tactic: 'Supply Chain',
+    name: 'Tool Schema Exploitation and Privilege Escalation',
+    severity: 'high',
+  }),
+  multimodal_injection_shield: Object.freeze({
+    technique_id: 'AML.T0051.000',
+    tactic: 'Prompt Injection',
+    name: 'Multimodal Input Injection Payload',
+    severity: 'high',
+  }),
+  supply_chain_validator: Object.freeze({
+    technique_id: 'AML.T0018.000',
+    tactic: 'Supply Chain',
+    name: 'Dependency and Lockfile Integrity Drift',
+    severity: 'high',
+  }),
+  sandbox_enforcer: Object.freeze({
+    technique_id: 'AML.T0017.000',
+    tactic: 'Execution',
+    name: 'Sandbox Boundary Escape Attempt',
+    severity: 'high',
+  }),
+  memory_integrity_monitor: Object.freeze({
+    technique_id: 'AML.T0020.000',
+    tactic: 'Poisoning',
+    name: 'Agent Memory Integrity and Chain Tampering',
+    severity: 'high',
+  }),
   output_classifier: Object.freeze({
     technique_id: 'AML.T0043.000',
     tactic: 'Evasion',
@@ -202,6 +244,13 @@ const ENGINE_PRIORITY = Object.freeze([
   'a2a_card_verifier',
   'consensus_protocol',
   'cross_tenant_isolator',
+  'serialization_firewall',
+  'tool_schema_validator',
+  'memory_integrity_monitor',
+  'sandbox_enforcer',
+  'supply_chain_validator',
+  'multimodal_injection_shield',
+  'context_integrity_guardian',
   'stego_exfil_detector',
   'reasoning_trace_monitor',
   'hallucination_tripwire',
@@ -310,6 +359,27 @@ function inferEngineCandidates(event = {}) {
   if (decision.includes('mcp_poisoning')) {
     candidates.add('mcp_poisoning_detector');
   }
+  if (decision.includes('serialization_firewall')) {
+    candidates.add('serialization_firewall');
+  }
+  if (decision.includes('context_integrity')) {
+    candidates.add('context_integrity_guardian');
+  }
+  if (decision.includes('tool_schema')) {
+    candidates.add('tool_schema_validator');
+  }
+  if (decision.includes('multimodal_injection')) {
+    candidates.add('multimodal_injection_shield');
+  }
+  if (decision.includes('supply_chain')) {
+    candidates.add('supply_chain_validator');
+  }
+  if (decision.includes('sandbox_enforcer')) {
+    candidates.add('sandbox_enforcer');
+  }
+  if (decision.includes('memory_integrity')) {
+    candidates.add('memory_integrity_monitor');
+  }
   if (decision.includes('synthetic_poisoning')) {
     candidates.add('synthetic_poisoner');
   }
@@ -376,6 +446,27 @@ function inferEngineCandidates(event = {}) {
   }
   if (reasons.some((item) => item.startsWith('mcp_poisoning:'))) {
     candidates.add('mcp_poisoning_detector');
+  }
+  if (reasons.some((item) => item.startsWith('serialization_firewall:'))) {
+    candidates.add('serialization_firewall');
+  }
+  if (reasons.some((item) => item.startsWith('context_integrity:'))) {
+    candidates.add('context_integrity_guardian');
+  }
+  if (reasons.some((item) => item.startsWith('tool_schema:'))) {
+    candidates.add('tool_schema_validator');
+  }
+  if (reasons.some((item) => item.startsWith('multimodal_injection:'))) {
+    candidates.add('multimodal_injection_shield');
+  }
+  if (reasons.some((item) => item.startsWith('supply_chain:'))) {
+    candidates.add('supply_chain_validator');
+  }
+  if (reasons.some((item) => item.startsWith('sandbox_enforcer:'))) {
+    candidates.add('sandbox_enforcer');
+  }
+  if (reasons.some((item) => item.startsWith('memory_integrity:'))) {
+    candidates.add('memory_integrity_monitor');
   }
   if (reasons.some((item) => item.startsWith('synthetic_poisoning:'))) {
     candidates.add('synthetic_poisoner');

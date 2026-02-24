@@ -305,6 +305,97 @@ runtime:
     warmup_engines: [semantic_cache, intent_drift, intent_throttle, agent_observability]
     block_during_cold_start: false
     observability: true
+  serialization_firewall:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_bytes: 262144
+    max_nesting_depth: 50
+    max_object_nodes: 200000
+    metadata_ratio_threshold: 0.8
+    allowed_formats: [json, yaml, unknown]
+    expected_root_keys: []
+    block_on_type_confusion: false
+    block_on_depth_bomb: false
+    block_on_format_violation: false
+    block_on_metadata_anomaly: false
+    block_on_schema_mismatch: false
+    observability: true
+  context_integrity_guardian:
+    enabled: false
+    mode: monitor # monitor | block
+    session_header: x-sentinel-session-id
+    fallback_headers: [x-sentinel-agent-id, x-forwarded-for, user-agent]
+    required_anchors: []
+    max_context_chars: 32768
+    max_sessions: 10000
+    ttl_ms: 21600000
+    repetition_threshold: 0.35
+    token_budget_warn_ratio: 0.85
+    provider_token_limit: 128000
+    block_on_anchor_loss: false
+    block_on_repetition: false
+    observability: true
+  tool_schema_validator:
+    enabled: false
+    mode: monitor # monitor | block
+    max_tools: 64
+    max_schema_bytes: 131072
+    max_param_name_chars: 128
+    ttl_ms: 3600000
+    max_servers: 5000
+    block_on_dangerous_parameter: false
+    block_on_schema_drift: false
+    block_on_capability_boundary: false
+    detect_schema_drift: true
+    sanitize_in_monitor: true
+    observability: true
+  multimodal_injection_shield:
+    enabled: false
+    mode: monitor # monitor | block
+    max_scan_bytes: 262144
+    max_findings: 16
+    base64_entropy_threshold: 0.55
+    max_decoded_base64_bytes: 32768
+    block_on_mime_mismatch: false
+    block_on_suspicious_metadata: false
+    block_on_base64_injection: false
+    observability: true
+  supply_chain_validator:
+    enabled: false
+    mode: monitor # monitor | block
+    project_root: "."
+    max_module_entries: 10000
+    check_every_requests: 100
+    block_on_lockfile_drift: false
+    block_on_blocked_package: false
+    require_lockfile: false
+    blocked_packages: []
+    lock_files: [package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock]
+    observability: true
+  sandbox_enforcer:
+    enabled: false
+    mode: monitor # monitor | block
+    max_argument_bytes: 65536
+    allowed_paths: []
+    allowed_domains: []
+    blocked_ports: [22, 2375, 3306, 5432]
+    block_on_path_escape: false
+    block_on_network_escape: false
+    observability: true
+  memory_integrity_monitor:
+    enabled: false
+    mode: monitor # monitor | block
+    session_header: x-sentinel-session-id
+    agent_header: x-sentinel-agent-id
+    chain_header: x-sentinel-memory-chain
+    max_memory_chars: 32768
+    ttl_ms: 21600000
+    max_sessions: 10000
+    max_growth_ratio: 4
+    block_on_chain_break: false
+    block_on_growth: false
+    block_on_owner_mismatch: false
+    observability: true
   mcp_poisoning:
     enabled: false
     mode: monitor # monitor | block

@@ -1,0 +1,31 @@
+{
+  "warmup_iterations": 1500,
+  "measure_iterations": 9000,
+  "engines": {
+    "serialization_firewall": {
+      "max_p95_ms": 0.8
+    },
+    "context_integrity_guardian": {
+      "max_p95_ms": 0.8
+    },
+    "tool_schema_validator": {
+      "max_p95_ms": 0.8
+    },
+    "multimodal_injection_shield": {
+      "max_p95_ms": 0.8
+    },
+    "supply_chain_validator": {
+      "max_p95_ms": 0.8
+    },
+    "sandbox_enforcer": {
+      "max_p95_ms": 0.8
+    },
+    "memory_integrity_monitor": {
+      "max_p95_ms": 0.8
+    }
+  },
+  "global": {
+    "max_sum_p95_ms": 2.8
+  }
+}
+

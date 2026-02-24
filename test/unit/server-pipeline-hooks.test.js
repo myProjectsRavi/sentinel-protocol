@@ -40,4 +40,55 @@ describe('server pipeline stage orchestration', () => {
       expect(source).toContain(`'${stage}'`);
     }
   });
+
+  test('phase A engines are wired into live policy stages', () => {
+    const serverSource = fs.readFileSync(path.join(__dirname, '../../src/server.js'), 'utf8');
+    const policySource = fs.readFileSync(
+      path.join(__dirname, '../../src/stages/policy/pii-injection-stage.js'),
+      'utf8'
+    );
+    const agenticSource = fs.readFileSync(
+      path.join(__dirname, '../../src/stages/policy/agentic-stage.js'),
+      'utf8'
+    );
+
+    const constructorWiring = [
+      'this.serializationFirewall = new SerializationFirewall',
+      'this.contextIntegrityGuardian = new ContextIntegrityGuardian',
+      'this.toolSchemaValidator = new ToolSchemaValidator',
+      'this.multimodalInjectionShield = new MultiModalInjectionShield',
+      'this.supplyChainValidator = new SupplyChainValidator',
+      'this.sandboxEnforcer = new SandboxEnforcer',
+      'this.memoryIntegrityMonitor = new MemoryIntegrityMonitor',
+    ];
+    for (const marker of constructorWiring) {
+      expect(serverSource).toContain(marker);
+    }
+
+    const ingressPolicyWiring = [
+      'server.serializationFirewall?.isEnabled()',
+      'server.contextIntegrityGuardian?.isEnabled()',
+      'server.toolSchemaValidator?.isEnabled()',
+      'server.multimodalInjectionShield?.isEnabled()',
+      'server.supplyChainValidator?.isEnabled()',
+      "'x-sentinel-serialization-firewall'",
+      "'x-sentinel-context-integrity'",
+      "'x-sentinel-tool-schema'",
+      "'x-sentinel-multimodal-shield'",
+      "'x-sentinel-supply-chain'",
+    ];
+    for (const marker of ingressPolicyWiring) {
+      expect(policySource).toContain(marker);
+    }
+
+    const agenticPolicyWiring = [
+      'server.memoryIntegrityMonitor?.isEnabled()',
+      'server.sandboxEnforcer?.isEnabled()',
+      "'x-sentinel-memory-integrity'",
+      "'x-sentinel-sandbox-enforcer'",
+    ];
+    for (const marker of agenticPolicyWiring) {
+      expect(agenticSource).toContain(marker);
+    }
+  });
 });

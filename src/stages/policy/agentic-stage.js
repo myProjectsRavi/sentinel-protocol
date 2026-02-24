@@ -5,6 +5,7 @@ async function runAgenticStage({
   req,
   res,
   bodyJson,
+  bodyText,
   effectiveMode,
   provider,
   breakerKey,
@@ -41,6 +42,28 @@ async function runAgenticStage({
   }
 
   const auxiliaryDecisions = [];
+  if (server.memoryIntegrityMonitor?.isEnabled()) {
+    const memoryIntegrityDecision = server.memoryIntegrityMonitor.evaluate({
+      headers,
+      bodyJson,
+      bodyText,
+      correlationId,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'memory_integrity_monitor',
+      decision: memoryIntegrityDecision,
+      warningPrefix: 'memory_integrity',
+      statsDetected: 'memory_integrity_detected',
+      statsBlocked: 'memory_integrity_blocked',
+    });
+    if (memoryIntegrityDecision?.enabled && server.memoryIntegrityMonitor.observability) {
+      res.setHeader('x-sentinel-memory-integrity', memoryIntegrityDecision.detected ? 'detected' : 'clean');
+      if (memoryIntegrityDecision.chain_hash_prefix) {
+        res.setHeader('x-sentinel-memory-chain', String(memoryIntegrityDecision.chain_hash_prefix));
+      }
+    }
+  }
   if (server.memoryPoisoningSentinel?.isEnabled()) {
     const memoryDecision = server.memoryPoisoningSentinel.evaluate({
       sessionId,
@@ -127,6 +150,22 @@ async function runAgenticStage({
       statsDetected: 'tool_use_anomaly_detected',
       statsBlocked: 'tool_use_anomaly_blocked',
     });
+  }
+  if (server.sandboxEnforcer?.isEnabled()) {
+    const sandboxEnforcerDecision = server.sandboxEnforcer.evaluate({
+      bodyJson,
+      effectiveMode,
+    });
+    auxiliaryDecisions.push({
+      name: 'sandbox_enforcer',
+      decision: sandboxEnforcerDecision,
+      warningPrefix: 'sandbox_enforcer',
+      statsDetected: 'sandbox_enforcer_detected',
+      statsBlocked: 'sandbox_enforcer_blocked',
+    });
+    if (sandboxEnforcerDecision?.enabled && server.sandboxEnforcer.observability) {
+      res.setHeader('x-sentinel-sandbox-enforcer', sandboxEnforcerDecision.detected ? 'detected' : 'clean');
+    }
   }
   if (server.a2aCardVerifier?.isEnabled()) {
     const a2aDecision = server.a2aCardVerifier.evaluate({

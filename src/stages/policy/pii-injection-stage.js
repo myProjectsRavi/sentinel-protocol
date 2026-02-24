@@ -78,6 +78,90 @@ function isMcpLikeRequest({ req, parsedPath, bodyJson }) {
   return false;
 }
 
+async function blockPolicyRequest({
+  server,
+  res,
+  provider,
+  breakerKey,
+  correlationId,
+  requestStart,
+  finalizeRequestTelemetry,
+  rawBody,
+  effectiveMode,
+  bodyText,
+  bodyJson,
+  precomputedLocalScan,
+  precomputedInjection,
+  injectionScore,
+  blockedBy,
+  statsBlocked,
+  statusCode = 403,
+  errorCode = 'POLICY_VIOLATION',
+  reason = 'policy_violation',
+  auditDecision = 'blocked_policy',
+  auditReasons = [],
+  auditExtra = {},
+  responseExtra = {},
+}) {
+  server.stats.blocked_total += 1;
+  server.stats.policy_blocked += 1;
+  if (statsBlocked && Object.prototype.hasOwnProperty.call(server.stats, statsBlocked)) {
+    server.stats[statsBlocked] += 1;
+  }
+  res.setHeader('x-sentinel-blocked-by', blockedBy);
+  const diagnostics = {
+    errorSource: 'sentinel',
+    upstreamError: false,
+    provider,
+    retryCount: 0,
+    circuitState: server.circuitBreakers.getProviderState(breakerKey).state,
+    correlationId,
+  };
+  responseHeaderDiagnostics(res, diagnostics);
+  await server.maybeNormalizeBlockedLatency({
+    res,
+    statusCode,
+    requestStart,
+  });
+  server.auditLogger.write({
+    timestamp: new Date().toISOString(),
+    correlation_id: correlationId,
+    config_version: server.config.version,
+    mode: effectiveMode,
+    decision: auditDecision,
+    reasons: auditReasons.length > 0 ? auditReasons : [String(reason || 'policy_violation')],
+    pii_types: [],
+    redactions: 0,
+    duration_ms: Date.now() - requestStart,
+    request_bytes: rawBody.length,
+    response_status: statusCode,
+    response_bytes: 0,
+    provider,
+    ...auditExtra,
+  });
+  server.writeStatus();
+  finalizeRequestTelemetry({
+    decision: 'blocked_policy',
+    status: statusCode,
+    providerName: provider,
+  });
+  res.status(statusCode).json({
+    error: errorCode,
+    reason,
+    ...responseExtra,
+    correlation_id: correlationId,
+  });
+  return {
+    handled: true,
+    bodyText,
+    bodyJson,
+    precomputedLocalScan,
+    precomputedInjection,
+    injectionScore,
+    shadowDecision: null,
+  };
+}
+
 async function runInjectionAndPolicyStage({
   server,
   req,
@@ -127,6 +211,369 @@ async function runInjectionAndPolicyStage({
       server.stats.scan_worker_fallbacks += 1;
       warnings.push('scan_worker_fallback_main_thread');
       server.stats.warnings_total += 1;
+    }
+  }
+
+  const mcpLikeRequest = isMcpLikeRequest({ req, parsedPath, bodyJson });
+
+  if (server.serializationFirewall?.isEnabled()) {
+    let serializationDecision = null;
+    try {
+      serializationDecision = server.serializationFirewall.evaluate({
+        headers: req.headers || {},
+        rawBody,
+        bodyText,
+        bodyJson,
+        effectiveMode,
+      });
+    } catch (error) {
+      serializationDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'serialization_firewall_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('serialization_firewall:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (serializationDecision?.enabled && server.serializationFirewall.observability) {
+      res.setHeader(
+        'x-sentinel-serialization-firewall',
+        serializationDecision.detected ? String(serializationDecision.reason || 'detected') : 'clean'
+      );
+      if (serializationDecision.format) {
+        res.setHeader('x-sentinel-serialization-format', String(serializationDecision.format));
+      }
+    }
+    if (serializationDecision?.detected) {
+      server.stats.serialization_firewall_detected += 1;
+      warnings.push(`serialization_firewall:${serializationDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (serializationDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'serialization_firewall',
+        statsBlocked: 'serialization_firewall_blocked',
+        errorCode: 'SERIALIZATION_FIREWALL_BLOCKED',
+        reason: serializationDecision.reason || 'serialization_violation',
+        auditDecision: 'blocked_serialization_firewall',
+        auditReasons: (serializationDecision.findings || []).map((finding) => String(finding.code || 'serialization_violation')),
+        auditExtra: {
+          serialization_findings: serializationDecision.findings || [],
+          serialization_format: serializationDecision.format,
+          serialization_hash: serializationDecision.body_sha256_prefix,
+        },
+        responseExtra: {
+          findings: (serializationDecision.findings || []).map((finding) => String(finding.code || 'serialization_violation')),
+        },
+      });
+    }
+  }
+
+  if (server.contextIntegrityGuardian?.isEnabled()) {
+    let contextDecision = null;
+    try {
+      contextDecision = server.contextIntegrityGuardian.evaluate({
+        headers: req.headers || {},
+        bodyJson,
+        bodyText,
+        correlationId,
+        effectiveMode,
+      });
+    } catch (error) {
+      contextDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'context_integrity_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('context_integrity:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (contextDecision?.enabled && server.contextIntegrityGuardian.observability) {
+      res.setHeader(
+        'x-sentinel-context-integrity',
+        contextDecision.detected ? String(contextDecision.reason || 'detected') : 'clean'
+      );
+      if (Number.isFinite(Number(contextDecision.token_budget_ratio))) {
+        res.setHeader('x-sentinel-context-token-ratio', String(contextDecision.token_budget_ratio));
+      }
+    }
+    if (contextDecision?.detected) {
+      server.stats.context_integrity_detected += 1;
+      warnings.push(`context_integrity:${contextDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (contextDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'context_integrity_guardian',
+        statsBlocked: 'context_integrity_blocked',
+        errorCode: 'CONTEXT_INTEGRITY_BLOCKED',
+        reason: contextDecision.reason || 'context_integrity_violation',
+        auditDecision: 'blocked_context_integrity',
+        auditReasons: (contextDecision.findings || []).map((finding) => String(finding.code || 'context_integrity_violation')),
+        auditExtra: {
+          context_findings: contextDecision.findings || [],
+          context_session_id: contextDecision.session_id,
+          context_anchor_coverage: contextDecision.anchor_coverage,
+          context_repetition_ratio: contextDecision.repetition_ratio,
+        },
+        responseExtra: {
+          findings: (contextDecision.findings || []).map((finding) => String(finding.code || 'context_integrity_violation')),
+        },
+      });
+    }
+  }
+
+  if (server.toolSchemaValidator?.isEnabled() && mcpLikeRequest) {
+    let toolSchemaDecision = null;
+    try {
+      toolSchemaDecision = server.toolSchemaValidator.evaluate({
+        headers: req.headers || {},
+        bodyJson,
+        provider,
+        path: parsedPath.pathname,
+        effectiveMode,
+      });
+    } catch (error) {
+      toolSchemaDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'tool_schema_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('tool_schema:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (toolSchemaDecision?.enabled && server.toolSchemaValidator.observability) {
+      res.setHeader(
+        'x-sentinel-tool-schema',
+        toolSchemaDecision.detected ? String(toolSchemaDecision.reason || 'detected') : 'clean'
+      );
+      if (toolSchemaDecision.sanitized) {
+        res.setHeader('x-sentinel-tool-schema-sanitized', 'true');
+      }
+    }
+    if (toolSchemaDecision?.detected) {
+      server.stats.tool_schema_detected += 1;
+      warnings.push(`tool_schema:${toolSchemaDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (toolSchemaDecision?.sanitized) {
+      server.stats.tool_schema_sanitized += 1;
+      if (toolSchemaDecision.bodyJson && typeof toolSchemaDecision.bodyJson === 'object') {
+        bodyJson = toolSchemaDecision.bodyJson;
+        bodyText = JSON.stringify(bodyJson);
+      }
+    }
+    if (toolSchemaDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'tool_schema_validator',
+        statsBlocked: 'tool_schema_blocked',
+        errorCode: 'TOOL_SCHEMA_BLOCKED',
+        reason: toolSchemaDecision.reason || 'tool_schema_violation',
+        auditDecision: 'blocked_tool_schema_validator',
+        auditReasons: (toolSchemaDecision.findings || []).map((finding) => String(finding.code || 'tool_schema_violation')),
+        auditExtra: {
+          tool_schema_findings: toolSchemaDecision.findings || [],
+          tool_schema_highest_capability: toolSchemaDecision.highest_capability,
+          tool_schema_tool_count: toolSchemaDecision.tool_count,
+        },
+        responseExtra: {
+          findings: (toolSchemaDecision.findings || []).map((finding) => String(finding.code || 'tool_schema_violation')),
+        },
+      });
+    }
+  }
+
+  if (server.multimodalInjectionShield?.isEnabled()) {
+    let multimodalDecision = null;
+    try {
+      multimodalDecision = server.multimodalInjectionShield.evaluate({
+        headers: req.headers || {},
+        rawBody,
+        bodyText,
+        bodyJson,
+        effectiveMode,
+      });
+    } catch (error) {
+      multimodalDecision = {
+        enabled: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'multimodal_injection_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('multimodal_injection:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (multimodalDecision?.enabled && server.multimodalInjectionShield.observability) {
+      res.setHeader(
+        'x-sentinel-multimodal-shield',
+        multimodalDecision.detected ? String(multimodalDecision.reason || 'detected') : 'clean'
+      );
+      if (multimodalDecision.family) {
+        res.setHeader('x-sentinel-multimodal-family', String(multimodalDecision.family));
+      }
+    }
+    if (multimodalDecision?.detected) {
+      server.stats.multimodal_injection_detected += 1;
+      warnings.push(`multimodal_injection:${multimodalDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (multimodalDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'multimodal_injection_shield',
+        statsBlocked: 'multimodal_injection_blocked',
+        errorCode: 'MULTIMODAL_INJECTION_BLOCKED',
+        reason: multimodalDecision.reason || 'multimodal_injection_detected',
+        auditDecision: 'blocked_multimodal_injection',
+        auditReasons: (multimodalDecision.findings || []).map((finding) => String(finding.code || 'multimodal_injection_detected')),
+        auditExtra: {
+          multimodal_findings: multimodalDecision.findings || [],
+          multimodal_family: multimodalDecision.family,
+          multimodal_magic: multimodalDecision.magic,
+        },
+        responseExtra: {
+          findings: (multimodalDecision.findings || []).map((finding) => String(finding.code || 'multimodal_injection_detected')),
+        },
+      });
+    }
+  }
+
+  if (server.supplyChainValidator?.isEnabled()) {
+    let supplyChainDecision = null;
+    try {
+      supplyChainDecision = server.supplyChainValidator.evaluate({
+        effectiveMode,
+      });
+    } catch (error) {
+      supplyChainDecision = {
+        enabled: true,
+        checked: true,
+        detected: false,
+        shouldBlock: false,
+        reason: 'supply_chain_error',
+        findings: [],
+        error: String(error.message || error),
+      };
+      warnings.push('supply_chain:error');
+      server.stats.warnings_total += 1;
+    }
+
+    if (supplyChainDecision?.enabled && server.supplyChainValidator.observability) {
+      if (supplyChainDecision.checked === false) {
+        res.setHeader('x-sentinel-supply-chain', 'skip');
+      } else {
+        res.setHeader(
+          'x-sentinel-supply-chain',
+          supplyChainDecision.detected ? String(supplyChainDecision.reason || 'detected') : 'clean'
+        );
+      }
+    }
+    if (supplyChainDecision?.checked && supplyChainDecision.detected) {
+      server.stats.supply_chain_detected += 1;
+      warnings.push(`supply_chain:${supplyChainDecision.reason || 'detected'}`);
+      server.stats.warnings_total += 1;
+    }
+    if (supplyChainDecision?.shouldBlock) {
+      return blockPolicyRequest({
+        server,
+        res,
+        provider,
+        breakerKey,
+        correlationId,
+        requestStart,
+        finalizeRequestTelemetry,
+        rawBody,
+        effectiveMode,
+        bodyText,
+        bodyJson,
+        precomputedLocalScan,
+        precomputedInjection,
+        injectionScore: 0,
+        blockedBy: 'supply_chain_validator',
+        statsBlocked: 'supply_chain_blocked',
+        errorCode: 'SUPPLY_CHAIN_BLOCKED',
+        reason: supplyChainDecision.reason || 'supply_chain_violation',
+        auditDecision: 'blocked_supply_chain',
+        auditReasons: (supplyChainDecision.findings || []).map((finding) => String(finding.code || 'supply_chain_violation')),
+        auditExtra: {
+          supply_chain_findings: supplyChainDecision.findings || [],
+          supply_chain_lock_files: supplyChainDecision.lock_files_observed || [],
+          supply_chain_baseline_captured_at: supplyChainDecision.baseline_captured_at || null,
+        },
+        responseExtra: {
+          findings: (supplyChainDecision.findings || []).map((finding) => String(finding.code || 'supply_chain_violation')),
+        },
+      });
     }
   }
 
