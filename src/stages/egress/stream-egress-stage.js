@@ -635,6 +635,22 @@ async function runStreamEgressStage({
             server.stats.output_provenance_signed += 1;
           }
         }
+        if (server.tokenWatermark?.isEnabled?.()) {
+          const watermark = server.tokenWatermark.createEnvelope({
+            outputSha256: proof.payloadSha256,
+            statusCode: upstream.status,
+            provider: routedProvider,
+            correlationId,
+            modelId: String(res.getHeader('x-sentinel-model-id') || ''),
+            configHash: server.getRuntimeConfigHash(),
+          });
+          if (watermark?.envelope) {
+            res.addTrailers({
+              'x-sentinel-token-watermark': watermark.envelope,
+            });
+            server.stats.token_watermark_signed += 1;
+          }
+        }
       }
     }
     server.latencyNormalizer.recordSuccess(Date.now() - requestStart);

@@ -44,6 +44,12 @@ function createSentinel(config, options = {}) {
     crewaiCallback() {
       return frameworkCallbacks.crewaiCallback();
     },
+    autogenCallback() {
+      return frameworkCallbacks.autogenCallback();
+    },
+    langgraphCallback() {
+      return frameworkCallbacks.langgraphCallback();
+    },
     start() {
       server.start();
       return server;

@@ -170,10 +170,24 @@ export interface EmbeddedCrewAICallback {
   onTaskError(error: unknown, runId?: string): Promise<void>;
 }
 
+export interface EmbeddedAutoGenCallback {
+  onTurnStart(turn?: Record<string, unknown>, runId?: string): Promise<void>;
+  onTurnComplete(result?: Record<string, unknown>, runId?: string): Promise<void>;
+  onTurnError(error: unknown, runId?: string): Promise<void>;
+}
+
+export interface EmbeddedLangGraphCallback {
+  onNodeStart(node?: Record<string, unknown>, runId?: string): Promise<void>;
+  onNodeComplete(result?: Record<string, unknown>, runId?: string): Promise<void>;
+  onNodeError(error: unknown, node?: Record<string, unknown>, runId?: string): Promise<void>;
+}
+
 export interface EmbeddedFrameworkCallbacks {
   langchainCallback(): EmbeddedLangChainCallback;
   llamaIndexCallback(): EmbeddedLlamaIndexCallback;
   crewaiCallback(): EmbeddedCrewAICallback;
+  autogenCallback(): EmbeddedAutoGenCallback;
+  langgraphCallback(): EmbeddedLangGraphCallback;
 }
 
 export interface EmbeddedSentinel {
@@ -186,6 +200,8 @@ export interface EmbeddedSentinel {
   langchainCallback(): EmbeddedLangChainCallback;
   llamaIndexCallback(): EmbeddedLlamaIndexCallback;
   crewaiCallback(): EmbeddedCrewAICallback;
+  autogenCallback(): EmbeddedAutoGenCallback;
+  langgraphCallback(): EmbeddedLangGraphCallback;
   start(): HttpServer;
   stop(): Promise<void>;
   scan(payload: unknown, requestHeaders?: Record<string, string>): Promise<EmbeddedScanResult>;

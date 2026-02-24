@@ -218,3 +218,73 @@ class CrewAISentinelHook(_BaseAdapter):
                 "error": _safe_str(error),
             }
         )
+
+
+class AutoGenSentinelHook(_BaseAdapter):
+    """AutoGen-style lifecycle hook adapter."""
+
+    def on_turn_start(self, message: Any, run_id: str = "") -> None:
+        scan = self._scan_safe(_safe_str(message), correlation_id=run_id)
+        self._emit(
+            {
+                "framework": "autogen",
+                "event": "turn.start",
+                "run_id": _safe_str(run_id),
+                "scan": scan,
+            }
+        )
+
+    def on_turn_complete(self, result: Any, run_id: str = "") -> None:
+        self._emit(
+            {
+                "framework": "autogen",
+                "event": "turn.complete",
+                "run_id": _safe_str(run_id),
+                "result_preview": _safe_str(result)[:512],
+            }
+        )
+
+    def on_turn_error(self, error: Exception, run_id: str = "") -> None:
+        self._emit(
+            {
+                "framework": "autogen",
+                "event": "turn.error",
+                "run_id": _safe_str(run_id),
+                "error": _safe_str(error),
+            }
+        )
+
+
+class LangGraphSentinelHook(_BaseAdapter):
+    """LangGraph-style lifecycle hook adapter."""
+
+    def on_node_start(self, node: Any, run_id: str = "") -> None:
+        scan = self._scan_safe(_safe_str(node), correlation_id=run_id)
+        self._emit(
+            {
+                "framework": "langgraph",
+                "event": "node.start",
+                "run_id": _safe_str(run_id),
+                "scan": scan,
+            }
+        )
+
+    def on_node_complete(self, result: Any, run_id: str = "") -> None:
+        self._emit(
+            {
+                "framework": "langgraph",
+                "event": "node.complete",
+                "run_id": _safe_str(run_id),
+                "result_preview": _safe_str(result)[:512],
+            }
+        )
+
+    def on_node_error(self, error: Exception, run_id: str = "") -> None:
+        self._emit(
+            {
+                "framework": "langgraph",
+                "event": "node.error",
+                "run_id": _safe_str(run_id),
+                "error": _safe_str(error),
+            }
+        )

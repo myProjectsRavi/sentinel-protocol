@@ -201,6 +201,11 @@ class PrometheusExporter {
       'Total requests blocked by context compression guard',
       counters.context_compression_blocked
     );
+    appendCounter(
+      'sentinel_token_watermark_signed_total',
+      'Total responses signed with token-level watermark envelope',
+      counters.token_watermark_signed
+    );
 
     const agentCounters =
       agentObservability.counters &&

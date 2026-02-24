@@ -109,6 +109,59 @@ function createFrameworkCallbacks(server, options = {}) {
         },
       };
     },
+    autogenCallback() {
+      return {
+        async onTurnStart(turn = {}, runId) {
+          emit('agent.start', {
+            framework: 'autogen',
+            run_id: runId || turn.runId || null,
+            agent: String(turn.agent || turn.sender || '').slice(0, 256),
+            message_count: Array.isArray(turn.messages) ? turn.messages.length : 0,
+          });
+        },
+        async onTurnComplete(result = {}, runId) {
+          emit('agent.complete', {
+            framework: 'autogen',
+            run_id: runId || result.runId || null,
+            result_preview: String(result.output || result.result || result.decision || '').slice(0, 1024),
+          });
+        },
+        async onTurnError(error, runId) {
+          emit('agent.error', {
+            framework: 'autogen',
+            run_id: runId || null,
+            error: String(error?.message || error || 'unknown_error'),
+          });
+        },
+      };
+    },
+    langgraphCallback() {
+      return {
+        async onNodeStart(node = {}, runId) {
+          emit('agent.start', {
+            framework: 'langgraph',
+            run_id: runId || node.runId || null,
+            node_id: String(node.id || node.node || node.name || '').slice(0, 256),
+          });
+        },
+        async onNodeComplete(result = {}, runId) {
+          emit('agent.complete', {
+            framework: 'langgraph',
+            run_id: runId || result.runId || null,
+            node_id: String(result.id || result.node || result.name || '').slice(0, 256),
+            result_preview: String(result.output || result.result || '').slice(0, 1024),
+          });
+        },
+        async onNodeError(error, node = {}, runId) {
+          emit('agent.error', {
+            framework: 'langgraph',
+            run_id: runId || node.runId || null,
+            node_id: String(node.id || node.node || node.name || '').slice(0, 256),
+            error: String(error?.message || error || 'unknown_error'),
+          });
+        },
+      };
+    },
   };
 }
 

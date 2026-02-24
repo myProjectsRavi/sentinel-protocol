@@ -17,6 +17,7 @@
   - `GET /_sentinel/threat-intel`
   - `GET /_sentinel/zk-config`
   - `POST /_sentinel/adversarial-eval/run`
+  - `POST /_sentinel/watermark/verify`
   - `GET /_sentinel/forensic/snapshots`
   - `GET /_sentinel/forensic/snapshots/{snapshotId}`
   - `POST /_sentinel/forensic/replay`
@@ -25,6 +26,10 @@
   - `runtime.mcp_certificate_pinning` (cert fingerprint pinning for MCP-labeled traffic)
   - rich dashboard API surfaces for anomaly + forensic snapshot panels
 - New engine modules and unit coverage for the runtime controls above.
+- Token-level watermark signing engine:
+  - `runtime.token_watermark`
+  - buffered + streaming envelope emission via `x-sentinel-token-watermark`
+  - local verify path (`/_sentinel/watermark/verify`)
 - Config profile system (`minimal|standard|paranoid`) with deterministic overlays.
 - One-command bootstrap CLI flow: `sentinel bootstrap --profile <name>`.
 - Adoption sprint CLI upgrades:
@@ -38,6 +43,8 @@
   - `POST /_sentinel/playground/analyze` (deterministic local multi-engine analysis)
 - VS Code extension scaffold for local prompt scanning: `extensions/vscode-sentinel/`
 - Python adapter package for LangChain/LlamaIndex/CrewAI callbacks: `python/sentinel_protocol_adapters/`
+- Python adapter expansion: AutoGen + LangGraph callbacks.
+- Embed callback expansion: AutoGen + LangGraph callbacks.
 - Lazy optional-engine loading with runtime visibility counters and status output.
 - Cost optimizer memory-budget extensions:
   - hard RSS cap (`memory_hard_cap_bytes`)
@@ -59,6 +66,9 @@
 - CI bootstrap gate hardening:
   - `ci:bootstrap:npx` now uses robust readiness wait logic with clear early-exit diagnostics
   - config compatibility restored for `runtime.rate_limiter.enabled` in strict schema validation
+- GitHub Action security-scan hardening:
+  - stronger tool-forgery fallback detector for inline dangerous command patterns
+  - unit coverage for inline tool-forgery prompt detection path
 
 ### Docs
 - Updated OpenAPI contract with new control-plane endpoints.

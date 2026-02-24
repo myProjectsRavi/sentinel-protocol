@@ -5,6 +5,8 @@ Zero-dependency adapters for local Sentinel integration with:
 - LangChain
 - LlamaIndex
 - CrewAI
+- AutoGen
+- LangGraph
 
 ## Install (local source)
 

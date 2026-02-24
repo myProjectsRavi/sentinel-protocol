@@ -611,6 +611,14 @@ runtime:
     secret: ""
     expose_verify_endpoint: true
     max_envelope_bytes: 2097152
+  token_watermark:
+    enabled: false
+    key_id: sentinel-token-watermark
+    secret: ""
+    expose_verify_endpoint: true
+    max_envelope_bytes: 2097152
+    max_token_chars: 131072
+    max_tokens: 4096
   compute_attestation:
     enabled: false
     key_id: sentinel-attestation

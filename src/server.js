@@ -73,6 +73,7 @@ const { StegoExfilDetector } = require('./egress/stego-exfil-detector');
 const { ReasoningTraceMonitor } = require('./egress/reasoning-trace-monitor');
 const { HallucinationTripwire } = require('./egress/hallucination-tripwire');
 const { OutputProvenanceSigner, sha256Text } = require('./egress/output-provenance-signer');
+const { TokenWatermark } = require('./egress/token-watermark');
 const { OutputSchemaValidator } = require('./egress/output-schema-validator');
 const { SemanticDriftCanary } = require('./security/semantic-drift-canary');
 const { BudgetAutopilot } = require('./optimizer/budget-autopilot');
@@ -435,6 +436,7 @@ class SentinelServer {
       semantic_drift_detected: 0,
       semantic_drift_blocked: 0,
       output_provenance_signed: 0,
+      token_watermark_signed: 0,
       compute_attestation_signed: 0,
       output_schema_validator_detected: 0,
       output_schema_validator_blocked: 0,
@@ -811,6 +813,9 @@ class SentinelServer {
         disabledExtras: { exposeVerifyEndpoint: false },
       }
     );
+    this.tokenWatermark = optionalEngine('tokenWatermark', 'token_watermark', (engineConfig) => new TokenWatermark(engineConfig), {
+      disabledExtras: { exposeVerifyEndpoint: false },
+    });
     this.computeAttestation = optionalEngine('computeAttestation', 'compute_attestation', (engineConfig) => new ComputeAttestation(engineConfig), {
       disabledExtras: { exposeVerifyEndpoint: false },
     });
@@ -1150,6 +1155,7 @@ class SentinelServer {
       semantic_drift_canary_enabled: this.semanticDriftCanary.isEnabled(),
       semantic_drift_canary_mode: this.semanticDriftCanary.mode,
       output_provenance_enabled: this.outputProvenanceSigner.isEnabled(),
+      token_watermark_enabled: this.tokenWatermark.isEnabled(),
       compute_attestation_enabled: this.computeAttestation.isEnabled(),
       output_schema_validator_enabled: this.outputSchemaValidator.isEnabled(),
       budget_autopilot_enabled: this.budgetAutopilot.isEnabled(),
@@ -1425,6 +1431,21 @@ class SentinelServer {
       if (envelope?.envelope) {
         res.setHeader('x-sentinel-provenance', envelope.envelope);
         this.stats.output_provenance_signed += 1;
+      }
+    }
+
+    if (this.tokenWatermark?.isEnabled?.() && !res.getHeader('x-sentinel-token-watermark')) {
+      const watermark = this.tokenWatermark.createEnvelope({
+        outputBuffer: responseBuffer,
+        statusCode,
+        provider,
+        correlationId,
+        modelId: String(res.getHeader('x-sentinel-model-id') || ''),
+        configHash: this.getRuntimeConfigHash(),
+      });
+      if (watermark?.envelope) {
+        res.setHeader('x-sentinel-token-watermark', watermark.envelope);
+        this.stats.token_watermark_signed += 1;
       }
     }
 
@@ -1991,6 +2012,28 @@ class SentinelServer {
       const verification = this.outputProvenanceSigner.verifyEnvelope({
         envelope: payload.envelope || '',
         expectedOutputSha256: payload.output_sha256 || '',
+      });
+      res.status(verification.valid ? 200 : 400).json(verification);
+    });
+
+    this.app.post('/_sentinel/watermark/verify', (req, res) => {
+      if (!this.tokenWatermark?.isEnabled?.() || this.tokenWatermark.exposeVerifyEndpoint !== true) {
+        res.status(404).json({
+          error: 'TOKEN_WATERMARK_DISABLED',
+        });
+        return;
+      }
+
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const verification = this.tokenWatermark.verifyEnvelope({
+        envelope: payload.envelope || '',
+        expectedOutputSha256: payload.output_sha256 || '',
+        expectedTokenFingerprint: payload.token_fingerprint_sha256 || '',
       });
       res.status(verification.valid ? 200 : 400).json(verification);
     });

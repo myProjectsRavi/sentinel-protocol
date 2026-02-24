@@ -73,6 +73,35 @@ paths:
           description: Envelope is invalid.
         '404':
           description: Output provenance disabled.
+  /_sentinel/watermark/verify:
+    post:
+      summary: Verify token-level watermark envelope
+      operationId: verifyTokenWatermark
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                envelope:
+                  type: string
+                output_sha256:
+                  type: string
+                token_fingerprint_sha256:
+                  type: string
+      responses:
+        '200':
+          description: Watermark envelope is valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Watermark envelope is invalid.
+        '404':
+          description: Token watermark disabled.
   /_sentinel/capabilities:
     get:
       summary: Runtime capability snapshot

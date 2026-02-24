@@ -100,6 +100,29 @@ Adapters:
 - `LangChainSentinelCallbackHandler`
 - `LlamaIndexSentinelCallback`
 - `CrewAISentinelHook`
+- `AutoGenSentinelHook`
+- `LangGraphSentinelHook`
+
+## JS Embed Framework Callbacks
+
+`createSentinel(...).frameworkCallbacks()` now includes:
+
+- `langchainCallback()`
+- `llamaIndexCallback()`
+- `crewaiCallback()`
+- `autogenCallback()`
+- `langgraphCallback()`
+
+## Token Watermark Verify API
+
+When `runtime.token_watermark.enabled=true`, Sentinel signs buffered and streamed responses
+with `x-sentinel-token-watermark`.
+
+Verify envelope:
+
+```text
+POST /_sentinel/watermark/verify
+```
 
 ## MCP (Claude Desktop / Cursor)
 

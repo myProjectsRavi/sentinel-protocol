@@ -121,6 +121,8 @@ describe('embed framework callbacks', () => {
     expect(typeof callbacks.langchainCallback).toBe('function');
     expect(typeof callbacks.llamaIndexCallback).toBe('function');
     expect(typeof callbacks.crewaiCallback).toBe('function');
+    expect(typeof callbacks.autogenCallback).toBe('function');
+    expect(typeof callbacks.langgraphCallback).toBe('function');
   });
 
   test('crewai callback emits lifecycle events', async () => {
@@ -139,5 +141,27 @@ describe('embed framework callbacks', () => {
     expect(events[0].payload.framework).toBe('crewai');
     expect(events[0].event).toBe('agent.start');
     expect(events[2].event).toBe('agent.error');
+  });
+
+  test('autogen and langgraph callbacks emit deterministic lifecycle events', async () => {
+    const events = [];
+    const embedded = createSentinel(baseConfig(), {
+      framework: {
+        onEvent: (event) => events.push(event),
+      },
+    });
+    const autogen = embedded.autogenCallback();
+    const langgraph = embedded.langgraphCallback();
+
+    await autogen.onTurnStart({ agent: 'planner', messages: ['hello'] }, 'auto-1');
+    await autogen.onTurnComplete({ output: 'done' }, 'auto-1');
+    await langgraph.onNodeStart({ id: 'node-a' }, 'graph-1');
+    await langgraph.onNodeError(new Error('node-failure'), { id: 'node-a' }, 'graph-1');
+
+    expect(events.length).toBe(4);
+    expect(events[0].payload.framework).toBe('autogen');
+    expect(events[1].event).toBe('agent.complete');
+    expect(events[2].payload.framework).toBe('langgraph');
+    expect(events[3].event).toBe('agent.error');
   });
 });

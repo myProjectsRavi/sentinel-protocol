@@ -1,10 +1,12 @@
-"""Sentinel Protocol Python adapters for LangChain, LlamaIndex, and CrewAI.
+"""Sentinel Protocol Python adapters for LangChain, LlamaIndex, CrewAI, AutoGen, and LangGraph.
 
 Zero external dependencies. Uses urllib from Python stdlib.
 """
 
 from .callbacks import (
+    AutoGenSentinelHook,
     CrewAISentinelHook,
+    LangGraphSentinelHook,
     LangChainSentinelCallbackHandler,
     LlamaIndexSentinelCallback,
     SentinelScanError,
@@ -17,4 +19,6 @@ __all__ = [
     "LangChainSentinelCallbackHandler",
     "LlamaIndexSentinelCallback",
     "CrewAISentinelHook",
+    "AutoGenSentinelHook",
+    "LangGraphSentinelHook",
 ]

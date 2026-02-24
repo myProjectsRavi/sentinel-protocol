@@ -60,6 +60,7 @@ const RUNTIME_KEYS = new Set([
   'hallucination_tripwire',
   'semantic_drift_canary',
   'output_provenance',
+  'token_watermark',
   'compute_attestation',
   'capability_introspection',
   'policy_gradient_analyzer',
@@ -741,6 +742,15 @@ const OUTPUT_PROVENANCE_KEYS = new Set([
   'secret',
   'expose_verify_endpoint',
   'max_envelope_bytes',
+]);
+const TOKEN_WATERMARK_KEYS = new Set([
+  'enabled',
+  'key_id',
+  'secret',
+  'expose_verify_endpoint',
+  'max_envelope_bytes',
+  'max_token_chars',
+  'max_tokens',
 ]);
 const COMPUTE_ATTESTATION_KEYS = new Set([
   'enabled',
@@ -2351,6 +2361,16 @@ function applyDefaults(config) {
   outputProvenance.secret = String(outputProvenance.secret || process.env.SENTINEL_OUTPUT_PROVENANCE_SECRET || '');
   outputProvenance.expose_verify_endpoint = outputProvenance.expose_verify_endpoint !== false;
   outputProvenance.max_envelope_bytes = Number(outputProvenance.max_envelope_bytes ?? 2097152);
+
+  normalized.runtime.token_watermark = normalized.runtime.token_watermark || {};
+  const tokenWatermark = normalized.runtime.token_watermark;
+  tokenWatermark.enabled = tokenWatermark.enabled === true;
+  tokenWatermark.key_id = String(tokenWatermark.key_id || `sentinel-token-watermark-${process.pid}`);
+  tokenWatermark.secret = String(tokenWatermark.secret || process.env.SENTINEL_TOKEN_WATERMARK_SECRET || '');
+  tokenWatermark.expose_verify_endpoint = tokenWatermark.expose_verify_endpoint !== false;
+  tokenWatermark.max_envelope_bytes = Number(tokenWatermark.max_envelope_bytes ?? 2097152);
+  tokenWatermark.max_token_chars = Number(tokenWatermark.max_token_chars ?? 131072);
+  tokenWatermark.max_tokens = Number(tokenWatermark.max_tokens ?? 4096);
 
   normalized.runtime.compute_attestation = normalized.runtime.compute_attestation || {};
   const computeAttestation = normalized.runtime.compute_attestation;
@@ -6024,6 +6044,46 @@ function validateConfigShape(config) {
     assertType(
       Number.isInteger(outputProvenance.max_envelope_bytes) && outputProvenance.max_envelope_bytes > 0,
       '`runtime.output_provenance.max_envelope_bytes` must be integer > 0',
+      details
+    );
+  }
+
+  const tokenWatermark = runtime.token_watermark || {};
+  if (runtime.token_watermark !== undefined) {
+    assertNoUnknownKeys(tokenWatermark, TOKEN_WATERMARK_KEYS, 'runtime.token_watermark', details);
+    assertType(
+      typeof tokenWatermark.enabled === 'boolean',
+      '`runtime.token_watermark.enabled` must be boolean',
+      details
+    );
+    assertType(
+      typeof tokenWatermark.key_id === 'string' && tokenWatermark.key_id.length > 0,
+      '`runtime.token_watermark.key_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof tokenWatermark.secret === 'string',
+      '`runtime.token_watermark.secret` must be string',
+      details
+    );
+    assertType(
+      typeof tokenWatermark.expose_verify_endpoint === 'boolean',
+      '`runtime.token_watermark.expose_verify_endpoint` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(tokenWatermark.max_envelope_bytes) && tokenWatermark.max_envelope_bytes > 0,
+      '`runtime.token_watermark.max_envelope_bytes` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(tokenWatermark.max_token_chars) && tokenWatermark.max_token_chars > 0,
+      '`runtime.token_watermark.max_token_chars` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(tokenWatermark.max_tokens) && tokenWatermark.max_tokens > 0,
+      '`runtime.token_watermark.max_tokens` must be integer > 0',
       details
     );
   }

@@ -68,6 +68,12 @@ describe('v3 control-plane endpoints integration', () => {
             key_id: 'output-key-v1',
             expose_verify_endpoint: true,
           },
+          token_watermark: {
+            enabled: true,
+            secret: 'unit-watermark-secret',
+            key_id: 'watermark-key-v1',
+            expose_verify_endpoint: true,
+          },
           compute_attestation: {
             enabled: true,
             secret: 'unit-attestation-secret',
@@ -131,6 +137,31 @@ describe('v3 control-plane endpoints integration', () => {
       ),
     };
     const response = await invokeRoute(sentinel, 'post', '/_sentinel/provenance/verify', req);
+    expect(response.statusCode).toBe(200);
+    expect(response.payload.valid).toBe(true);
+    expect(response.payload.reason).toBe('ok');
+  });
+
+  test('POST /_sentinel/watermark/verify validates signed watermark envelope', async () => {
+    const signed = sentinel.tokenWatermark.createEnvelope({
+      outputBuffer: Buffer.from('deterministic token watermark payload', 'utf8'),
+      statusCode: 200,
+      provider: 'openai',
+      modelId: 'gpt-4o-mini',
+      correlationId: 'corr-watermark-test',
+      configHash: 'cfg-watermark',
+    });
+    const req = {
+      body: Buffer.from(
+        JSON.stringify({
+          envelope: signed.envelope,
+          output_sha256: signed.payload.output_sha256,
+          token_fingerprint_sha256: signed.payload.token_fingerprint_sha256,
+        }),
+        'utf8'
+      ),
+    };
+    const response = await invokeRoute(sentinel, 'post', '/_sentinel/watermark/verify', req);
     expect(response.statusCode).toBe(200);
     expect(response.payload.valid).toBe(true);
     expect(response.payload.reason).toBe('ok');

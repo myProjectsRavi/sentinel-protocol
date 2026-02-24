@@ -447,6 +447,7 @@ npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeo
 
 - ed25519 policy bundle signing and verification
 - provenance signing support for responses/stream trailers
+- token-level watermark envelopes (`x-sentinel-token-watermark`) with local verify API
 
 ### Auditability and Forensics
 
@@ -474,6 +475,7 @@ Sentinel supports websocket interception (Phase A) and streaming protections:
 - `POST /_sentinel/policy/gradient`
 - `GET /_sentinel/provenance/public-key`
 - `POST /_sentinel/provenance/verify`
+- `POST /_sentinel/watermark/verify`
 - `GET /_sentinel/swarm/public-key`
 - `GET /_sentinel/anomalies`
 - `GET /_sentinel/threat-intel`
@@ -495,6 +497,7 @@ OpenAPI contract: `docs/openapi.yaml`
 - Python framework adapters (zero-dependency):
   - `python/sentinel_protocol_adapters/callbacks.py`
   - `examples/python-adapters-integration.py`
+  - frameworks: LangChain, LlamaIndex, CrewAI, AutoGen, LangGraph
 
 ## Enterprise Surfaces (Phase 2)
 
@@ -504,6 +507,19 @@ OpenAPI contract: `docs/openapi.yaml`
   - `/_sentinel/forensic/snapshots`
   - `/_sentinel/forensic/replay`
 - Rich dashboard panels for anomalies + forensics timelines (read-only, localhost-first).
+
+## Phase 3 Completion (Current)
+
+- Interactive playground and local analysis endpoint:
+  - `GET /_sentinel/playground`
+  - `POST /_sentinel/playground/analyze`
+- Orchestrator adapters:
+  - JS embed callbacks: LangChain, LlamaIndex, CrewAI, AutoGen, LangGraph
+  - Python adapters: LangChain, LlamaIndex, CrewAI, AutoGen, LangGraph
+- EU AI Act evidence packet path:
+  - `sentinel compliance evidence-vault --framework eu-ai-act --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-evidence.json`
+- Token-level watermark verification endpoint:
+  - `POST /_sentinel/watermark/verify`
 
 ## CLI Reference (Most Used)
 
@@ -525,6 +541,7 @@ sentinel stop
 
 # monitoring
 sentinel monitor
+sentinel compliance evidence-vault --framework eu-ai-act --audit-path ~/.sentinel/audit.jsonl --out ./eu-ai-act-evidence.json
 
 # MCP mode
 sentinel mcp
@@ -656,6 +673,8 @@ Example integration guides:
 - Anthropic SDK
 - LangChain
 - CrewAI
+- AutoGen (adapter)
+- LangGraph (adapter)
 - Vercel AI SDK
 
 See: `docs/INTEGRATIONS.md`

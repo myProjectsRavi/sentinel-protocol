@@ -133,7 +133,9 @@ function evaluateToolForgerySignals(input) {
     commandSignal = DANGEROUS_COMMAND_RE.test(text);
   }
 
-  const detected = hasToolCallsSyntax && nameSignal && (argumentKeySignal || commandSignal);
+  const structuredToolCall = hasToolCallsSyntax && nameSignal && (argumentKeySignal || commandSignal);
+  const inlineDangerousCommand = nameSignal && commandSignal;
+  const detected = structuredToolCall || inlineDangerousCommand;
   const score = detected ? (commandSignal ? 0.95 : 0.88) : 0;
   return {
     detected,

@@ -3,7 +3,7 @@
 ## Scope
 - Branch: `main`
 - Package: `sentinel-protocol@1.0.0`
-- Phase: V4 complete set (15/15 engines implemented and wired)
+- Phase: V4 complete set + Phase 3 adoption surfaces
 - Evidence date: 2026-02-24
 
 ## Current CI Proof (Authoritative)
@@ -39,6 +39,12 @@
   - `GET /_sentinel/threat-intel`
   - `GET /_sentinel/zk-config`
   - `POST /_sentinel/adversarial-eval/run`
+  - `POST /_sentinel/watermark/verify`
+- Phase 3 adoption surfaces:
+  - `sentinel watch` monitor-first passive mode
+  - interactive playground (`/_sentinel/playground`)
+  - framework adapters (LangChain/LlamaIndex/CrewAI/AutoGen/LangGraph)
+  - token watermark envelopes (`x-sentinel-token-watermark`)
 - Runtime wiring is in live stages (policy, agentic, audit), not constructor-only.
 - Strict schema/default contract with unknown-key rejection for all new runtime blocks.
 
