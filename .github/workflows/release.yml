@@ -35,7 +35,7 @@ jobs:
             sbom.spdx.json
             dist/*.vsix
       - name: Publish VS Code extension (optional)
-        if: ${{ secrets.VSCE_PAT != '' }}
+        if: env.VSCE_PAT != ''
         run: |
           npx --yes @vscode/vsce@2.29.0 publish --packagePath "$(ls dist/*.vsix | head -n 1)" --pat "${VSCE_PAT}"
         env:
