@@ -7,6 +7,7 @@ This project ships reproducible performance and regression gates for Sentinel pr
 ```bash
 npm run benchmark -- --duration 3 --connections 16 --pipelining 1
 npm run benchmark:gate
+npm run benchmark:datasets
 ```
 
 Reliability stress/chaos path:
@@ -21,6 +22,8 @@ npm run reliability -- --websocket-requests 8
 - Competitor comparison: `docs/benchmarks/COMPETITOR_COMPARISON.md`
 - Sentinel benchmark snapshot: `docs/benchmarks/results/sentinel-v4.json`
 - OWASP coverage matrix data: `docs/benchmarks/results/competitor-coverage.json`
+- Standard adversarial datasets snapshot: `docs/benchmarks/results/standard-datasets.json`
+- Standard dataset fixtures: `docs/benchmarks/datasets/*.json`
 
 ## Current Sentinel Baseline (published)
 
@@ -30,6 +33,16 @@ npm run reliability -- --websocket-requests 8
 - throughput delta: `-57 req/sec`
 
 Source: `docs/benchmarks/results/sentinel-v4.json`
+
+## Standard Adversarial Dataset Baseline
+
+- datasets: `advbench-mini`, `trojai-mini`
+- total cases: `30`
+- expected-detection cases: `24`
+- overall detection rate: `100%` (threshold `85%`)
+- false positives: `0`
+
+Source: `docs/benchmarks/results/standard-datasets.json`
 
 ## Regression Policy
 

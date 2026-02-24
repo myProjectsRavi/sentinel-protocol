@@ -15,6 +15,9 @@
 - New control-plane endpoints:
   - `GET /_sentinel/anomalies`
   - `GET /_sentinel/threat-intel`
+  - `GET /_sentinel/threat-intel/share`
+  - `POST /_sentinel/threat-intel/ingest`
+  - `POST /_sentinel/threat-intel/sync`
   - `GET /_sentinel/zk-config`
   - `POST /_sentinel/adversarial-eval/run`
   - `POST /_sentinel/watermark/verify`
@@ -50,6 +53,22 @@
 - Added single-file Python adapter source: `python/sentinel_protocol_adapters.py`.
 - Embed callback expansion: AutoGen + LangGraph callbacks.
 - Lazy optional-engine loading with runtime visibility counters and status output.
+- Deterministic hero media generator and refreshed README hero asset:
+  - `scripts/generate-hero-gif.js`
+  - `docs/assets/sentinel-hero.gif`
+- Standard adversarial benchmark harness and fixtures:
+  - `scripts/benchmark-standard-datasets.js`
+  - `docs/benchmarks/datasets/advbench-mini.json`
+  - `docs/benchmarks/datasets/trojai-mini.json`
+  - `docs/benchmarks/results/standard-datasets.json`
+- OWASP reference implementation submission pack tooling:
+  - `scripts/prepare-owasp-submission-pack.js`
+  - `docs/owasp/REFERENCE_IMPLEMENTATION_SUBMISSION.md`
+  - `docs/owasp/submission-manifest.json`
+- Formal verification research pack:
+  - `docs/formal/specs/serialization-firewall.tla`
+  - `docs/formal/specs/injection-guard.tla`
+  - `docs/formal/specs/threat-intel-mesh.als`
 - Cost optimizer memory-budget extensions:
   - hard RSS cap (`memory_hard_cap_bytes`)
   - deterministic engine shedding (`shed_on_memory_pressure`, `shed_engine_order`)
@@ -65,6 +84,7 @@
 
 ### Changed
 - Integrated new engines into live stage flow (policy + agentic + audit) with deterministic block/warn behavior.
+- Threat-intel mesh upgraded from local-only signatures to signed peer snapshot federation (`share` / `ingest` / `sync`) with bounded sync controls.
 - Extended capability introspection and MITRE ATLAS mapping for newly added engines.
 - Extended config defaults + strict schema validation for all new runtime keys (unknown-key rejection preserved).
 - `startServer` now supports runtime profile overlay selection before mode/vcr overrides.
@@ -98,6 +118,8 @@
   - `docs/benchmarks/results/competitor-coverage.json`
 - Added local GitHub Action package and tests:
   - `.github/actions/security-scan/*`
+- Added hero GIF evidence doc: `docs/evidence/HERO_GIF_VALIDATION.md`
+- Added benchmark dataset fixture docs: `docs/benchmarks/datasets/README.md`
 
 ## 1.0.0 - 2026-02-19
 

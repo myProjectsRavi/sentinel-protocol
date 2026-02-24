@@ -73,6 +73,8 @@ Deployment model is simple:
 - Current V4 evidence doc: `docs/SECURITY_RELIABILITY_EVIDENCE_V4_PHASEA.md`
 - 30/60/90 execution board: `docs/releases/EXECUTION_BOARD_30_60_90.md`
 - OWASP LLM Top 10 mapping: `docs/OWASP_LLM_TOP10_SENTINEL_MAP.md`
+- OWASP reference submission pack: `docs/owasp/REFERENCE_IMPLEMENTATION_SUBMISSION.md`
+- OWASP artifact manifest: `docs/owasp/submission-manifest.json`
 - Latest CI run (all key jobs green): `https://github.com/myProjectsRavi/sentinel-protocol/actions/runs/22345903691`
 - Latest SBOM artifact digest: `sha256:01d86d2d8f6eeff77942779213e829de9cc8442a5521a22706d5aa79e10d1a61`
 - Init wizard validation matrix: `docs/evidence/WIZARD_VALIDATION.md`
@@ -80,8 +82,11 @@ Deployment model is simple:
 - GitHub Action demo (`security-scan@v1`): `docs/evidence/GITHUB_ACTION_DEMO.md`
 - VS Code extension packaging proof: `docs/evidence/VSCODE_EXTENSION_VALIDATION.md`
 - Try-local playground evidence: `docs/evidence/TRY_SENTINEL_LOCAL.md`
+- Hero GIF validation: `docs/evidence/HERO_GIF_VALIDATION.md`
 - Benchmark methodology: `docs/benchmarks/METHODOLOGY.md`
 - Competitor comparison page: `docs/benchmarks/COMPETITOR_COMPARISON.md`
+- Standard adversarial benchmark snapshot: `docs/benchmarks/results/standard-datasets.json`
+- Formal verification pack: `docs/formal/README.md`
 
 ## Architecture at a Glance
 
@@ -194,6 +199,33 @@ npx --yes --package sentinel-protocol sentinel init --force --profile minimal
 npx --yes --package sentinel-protocol sentinel start --profile minimal
 npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
 ```
+
+## Federated Threat-Intel Mesh (Distributed Phase A)
+
+Sentinel now supports signed peer snapshot sharing for local-first federated threat intelligence.
+
+Minimal config:
+
+```yaml
+runtime:
+  threat_intel_mesh:
+    enabled: true
+    mode: monitor
+    node_id: sentinel-dev-a
+    shared_secret: ""
+    peers: ["http://127.0.0.1:9787"]
+    sync_enabled: true
+    sync_interval_ms: 90000
+    sync_timeout_ms: 2000
+    max_peer_signatures: 1000
+    allow_unsigned_import: false
+```
+
+Control-plane paths:
+
+- `GET /_sentinel/threat-intel/share`
+- `POST /_sentinel/threat-intel/ingest`
+- `POST /_sentinel/threat-intel/sync`
 
 ## PR Security Gate (GitHub Action)
 
@@ -503,6 +535,9 @@ Sentinel supports websocket interception (Phase A) and streaming protections:
 - `GET /_sentinel/swarm/public-key`
 - `GET /_sentinel/anomalies`
 - `GET /_sentinel/threat-intel`
+- `GET /_sentinel/threat-intel/share`
+- `POST /_sentinel/threat-intel/ingest`
+- `POST /_sentinel/threat-intel/sync`
 - `GET /_sentinel/zk-config`
 - `POST /_sentinel/adversarial-eval/run`
 - `GET /_sentinel/forensic/snapshots`
@@ -656,6 +691,7 @@ Sentinel ships with hard gates in CI:
 - unit + integration + reliability suites
 - coverage gate (`npm run test:coverage:gate`)
 - benchmark regression gate (`npm run benchmark:gate`)
+- standard adversarial dataset benchmark (`npm run benchmark:datasets`)
 - npx bootstrap path validation (`init` + `start`)
 - SBOM generation (CycloneDX + SPDX)
 - Docker quickstart smoke test

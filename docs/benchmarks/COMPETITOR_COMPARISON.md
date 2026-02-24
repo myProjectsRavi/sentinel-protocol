@@ -6,6 +6,8 @@ Last verified: 2026-02-24
 
 Sentinel currently publishes reproducible in-repo latency evidence with CI gates. Competitor coverage is mapped from public docs and marked as `not_measured` when this repo cannot reproduce a fair local benchmark path.
 
+Sentinel also publishes deterministic standard-adversarial benchmark snapshots from redistribution-safe mini fixtures (`advbench-mini`, `trojai-mini`) in `docs/benchmarks/results/standard-datasets.json`.
+
 ## Latency and Setup
 
 | Tool | p95 Overhead (ms) | Time to First Protection | Source |

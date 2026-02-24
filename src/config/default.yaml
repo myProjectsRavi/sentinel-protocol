@@ -530,12 +530,21 @@ runtime:
   threat_intel_mesh:
     enabled: false
     mode: monitor # monitor | block
+    node_id: sentinel-node
+    shared_secret: ""
+    peers: []
+    sync_enabled: false
+    sync_interval_ms: 90000
+    sync_timeout_ms: 2000
+    max_peer_signatures: 1000
+    max_peers: 16
     ttl_ms: 604800000
     max_signatures: 50000
     max_text_chars: 8192
     min_hits_to_block: 2
     block_on_match: false
     allow_anonymous_share: false
+    allow_unsigned_import: false
     bootstrap_signatures: []
     observability: true
   lfrl:

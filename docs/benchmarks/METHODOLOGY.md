@@ -15,11 +15,13 @@ Command:
 ```bash
 npm run benchmark -- --duration 3 --connections 16 --pipelining 1
 npm run benchmark:gate
+npm run benchmark:datasets
 ```
 
 Primary output artifact:
 
 - `metrics/benchmark-YYYY-MM-DD.json`
+- `docs/benchmarks/results/standard-datasets.json`
 
 Canonical release snapshot used for comparison page:
 
@@ -50,6 +52,30 @@ Current state:
 - OWASP coverage mapping is based on each tool's public documentation.
 - Latency and setup timings are only claimed when reproducible in this repo.
 - Unknown/unreproduced metrics are intentionally left null to avoid unverifiable claims.
+
+## Standard Adversarial Datasets
+
+Sentinel ships redistribution-safe mini benchmark fixtures derived from standard adversarial families:
+
+- `docs/benchmarks/datasets/advbench-mini.json`
+- `docs/benchmarks/datasets/trojai-mini.json`
+
+Execution path:
+
+```bash
+npm run benchmark:datasets
+```
+
+Detection model used in this harness:
+
+- deterministic `InjectionScanner` score gate (`>= 0.45`)
+- deterministic tool-forgery heuristic for `tool_calls` abuse payloads
+- no network calls and no LLM API usage
+
+Scope boundary:
+
+- this is not a claim of parity with full upstream benchmark corpora.
+- this is a reproducible, in-repo regression baseline aligned with standard attack families.
 
 ## Quarterly Refresh Process
 

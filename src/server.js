@@ -519,6 +519,9 @@ class SentinelServer {
       memory_integrity_blocked: 0,
       threat_intel_detected: 0,
       threat_intel_blocked: 0,
+      threat_intel_sync_runs: 0,
+      threat_intel_sync_failures: 0,
+      threat_intel_sync_imported: 0,
       self_healing_detected: 0,
       self_healing_blocked: 0,
       lfrl_matches: 0,
@@ -870,6 +873,8 @@ class SentinelServer {
     this.lastStatusWriteError = null;
     this.optimizerPlugin = loadOptimizerPlugin();
     this.dashboardServer = null;
+    this.threatIntelSyncInterval = null;
+    this.threatIntelSyncInFlight = false;
     this.lastBudgetAutopilotRecommendation = null;
     this.pluginRegistry.registerAll(this.options.plugins || []);
     if (this.options.plugin) {
@@ -1035,6 +1040,71 @@ class SentinelServer {
     return { shed, restored };
   }
 
+  async runThreatIntelSyncTick(trigger = 'manual') {
+    if (!this.threatIntelMesh?.isEnabled?.() || this.threatIntelMesh.syncEnabled !== true) {
+      return {
+        enabled: false,
+        executed: false,
+        reason: 'sync_disabled',
+      };
+    }
+    if (this.threatIntelSyncInFlight) {
+      return {
+        enabled: true,
+        executed: false,
+        reason: 'sync_in_flight',
+      };
+    }
+
+    this.threatIntelSyncInFlight = true;
+    try {
+      const result = await this.threatIntelMesh.syncWithPeers();
+      if (result?.executed) {
+        this.stats.threat_intel_sync_runs += 1;
+        this.stats.threat_intel_sync_failures += Number(result.failed_peers || 0);
+        this.stats.threat_intel_sync_imported += Number(result.imported_signatures || 0);
+      }
+      if (result?.executed && Number(result.failed_peers || 0) > 0) {
+        logger.warn('Threat-intel peer sync completed with failures', {
+          trigger,
+          failed_peers: Number(result.failed_peers || 0),
+          peers_total: Number(result.peers_total || 0),
+        });
+      }
+      return result;
+    } catch (error) {
+      this.stats.threat_intel_sync_runs += 1;
+      this.stats.threat_intel_sync_failures += 1;
+      logger.warn('Threat-intel peer sync failed', {
+        trigger,
+        error: error.message,
+      });
+      return {
+        enabled: true,
+        executed: false,
+        reason: 'sync_error',
+        error: error.message,
+      };
+    } finally {
+      this.threatIntelSyncInFlight = false;
+    }
+  }
+
+  startThreatIntelSyncLoop() {
+    if (!this.threatIntelMesh?.isEnabled?.() || this.threatIntelMesh.syncEnabled !== true) {
+      return;
+    }
+    if (!Array.isArray(this.threatIntelMesh.peers) || this.threatIntelMesh.peers.length === 0) {
+      return;
+    }
+    const intervalMs = Number(this.threatIntelMesh.syncIntervalMs || 90000);
+    this.threatIntelSyncInterval = setInterval(() => {
+      this.runThreatIntelSyncTick('interval').catch(() => {
+        // runThreatIntelSyncTick already logs and returns structured reason
+      });
+    }, intervalMs);
+  }
+
   currentStatusPayload() {
     const budgetSnapshot = this.budgetStore.snapshot();
     const budgetAutopilotConfig =
@@ -1136,6 +1206,10 @@ class SentinelServer {
       threat_intel_mesh_enabled: this.threatIntelMesh.isEnabled(),
       threat_intel_mesh_mode: this.threatIntelMesh.mode,
       threat_intel_mesh_signatures: this.threatIntelMesh.signatures?.size || 0,
+      threat_intel_mesh_peers: Array.isArray(this.threatIntelMesh.peers) ? this.threatIntelMesh.peers.length : 0,
+      threat_intel_mesh_sync_enabled: this.threatIntelMesh.syncEnabled === true,
+      threat_intel_mesh_sync_runs: Number(this.threatIntelMesh.syncRuns || 0),
+      threat_intel_mesh_sync_failures: Number(this.threatIntelMesh.syncFailures || 0),
       lfrl_enabled: this.lfrlEngine.isEnabled(),
       lfrl_mode: this.lfrlEngine.mode,
       lfrl_rules_loaded: Array.isArray(this.lfrlEngine.compiledRules) ? this.lfrlEngine.compiledRules.length : 0,
@@ -2136,6 +2210,52 @@ class SentinelServer {
         return;
       }
       res.status(200).json(this.threatIntelMesh.exportSnapshot());
+    });
+
+    this.app.get('/_sentinel/threat-intel/share', (req, res) => {
+      if (!this.threatIntelMesh?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'THREAT_INTEL_MESH_DISABLED',
+        });
+        return;
+      }
+      res.status(200).json(this.threatIntelMesh.exportShareSnapshot());
+    });
+
+    this.app.post('/_sentinel/threat-intel/ingest', (req, res) => {
+      if (!this.threatIntelMesh?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'THREAT_INTEL_MESH_DISABLED',
+        });
+        return;
+      }
+      let payload = {};
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '{}');
+      } catch {
+        payload = {};
+      }
+      const sourceHeader = req.headers?.['x-sentinel-mesh-source'];
+      const source = Array.isArray(sourceHeader)
+        ? String(sourceHeader[0] || 'peer_ingest')
+        : String(sourceHeader || 'peer_ingest');
+      const result = this.threatIntelMesh.importSnapshot({
+        payload,
+        source,
+      });
+      const statusCode = result?.accepted === false ? 400 : 200;
+      res.status(statusCode).json(result);
+    });
+
+    this.app.post('/_sentinel/threat-intel/sync', async (req, res) => {
+      if (!this.threatIntelMesh?.isEnabled?.()) {
+        res.status(404).json({
+          error: 'THREAT_INTEL_MESH_DISABLED',
+        });
+        return;
+      }
+      const result = await this.runThreatIntelSyncTick('api');
+      res.status(200).json(result);
     });
 
     this.app.get('/_sentinel/zk-config', (req, res) => {
@@ -3487,6 +3607,7 @@ class SentinelServer {
     this.statusInterval = setInterval(() => {
       this.writeStatus();
     }, 2000);
+    this.startThreatIntelSyncLoop();
 
     this.server = this.app.listen(port, host, () => {
       logger.info('Sentinel started', {
@@ -3595,6 +3716,10 @@ class SentinelServer {
     if (this.statusInterval) {
       clearInterval(this.statusInterval);
       this.statusInterval = null;
+    }
+    if (this.threatIntelSyncInterval) {
+      clearInterval(this.threatIntelSyncInterval);
+      this.threatIntelSyncInterval = null;
     }
 
     this.writeStatus();

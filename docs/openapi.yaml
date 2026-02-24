@@ -215,6 +215,57 @@ paths:
                 additionalProperties: true
         '404':
           description: Threat intel mesh disabled.
+  /_sentinel/threat-intel/share:
+    get:
+      summary: Export signed threat-intel snapshot for peer sharing
+      operationId: getThreatIntelMeshShareSnapshot
+      responses:
+        '200':
+          description: Signed threat-intel share payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Threat intel mesh disabled.
+  /_sentinel/threat-intel/ingest:
+    post:
+      summary: Ingest signed threat-intel snapshot from peer
+      operationId: ingestThreatIntelMeshSnapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Snapshot accepted and merged.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Snapshot rejected (invalid signature or payload).
+        '404':
+          description: Threat intel mesh disabled.
+  /_sentinel/threat-intel/sync:
+    post:
+      summary: Trigger peer sync for threat-intel mesh
+      operationId: syncThreatIntelMeshPeers
+      responses:
+        '200':
+          description: Peer sync execution result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Threat intel mesh disabled.
   /_sentinel/zk-config:
     get:
       summary: Zero-knowledge config assessment export

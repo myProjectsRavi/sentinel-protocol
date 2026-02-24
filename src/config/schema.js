@@ -658,6 +658,15 @@ const THREAT_INTEL_MESH_KEYS = new Set([
   'min_hits_to_block',
   'block_on_match',
   'allow_anonymous_share',
+  'allow_unsigned_import',
+  'node_id',
+  'shared_secret',
+  'peers',
+  'sync_enabled',
+  'sync_interval_ms',
+  'sync_timeout_ms',
+  'max_peer_signatures',
+  'max_peers',
   'bootstrap_signatures',
   'observability',
 ]);
@@ -2276,6 +2285,17 @@ function applyDefaults(config) {
   threatIntelMesh.min_hits_to_block = Number(threatIntelMesh.min_hits_to_block ?? 2);
   threatIntelMesh.block_on_match = threatIntelMesh.block_on_match === true;
   threatIntelMesh.allow_anonymous_share = threatIntelMesh.allow_anonymous_share === true;
+  threatIntelMesh.allow_unsigned_import = threatIntelMesh.allow_unsigned_import === true;
+  threatIntelMesh.node_id = String(threatIntelMesh.node_id || 'sentinel-node').trim();
+  threatIntelMesh.shared_secret = String(threatIntelMesh.shared_secret || '');
+  threatIntelMesh.peers = Array.isArray(threatIntelMesh.peers)
+    ? threatIntelMesh.peers.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  threatIntelMesh.sync_enabled = threatIntelMesh.sync_enabled === true;
+  threatIntelMesh.sync_interval_ms = Number(threatIntelMesh.sync_interval_ms ?? 90000);
+  threatIntelMesh.sync_timeout_ms = Number(threatIntelMesh.sync_timeout_ms ?? 2000);
+  threatIntelMesh.max_peer_signatures = Number(threatIntelMesh.max_peer_signatures ?? 1000);
+  threatIntelMesh.max_peers = Number(threatIntelMesh.max_peers ?? 16);
   threatIntelMesh.bootstrap_signatures = Array.isArray(threatIntelMesh.bootstrap_signatures)
     ? threatIntelMesh.bootstrap_signatures.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
     : [];
@@ -5667,6 +5687,60 @@ function validateConfigShape(config) {
     assertType(
       typeof threatIntelMesh.allow_anonymous_share === 'boolean',
       '`runtime.threat_intel_mesh.allow_anonymous_share` must be boolean',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.allow_unsigned_import === 'boolean',
+      '`runtime.threat_intel_mesh.allow_unsigned_import` must be boolean',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.node_id === 'string' && threatIntelMesh.node_id.length > 0,
+      '`runtime.threat_intel_mesh.node_id` must be non-empty string',
+      details
+    );
+    assertType(
+      typeof threatIntelMesh.shared_secret === 'string',
+      '`runtime.threat_intel_mesh.shared_secret` must be string',
+      details
+    );
+    assertType(
+      Array.isArray(threatIntelMesh.peers),
+      '`runtime.threat_intel_mesh.peers` must be array',
+      details
+    );
+    if (Array.isArray(threatIntelMesh.peers)) {
+      threatIntelMesh.peers.forEach((peer, idx) => {
+        assertType(
+          typeof peer === 'string' && peer.length > 0,
+          `runtime.threat_intel_mesh.peers[${idx}] must be non-empty string`,
+          details
+        );
+      });
+    }
+    assertType(
+      typeof threatIntelMesh.sync_enabled === 'boolean',
+      '`runtime.threat_intel_mesh.sync_enabled` must be boolean',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.sync_interval_ms) && threatIntelMesh.sync_interval_ms > 0,
+      '`runtime.threat_intel_mesh.sync_interval_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.sync_timeout_ms) && threatIntelMesh.sync_timeout_ms > 0,
+      '`runtime.threat_intel_mesh.sync_timeout_ms` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.max_peer_signatures) && threatIntelMesh.max_peer_signatures > 0,
+      '`runtime.threat_intel_mesh.max_peer_signatures` must be integer > 0',
+      details
+    );
+    assertType(
+      Number.isInteger(threatIntelMesh.max_peers) && threatIntelMesh.max_peers > 0,
+      '`runtime.threat_intel_mesh.max_peers` must be integer > 0',
       details
     );
     assertType(

@@ -1,0 +1,69 @@
+{
+  "generated_at": "2026-02-24T13:45:47.071Z",
+  "pack": "owasp_reference_submission",
+  "project": "sentinel-protocol",
+  "version": "1.0.0",
+  "claim_boundary": "Only reproducible in-repo evidence is claimed. Unknown/unmeasured values are marked explicitly.",
+  "artifacts": [
+    {
+      "path": "README.md",
+      "size_bytes": 25201,
+      "sha256": "092ce031d98daeaf89a9ff747ed4625e75b20fe77bf7932b7d2f69b6acde8136"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "size_bytes": 8755,
+      "sha256": "aeea183d803bd4ab70abc3894c1109d1dc8e3646f60cfc390cead02ed939de71"
+    },
+    {
+      "path": "docs/OWASP_LLM_TOP10_SENTINEL_MAP.md",
+      "size_bytes": 2069,
+      "sha256": "4bd5ec63fdecdd24e535ae4441704284ef6aadb57b78439016850d199bb883d0"
+    },
+    {
+      "path": "docs/OWASP-HARDENING.md",
+      "size_bytes": 3052,
+      "sha256": "b2c538a4e6586e8b4fc8827e4c30dada1d8435b2f73cfa444c2e44996a486d29"
+    },
+    {
+      "path": "docs/openapi.yaml",
+      "size_bytes": 13885,
+      "sha256": "284d333b865de01c334f8eba3d591af5ed03f89c1a9ef7be16d27633098fa481"
+    },
+    {
+      "path": "docs/benchmarks/METHODOLOGY.md",
+      "size_bytes": 2724,
+      "sha256": "adeeaee646dd77659799edbc06cf219070e7898eb9b44555d3fb5704c0ce686f"
+    },
+    {
+      "path": "docs/benchmarks/COMPETITOR_COMPARISON.md",
+      "size_bytes": 2027,
+      "sha256": "c97b2c104877d8ca18747e2772b1ae33a7ff2de199a0841c66caa531a2789e3d"
+    },
+    {
+      "path": "docs/benchmarks/results/standard-datasets.json",
+      "size_bytes": 8225,
+      "sha256": "659e5ff1fb177adf89330ab613d522eeae2a40b6cde700c7958776c2d047a04e"
+    },
+    {
+      "path": "docs/SECURITY_RELIABILITY_EVIDENCE_V4_PHASEA.md",
+      "size_bytes": 4599,
+      "sha256": "6a7a66bf8623631375d7f5b597fbf80f6f319d8cabe66ec5a8fe1c675f9ce755"
+    },
+    {
+      "path": "docs/evidence/WIZARD_VALIDATION.md",
+      "size_bytes": 1708,
+      "sha256": "14dfd7c5e26e1edc4319c9d213e58dbec2f2865605cef9697e65d180c9aad499"
+    },
+    {
+      "path": "docs/evidence/FRAMEWORK_DETECT_MATRIX.md",
+      "size_bytes": 1339,
+      "sha256": "b4a85daaa0388baf3fbce9e0e94be9c19ad0bb2bc9c3aa59bbfb17d0212bb5fb"
+    },
+    {
+      "path": "docs/evidence/GITHUB_ACTION_DEMO.md",
+      "size_bytes": 1627,
+      "sha256": "6168aa0025e59689a587bd6ce23dd637887f1c4a42756e3e3fbe18647625fb96"
+    }
+  ]
+}
