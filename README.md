@@ -687,16 +687,16 @@ Doctor summary: pass=44 warn=1 fail=0
 
 ```bash
 # Dev laptop, just watching
-sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
 
 # Staging, log threats with warnings
-sentinel bootstrap --profile standard --mode warn --dashboard
+npx --yes --package sentinel-protocol sentinel bootstrap --profile standard --mode warn --dashboard
 
 # Production, block everything suspicious
-sentinel bootstrap --profile paranoid --mode enforce --dashboard
+npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
 
 # Production with NODE_ENV set (clears all warnings)
-NODE_ENV=production sentinel start --profile paranoid --mode enforce --dashboard
+NODE_ENV=production npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
 ```
 
 </details>
@@ -1559,13 +1559,13 @@ Full adapter source: [`python/sentinel_protocol_adapters.py`](python/sentinel_pr
 
 ```bash
 # Run automated adversarial evaluation
-sentinel red-team run \
+npx --yes --package sentinel-protocol sentinel red-team run \
   --url http://127.0.0.1:8787 \
   --target openai \
   --out ./red-team-report.json
 
 # Generate HTML report
-sentinel red-team run \
+npx --yes --package sentinel-protocol sentinel red-team run \
   --url http://127.0.0.1:8787 \
   --target openai \
   --report html \
@@ -1579,22 +1579,22 @@ sentinel red-team run \
 
 ```bash
 # EU AI Act Article 12
-sentinel compliance report \
+npx --yes --package sentinel-protocol sentinel compliance report \
   --framework eu-ai-act-article-12 \
   --out ./eu-ai-act-evidence.json
 
 # SOC2
-sentinel compliance report \
+npx --yes --package sentinel-protocol sentinel compliance report \
   --framework soc2 \
   --out ./soc2-evidence.json
 
 # GDPR
-sentinel compliance report \
+npx --yes --package sentinel-protocol sentinel compliance report \
   --framework gdpr \
   --out ./gdpr-evidence.json
 
 # HIPAA
-sentinel compliance report \
+npx --yes --package sentinel-protocol sentinel compliance report \
   --framework hipaa \
   --out ./hipaa-evidence.json
 ```
@@ -1622,7 +1622,7 @@ npm run benchmark:datasets
 
 ```bash
 # Replay a decision with different thresholds (what-if analysis)
-sentinel forensic replay \
+npx --yes --package sentinel-protocol sentinel forensic replay \
   --snapshot <snapshot-id> \
   --overrides '{"injection_threshold": 0.6}'
 
