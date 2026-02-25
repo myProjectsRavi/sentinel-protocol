@@ -52,9 +52,8 @@ const {
 const { DEFAULT_CONFIG_PATH, AUDIT_LOG_PATH, STATUS_FILE_PATH } = require('../src/utils/paths');
 
 const program = new Command();
-const cliPkg = require('../package.json');
 
-program.name('sentinel').description('Sentinel Protocol CLI').version(cliPkg.version);
+program.name('sentinel').description('Sentinel Protocol CLI').version('1.0.0');
 
 function loadAuditEvents(auditPath, limit) {
   const compliance = new ComplianceEngine({
@@ -957,8 +956,8 @@ redTeamCommand
         const outPath = path.resolve(options.out);
         const output = reportFormat === 'html'
           ? renderRedTeamHtmlReport(report, {
-            title: 'Sentinel Red-Team Report',
-          })
+              title: 'Sentinel Red-Team Report',
+            })
           : `${JSON.stringify(report, null, 2)}\n`;
         fs.writeFileSync(outPath, output, 'utf8');
         console.log(`Red-team report written: ${outPath}`);
@@ -1049,8 +1048,8 @@ complianceCommand
       const output =
         format === 'html'
           ? renderOWASPLLMHtmlReport(report, {
-            title: defaultTitle,
-          })
+              title: defaultTitle,
+            })
           : `${JSON.stringify(report, null, 2)}\n`;
 
       if (options.out) {
@@ -1269,8 +1268,8 @@ forensicCommand
             const score = Number(decision.injection_score || decision.prompt_rebuff_score || 0);
             const threshold = Number(
               localOverrides.injection_threshold
-              ?? loaded.config.injection?.threshold
-              ?? 0.8
+                ?? loaded.config.injection?.threshold
+                ?? 0.8
             );
             return {
               blocked: score >= threshold,
@@ -1319,12 +1318,12 @@ aibomCommand
         status && status.aibom && typeof status.aibom === 'object'
           ? status.aibom
           : {
-            ...emptyAibom,
-            source: {
-              status_file: STATUS_FILE_PATH,
-              loaded: false,
-            },
-          };
+              ...emptyAibom,
+              source: {
+                status_file: STATUS_FILE_PATH,
+                loaded: false,
+              },
+            };
 
       if (options.out) {
         const outPath = path.resolve(options.out);

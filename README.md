@@ -20,7 +20,7 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SENTINEL PROTOCOL v1.2.4                        ║
+║                    SENTINEL PROTOCOL v1.2.5                        ║
 ║                                                                    ║
 ║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
 ║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
