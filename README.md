@@ -1605,6 +1605,9 @@ npx --yes --package sentinel-protocol sentinel compliance report \
 <summary><strong>📊 Run Benchmarks</strong></summary>
 
 ```bash
+# ⚠️ Run these from the sentinel-protocol project directory:
+cd ~/Documents/sentinel-protocol  # or wherever you cloned the repo
+
 # Overhead benchmark
 npm run benchmark -- --duration 3 --connections 16
 
