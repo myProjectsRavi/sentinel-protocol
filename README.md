@@ -20,7 +20,7 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SENTINEL PROTOCOL v1.1.0                        ║
+║                    SENTINEL PROTOCOL v1.2.4                        ║
 ║                                                                    ║
 ║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
 ║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
@@ -770,7 +770,7 @@ Expected output:
   "status": "ok",
   "posture": {
     "posture": "strong",
-    "overall": 84.9,
+    "overall": 79.9,
     "categories": {
       "ingress": 100,     // inbound request protection
       "egress": 67.6,     // outbound response scanning
@@ -1898,7 +1898,7 @@ Sentinel Protocol is **fully open-source** under the [MIT License](LICENSE).
 <div align="center">
 
 **Built with obsessive engineering discipline.**<br />
-**75,000+ lines. 81 engines. 567 tests. 9 dependencies. Zero compromises.**<br />
+**52,000+ lines. 81 engines. 567 tests. 9 dependencies. Zero compromises.**<br />
 **Clone it. Run it locally. Own your AI security.**
 
 <br />
