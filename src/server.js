@@ -605,10 +605,10 @@ class SentinelServer {
     });
     this.telemetry = createTelemetry({
       enabled: config.runtime?.telemetry?.enabled !== false,
-      serviceVersion: '1.0.0',
+      serviceVersion: require('../package.json').version,
     });
     this.prometheus = new PrometheusExporter({
-      version: '1.0.0',
+      version: require('../package.json').version,
     });
     this.agentObservability = new AgentObservability(this.config.runtime?.agent_observability || {});
     this.piiProviderEngine = new PIIProviderEngine({

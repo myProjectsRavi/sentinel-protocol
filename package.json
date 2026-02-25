@@ -8,8 +8,28 @@
     "mcp",
     "agent-governance",
     "pii-redaction",
-    "prompt-injection"
+    "prompt-injection",
+    "llm-security",
+    "ai-firewall",
+    "owasp",
+    "guardrails",
+    "ai-safety",
+    "red-team",
+    "compliance",
+    "gdpr",
+    "soc2",
+    "threat-detection",
+    "token-watermark",
+    "local-ai"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myProjectsRavi/sentinel-protocol.git"
+  },
+  "homepage": "https://github.com/myProjectsRavi/sentinel-protocol#readme",
+  "bugs": {
+    "url": "https://github.com/myProjectsRavi/sentinel-protocol/issues"
+  },
   "license": "MIT",
   "main": "src/index.js",
   "types": "index.d.ts",

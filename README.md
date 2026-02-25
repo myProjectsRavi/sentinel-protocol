@@ -508,8 +508,15 @@ npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --da
 
 ## 📋 Step-by-Step Setup Guide
 
+> [!IMPORTANT]
+> **Two setup paths — choose one:**
+> - **📦 npm (Methods 1–4):** Use Sentinel as-is. No cloning. Everything runs via `npx`.
+> - **🔧 Git Clone (Method 5+):** Clone the repo to customize code, run benchmarks, or contribute.
+>
+> **Most users should use npm.** Only clone if you need to modify Sentinel's source code.
+
 <details>
-<summary><strong>Method 1: Bootstrap (Recommended — 90 seconds)</strong></summary>
+<summary><strong>📦 Method 1: Bootstrap (Recommended — 90 seconds)</strong></summary>
 
 ```bash
 # 1. Run bootstrap
@@ -527,7 +534,7 @@ open http://127.0.0.1:8788
 </details>
 
 <details>
-<summary><strong>Method 2: Manual Setup (Full control)</strong></summary>
+<summary><strong>📦 Method 2: Manual Setup (Full control)</strong></summary>
 
 ```bash
 # 1. Initialize config (creates sentinel.yaml)
@@ -550,7 +557,7 @@ curl -sS http://127.0.0.1:8787/_sentinel/health
 </details>
 
 <details>
-<summary><strong>Method 3: Docker (Ops / Infrastructure teams)</strong></summary>
+<summary><strong>📦 Method 3: Docker (Ops / Infrastructure teams)</strong></summary>
 
 ```bash
 # 1. Clone
@@ -567,7 +574,7 @@ curl -sS http://127.0.0.1:8787/_sentinel/health
 </details>
 
 <details>
-<summary><strong>Method 4: Passive Watch Mode (Zero code changes to your app)</strong></summary>
+<summary><strong>📦 Method 4: Passive Watch Mode (Zero code changes to your app)</strong></summary>
 
 ```bash
 # 1. Start Sentinel in watch mode
@@ -583,7 +590,7 @@ npx --yes --package sentinel-protocol sentinel watch --profile minimal
 </details>
 
 <details>
-<summary><strong>Method 5: Enforce Mode — Maximum Security (paranoid profile)</strong></summary>
+<summary><strong>📦 Method 5: Enforce Mode — Maximum Security (paranoid profile)</strong></summary>
 
 Enforce mode with the `paranoid` profile activates **all 81 security engines** and **blocks threats instead of just logging them**. This is the strictest security posture available.
 
@@ -698,6 +705,46 @@ npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mo
 # Production with NODE_ENV set (clears all warnings)
 NODE_ENV=production npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
 ```
+
+</details>
+
+<details>
+<summary><strong>🔧 Method 6: Git Clone (Contributors & Customization)</strong></summary>
+
+> **Use this if you want to:** modify Sentinel's source code, run benchmarks, run the test suite, or contribute PRs.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/myProjectsRavi/sentinel-protocol.git
+cd sentinel-protocol
+
+# 2. Install dependencies
+npm install
+
+# 3. Run the full test suite
+npm test
+
+# 4. Run linting
+npm run lint
+
+# 5. Start Sentinel from source
+node cli/sentinel.js start --profile paranoid --mode enforce --dashboard
+
+# 6. Run benchmarks (git clone only — these scripts live in the repo)
+npm run benchmark -- --duration 3 --connections 16
+npm run benchmark:gate
+npm run benchmark:datasets
+
+# 7. Run red team from source
+node cli/sentinel.js red-team run \
+  --url http://127.0.0.1:8787 \
+  --target openai \
+  --out ./red-team-report.html \
+  --report html
+```
+
+> [!NOTE]
+> `npm run benchmark`, `npm run lint`, and `npm test` **only work from the cloned repo** — they use scripts defined in `package.json`. If you installed via npx, use the `npx --yes --package sentinel-protocol sentinel ...` commands from Methods 1–5 instead.
 
 </details>
 
