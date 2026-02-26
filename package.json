@@ -1,6 +1,6 @@
 {
   "name": "sentinel-protocol",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "The Reference Architecture for Local AI Governance & Firewalling. Secure, deterministic protection for Agents, MCP, and LLMs.",
   "keywords": [
     "ai-security",

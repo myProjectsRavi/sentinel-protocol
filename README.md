@@ -20,7 +20,7 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SENTINEL PROTOCOL v1.2.6                        ║
+║                    SENTINEL PROTOCOL v1.2.7                        ║
 ║                                                                    ║
 ║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
 ║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
@@ -1891,15 +1891,15 @@ Sentinel Protocol is **fully open-source** under the [MIT License](LICENSE).
 
 ## ☕ Support
 
-Sentinel is free, open-source, and always will be. If it's useful to you, a coffee is appreciated — never expected.
+Sentinel is free, open-source, and always will be. If it's useful to you, a coffee is appreciated - never expected.
 
 <div align="center">
 
-[![Support via PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba.svg?style=for-the-badge&logo=paypal)](https://www.paypal.me/YOUR_PAYPAL_USERNAME)
+[![Support via PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba.svg?style=for-the-badge&logo=paypal)](https://paypal.me/rtnlabs)
 &nbsp;&nbsp;
-[![Support via Lemon Squeezy](https://img.shields.io/badge/Support-Lemon%20Squeezy-f4cd00.svg?style=for-the-badge)](https://YOUR_STORE.lemonsqueezy.com/buy/YOUR_PRODUCT_ID)
+[![Support via Lemon Squeezy](https://img.shields.io/badge/Support-Lemon%20Squeezy-f4cd00.svg?style=for-the-badge)](https://rtnlabs.lemonsqueezy.com/checkout/buy/1a38a624-8fd5-4308-bb41-d2934c12051d)
 
-*Donations are a voluntary thank-you for existing work — not a support contract.*
+*Donations are a voluntary thank-you for existing work - not a support contract.*
 
 </div>
 
