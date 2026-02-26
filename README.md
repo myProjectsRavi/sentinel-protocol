@@ -20,7 +20,7 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SENTINEL PROTOCOL v1.2.5                        ║
+║                    SENTINEL PROTOCOL v1.2.6                        ║
 ║                                                                    ║
 ║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
 ║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
@@ -250,7 +250,7 @@ const response = await sentinel.secureFetch(
 |:---:|:---:|:---:|:---:|
 | **OpenAI** (GPT-4, GPT-4o, o1, o3) | ✅ Native | `openai` | Yes |
 | **Anthropic** (Claude 3.5, Claude 4) | ✅ Native | `anthropic` | Yes |
-| **Google** (Gemini 2.0, 2.5) | ✅ Native | `google` | Yes |
+| **Google** (Gemini 2.0, 2.5, 3.0) | ✅ Native | `google` | Yes |
 | **Ollama** (Llama, Mistral, Qwen) | ✅ Native | `ollama` | Auto-detected |
 | **DeepSeek** | ✅ Compatible | `custom` | Via custom URL |
 | **Mistral AI** | ✅ Compatible | `custom` | Via custom URL |

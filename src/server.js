@@ -2040,6 +2040,11 @@ class SentinelServer {
           posture = this.postureScorer({
             config: this.config,
             counters: this.stats,
+            auditSummary: {
+              total_events: this.stats.requests_total || 0,
+              blocked_events: this.stats.blocked_total || 0,
+              upstream_errors: this.stats.upstream_errors || 0,
+            },
             options: {
               warnThreshold: postureConfig.warn_threshold,
               criticalThreshold: postureConfig.critical_threshold,

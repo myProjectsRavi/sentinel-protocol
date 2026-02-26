@@ -237,7 +237,7 @@ function openAiToGoogleAdapter(candidate) {
         throw new Error('openai_chat_v1 -> google_generative_v1 requires JSON body with messages');
       }
 
-      const model = String(parsed.model || candidate?.model || process.env.SENTINEL_GOOGLE_MODEL || 'gemini-1.5-pro');
+      const model = String(parsed.model || candidate?.model || process.env.SENTINEL_GOOGLE_MODEL || 'gemini-3-flash-preview');
       const googlePayload = {
         contents: toGoogleContents(parsed.messages),
         generationConfig: {
