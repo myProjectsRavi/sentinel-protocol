@@ -1889,6 +1889,22 @@ Sentinel Protocol is **fully open-source** under the [MIT License](LICENSE).
 
 ---
 
+## ☕ Support
+
+Sentinel is free, open-source, and always will be. If it's useful to you, a coffee is appreciated — never expected.
+
+<div align="center">
+
+[![Support via PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba.svg?style=for-the-badge&logo=paypal)](https://www.paypal.me/YOUR_PAYPAL_USERNAME)
+&nbsp;&nbsp;
+[![Support via Lemon Squeezy](https://img.shields.io/badge/Support-Lemon%20Squeezy-f4cd00.svg?style=for-the-badge)](https://YOUR_STORE.lemonsqueezy.com/buy/YOUR_PRODUCT_ID)
+
+*Donations are a voluntary thank-you for existing work — not a support contract.*
+
+</div>
+
+---
+
 ## 📄 License
 
 [MIT](LICENSE) — free to use, modify, and distribute.
