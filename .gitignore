@@ -7,3 +7,8 @@ coverage/
 *.bak
 .tmp/
 *.tgz
+.env
+.env.*
+*.secret
+*.pem
+*.key
