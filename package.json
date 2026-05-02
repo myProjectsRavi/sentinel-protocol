@@ -91,7 +91,7 @@
     "js-yaml": "4.1.1",
     "onnxruntime-node": "1.18.0",
     "undici": "6.24.0",
-    "uuid": "11.1.0"
+    "uuid": "14.0.0"
   },
   "devDependencies": {
     "autocannon": "8.0.0",
