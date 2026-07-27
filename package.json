@@ -88,7 +88,7 @@
     "blessed": "0.1.81",
     "commander": "13.1.0",
     "express": "4.22.1",
-    "js-yaml": "4.1.1",
+    "js-yaml": "4.3.0",
     "onnxruntime-node": "1.18.0",
     "undici": "6.24.0",
     "uuid": "11.1.0"
