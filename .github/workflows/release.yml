@@ -82,6 +82,18 @@ jobs:
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
           echo "RELEASE_SHA=${RELEASE_SHA}" >> "${GITHUB_ENV}"
 
+      - name: Require npm publishing credential
+        if: steps.release.outputs.release == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
+            echo "NPM_TOKEN repository secret is required for Sentinel npm publishing." >&2
+            exit 1
+          fi
+
       - name: Require green CI and security scan on the exact release commit
         if: steps.release.outputs.release == 'true'
         env:
@@ -196,7 +208,7 @@ jobs:
           cat > "${notes}" <<EOF
           ## Sentinel Protocol ${VERSION}
 
-          This release was created automatically from the exact green `main` commit `${RELEASE_SHA}`.
+          This release was created automatically from exact green main commit ${RELEASE_SHA}.
 
           ### Install or update
 
@@ -222,10 +234,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN repository secret is required for Sentinel npm publishing." >&2
-            exit 1
-          fi
           npm publish --provenance --access public
 
       - name: Verify GitHub and npm are synchronized
@@ -256,9 +264,15 @@ jobs:
           exit 1
 
       - name: Publish VS Code extension (optional)
-        if: steps.release.outputs.release == 'true' && env.VSCE_PAT != ''
+        if: steps.release.outputs.release == 'true'
         continue-on-error: true
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        shell: bash
         run: |
+          set -euo pipefail
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "VSCE_PAT is not configured; skipping optional VS Code Marketplace publish."
+            exit 0
+          fi
           npx --yes @vscode/vsce@2.29.0 publish --packagePath "$(ls dist/*.vsix | head -n 1)" --pat "${VSCE_PAT}"
