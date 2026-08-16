@@ -15,17 +15,67 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+
+      - name: Validate immutable release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME}"
+
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json version must be a stable MAJOR.MINOR.PATCH release, got ${VERSION}" >&2
+            exit 1
+          fi
+          if [[ "${TAG}" != "v${VERSION}" ]]; then
+            echo "release tag ${TAG} does not match package.json version v${VERSION}" >&2
+            exit 1
+          fi
+
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "release commit ${GITHUB_SHA} is not on main" >&2
+            exit 1
+          fi
+
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
       - run: npm ci
-      - run: npm test
+      - run: npm run ci:transformers:compat
+      - run: npm run lint
+      - run: npm run openapi:validate
+      - run: npm run test:unit:ci
+      - run: npm run test:integration
+      - run: npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10 --websocket-requests 8
+      - run: npm audit --omit=dev --audit-level=high
+
+      # This packs the exact artifact that npm will receive, installs it into a
+      # clean project, invokes the real npm bin, performs first bootstrap, then
+      # repeats the same bootstrap command and proves the user's config survives.
+      - run: npm run ci:cli:lifecycle
+
+      - run: npm run test:coverage:gate
+      - run: npm run perf:p0:gate
+      - run: npm run perf:p1:gate
+      - run: npm run perf:p2:gate
+      - run: npm run perf:p3:gate
+      - run: npm run perf:v4:phasea:gate
+      - run: npm run benchmark -- --duration 3 --connections 16 --pipelining 1
+      - run: npm run benchmark:gate
+
       - run: node ./cli/sentinel.js aibom export --format json --out aibom.json
       - run: npm run sbom:cyclonedx > sbom.cyclonedx.json
       - run: npm run sbom:spdx > sbom.spdx.json
       - run: npm run ci:vscode:package
+
       - uses: actions/upload-artifact@v4
         with:
           name: sbom-release
@@ -34,12 +84,35 @@ jobs:
             sbom.cyclonedx.json
             sbom.spdx.json
             dist/*.vsix
+
       - name: Publish VS Code extension (optional)
         if: env.VSCE_PAT != ''
         run: |
           npx --yes @vscode/vsce@2.29.0 publish --packagePath "$(ls dist/*.vsix | head -n 1)" --pat "${VSCE_PAT}"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      - run: npm publish --provenance --access public
+
+      - name: Publish npm package
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify npm registry and latest dist-tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          published=""
+          latest=""
+          for attempt in {1..12}; do
+            published="$(npm view "sentinel-protocol@${VERSION}" version 2>/dev/null || true)"
+            latest="$(npm view sentinel-protocol@latest version 2>/dev/null || true)"
+            if [[ "${published}" == "${VERSION}" && "${latest}" == "${VERSION}" ]]; then
+              echo "Verified sentinel-protocol@${VERSION} and latest -> ${VERSION}"
+              exit 0
+            fi
+            echo "Registry not converged yet (attempt ${attempt}/12): published=${published:-missing}, latest=${latest:-missing}"
+            sleep 5
+          done
+
+          echo "npm registry verification failed: published=${published:-missing}, latest=${latest:-missing}, expected=${VERSION}" >&2
+          exit 1
