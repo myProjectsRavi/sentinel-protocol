@@ -143,6 +143,7 @@ describe('upstream failure status accounting', () => {
       expect(persisted.counters.upstream_errors).toBe(1);
       expect(persisted.service_status).toBe('running');
 
+      await sentinel.auditLogger.flush();
       const audit = readLatestAuditEvent();
       expect(audit.decision).toBe('upstream_error');
       expect(audit.response_status).toBe(status);
