@@ -80,6 +80,7 @@
     "ci:framework:detect:smoke": "node ./scripts/ci-framework-detect-smoke.js",
     "ci:vscode:package": "node ./scripts/ci-vscode-package.js",
     "ci:transformers:compat": "node ./scripts/verify-transformers-deps.js",
+    "ci:cli:lifecycle": "node ./scripts/ci-cli-lifecycle-smoke.js",
     "sbom:cyclonedx": "npm sbom --sbom-format=cyclonedx",
     "sbom:spdx": "npm sbom --sbom-format=spdx"
   },
