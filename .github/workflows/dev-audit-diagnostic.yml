@@ -1,0 +1,30 @@
+name: dev-audit-diagnostic
+
+on:
+  push:
+    branches:
+      - agent/security-dependency-remediation
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture full npm audit report
+        shell: bash
+        run: |
+          npm audit --json > dev-audit.json || true
+          cat dev-audit.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-audit-json
+          path: dev-audit.json
+          if-no-files-found: error
