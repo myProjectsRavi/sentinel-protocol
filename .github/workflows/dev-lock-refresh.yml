@@ -1,0 +1,82 @@
+name: dev-lock-refresh
+
+on:
+  push:
+    branches:
+      - agent/dev-dependency-hygiene
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    if: github.event.head_commit.message != 'build: refresh safe dev dependency lock'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/dev-dependency-hygiene
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Generate non-breaking lock refresh
+        shell: bash
+        run: |
+          cp package-lock.json package-lock.before.json
+          npm audit fix --package-lock-only || true
+      - name: Verify only dev package entries changed
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('package-lock.before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const b = before.packages || {};
+          const a = after.packages || {};
+          const keys = new Set([...Object.keys(b), ...Object.keys(a)]);
+          let changed = 0;
+          const nonDev = [];
+          for (const key of keys) {
+            if (JSON.stringify(b[key]) === JSON.stringify(a[key])) continue;
+            changed++;
+            const entry = a[key];
+            if (key !== '' && entry && entry.dev !== true) nonDev.push({ key, version: entry.version || null, dev: entry.dev });
+          }
+          if (changed !== 25) throw new Error(`Expected 25 changed package entries, got ${changed}`);
+          if (nonDev.length) throw new Error(`Non-dev lock changes: ${JSON.stringify(nonDev)}`);
+          console.log('Verified exactly 25 changed package entries; all are dev:true.');
+          NODE
+      - name: Verify exact validated lock digest
+        shell: bash
+        run: |
+          echo '32f7352ef2b92bd9d13e134cc1c919d94fec7f952adfa59cf176ba9cbae44e50  package-lock.json' | sha256sum --check
+      - name: Verify install and audit boundary
+        shell: bash
+        run: |
+          rm -rf node_modules
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm audit --json > audit.json || true
+          node <<'NODE'
+          const a = require('./audit.json');
+          const m = a.metadata.vulnerabilities;
+          const keys = Object.keys(a.vulnerabilities).sort();
+          const expected = ['autocannon', 'hyperid', 'uuid'];
+          if (m.low !== 0 || m.moderate !== 3 || m.high !== 0 || m.critical !== 0 || m.total !== 3) {
+            throw new Error(`Unexpected audit counts: ${JSON.stringify(m)}`);
+          }
+          if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+            throw new Error(`Unexpected remaining vulnerabilities: ${JSON.stringify(keys)}`);
+          }
+          console.log('Verified only the known autocannon -> hyperid -> uuid dev-only chain remains.');
+          NODE
+      - name: Commit validated lockfile
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git diff --cached --quiet && exit 0
+          git commit -m 'build: refresh safe dev dependency lock'
+          git push origin HEAD:agent/dev-dependency-hygiene
