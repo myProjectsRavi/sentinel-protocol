@@ -1,0 +1,29 @@
+name: dev-audit-fix-probe
+
+on:
+  push:
+    branches:
+      - agent/security-dependency-remediation
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Probe non-breaking npm audit fix
+        shell: bash
+        run: |
+          cp package-lock.json package-lock.before.json
+          npm audit fix --package-lock-only || true
+          echo '=== PACKAGE DIFF ==='
+          git diff -- package.json package-lock.json || true
+          echo '=== POST-FIX AUDIT ==='
+          npm audit --json || true
