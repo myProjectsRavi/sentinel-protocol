@@ -20,7 +20,7 @@ Stop paying $30K+/month for fragmented tools — Sentinel replaces them all.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║                    SENTINEL PROTOCOL v1.2.7                        ║
+║                    SENTINEL PROTOCOL v1.2.8                        ║
 ║                                                                    ║
 ║  ┌──────────┐   ┌──────────────────────────┐   ┌──────────────┐    ║
 ║  │ Your App │──▶│   81 Security Engines     │──▶│  OpenAI      │    ║
@@ -131,10 +131,14 @@ Every developer using AI faces the same unsolved problems:
 ### One Command — Full AI Security Stack
 
 ```bash
-npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile minimal --dashboard
 ```
 
-**That's it.** Sentinel is now running with:
+**That's it.**
+
+> **Same command for installs and updates:** `@latest` resolves the newest published Sentinel release. On first bootstrap Sentinel creates the selected profile; on repeat bootstrap it validates/migrates and preserves your existing configuration and runtime settings. Use `--force` only when you intentionally want to reset the config.
+
+Sentinel is now running with:
 - 🔒 Security proxy at `http://127.0.0.1:8787`
 - 📊 Live dashboard at `http://127.0.0.1:8788`
 - 🎮 Playground at `http://127.0.0.1:8787/_sentinel/playground`
@@ -143,13 +147,13 @@ npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --das
 
 ```bash
 # 🟢 Minimal — lightweight, 8 engines, great for laptops (monitor only)
-npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile minimal --dashboard
 
 # 🟡 Standard — balanced, ~20 engines, staging/production ready
-npx --yes --package sentinel-protocol sentinel bootstrap --profile standard --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile standard --dashboard
 
 # 🔴 Paranoid — all 81 engines, enforce mode, maximum security
-npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile paranoid --mode enforce --dashboard
 ```
 
 | | Minimal | Standard | Paranoid |
@@ -195,7 +199,7 @@ export SENTINEL_GOOGLE_API_KEY="AIza..."          # Google
 
 ```bash
 # Install and run in passive watch mode
-npx --yes --package sentinel-protocol \
+npx --yes --package sentinel-protocol@latest \
   sentinel watch --profile minimal
 ```
 
@@ -495,13 +499,13 @@ flowchart TB
 
 ```bash
 # Laptop-friendly
-npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile minimal --dashboard
 
 # Production balanced
-npx --yes --package sentinel-protocol sentinel bootstrap --profile standard --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile standard --dashboard
 
 # Maximum security
-npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile paranoid --dashboard
 ```
 
 ---
@@ -520,7 +524,7 @@ npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --da
 
 ```bash
 # 1. Run bootstrap
-npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile minimal --dashboard
 
 # 2. Verify
 curl -sS http://127.0.0.1:8787/_sentinel/health
@@ -538,17 +542,17 @@ open http://127.0.0.1:8788
 
 ```bash
 # 1. Initialize config (creates sentinel.yaml)
-npx --yes --package sentinel-protocol sentinel init --force --profile standard
+npx --yes --package sentinel-protocol@latest sentinel init --force --profile standard
 
 # 2. Set provider keys
 export SENTINEL_OPENAI_API_KEY="sk-..."
 export SENTINEL_ANTHROPIC_API_KEY="sk-ant-..."
 
 # 3. Run diagnostics
-npx --yes --package sentinel-protocol sentinel doctor
+npx --yes --package sentinel-protocol@latest sentinel doctor
 
 # 4. Start Sentinel
-npx --yes --package sentinel-protocol sentinel start --dashboard
+npx --yes --package sentinel-protocol@latest sentinel start --dashboard
 
 # 5. Verify
 curl -sS http://127.0.0.1:8787/_sentinel/health
@@ -578,7 +582,7 @@ curl -sS http://127.0.0.1:8787/_sentinel/health
 
 ```bash
 # 1. Start Sentinel in watch mode
-npx --yes --package sentinel-protocol sentinel watch --profile minimal
+npx --yes --package sentinel-protocol@latest sentinel watch --profile minimal
 
 # 2. Change your SDK's base URL to point at Sentinel
 #    Before: https://api.openai.com/v1
@@ -597,7 +601,7 @@ Enforce mode with the `paranoid` profile activates **all 81 security engines** a
 #### Step 1: Bootstrap with Paranoid + Enforce
 
 ```bash
-npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile paranoid --mode enforce --dashboard
 ```
 
 You'll see output like:
@@ -659,16 +663,16 @@ Save the file and exit.
 
 ```bash
 # Stop existing instance
-npx --yes --package sentinel-protocol sentinel stop
+npx --yes --package sentinel-protocol@latest sentinel stop
 
 # Restart with enforce mode
-npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
+npx --yes --package sentinel-protocol@latest sentinel start --profile paranoid --mode enforce --dashboard
 ```
 
 Now verify doctor passes with zero failures:
 
 ```bash
-npx --yes --package sentinel-protocol sentinel doctor
+npx --yes --package sentinel-protocol@latest sentinel doctor
 ```
 
 Expected output:
@@ -679,7 +683,7 @@ Doctor summary: pass=44 warn=1 fail=0
 
 > **💡 Tip:** The `NODE_ENV` warning is normal for local development. In production, start with `NODE_ENV=production` to clear it:
 > ```bash
-> NODE_ENV=production npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
+> NODE_ENV=production npx --yes --package sentinel-protocol@latest sentinel start --profile paranoid --mode enforce --dashboard
 > ```
 
 #### What Each Mode Does
@@ -694,16 +698,16 @@ Doctor summary: pass=44 warn=1 fail=0
 
 ```bash
 # Dev laptop, just watching
-npx --yes --package sentinel-protocol sentinel bootstrap --profile minimal --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile minimal --dashboard
 
 # Staging, log threats with warnings
-npx --yes --package sentinel-protocol sentinel bootstrap --profile standard --mode warn --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile standard --mode warn --dashboard
 
 # Production, block everything suspicious
-npx --yes --package sentinel-protocol sentinel bootstrap --profile paranoid --mode enforce --dashboard
+npx --yes --package sentinel-protocol@latest sentinel bootstrap --profile paranoid --mode enforce --dashboard
 
 # Production with NODE_ENV set (clears all warnings)
-NODE_ENV=production npx --yes --package sentinel-protocol sentinel start --profile paranoid --mode enforce --dashboard
+NODE_ENV=production npx --yes --package sentinel-protocol@latest sentinel start --profile paranoid --mode enforce --dashboard
 ```
 
 </details>
@@ -744,7 +748,7 @@ node cli/sentinel.js red-team run \
 ```
 
 > [!NOTE]
-> `npm run benchmark`, `npm run lint`, and `npm test` **only work from the cloned repo** — they use scripts defined in `package.json`. If you installed via npx, use the `npx --yes --package sentinel-protocol sentinel ...` commands from Methods 1–5 instead.
+> `npm run benchmark`, `npm run lint`, and `npm test` **only work from the cloned repo** — they use scripts defined in `package.json`. If you installed via npx, use the `npx --yes --package sentinel-protocol@latest sentinel ...` commands from Methods 1–5 instead.
 
 </details>
 
@@ -1303,26 +1307,26 @@ runtime:
 Then restart:
 
 ```bash
-npx --yes --package sentinel-protocol sentinel stop
-npx --yes --package sentinel-protocol sentinel start --dashboard
+npx --yes --package sentinel-protocol@latest sentinel stop
+npx --yes --package sentinel-protocol@latest sentinel start --dashboard
 ```
 
 #### Run Doctor to Validate Your Config
 
 ```bash
 # Checks all engines for misconfigurations
-npx --yes --package sentinel-protocol sentinel doctor
+npx --yes --package sentinel-protocol@latest sentinel doctor
 ```
 
 #### Compare All Three Profiles Side-by-Side
 
 ```bash
 # Generate minimal config
-npx --yes --package sentinel-protocol sentinel init --profile minimal --force
+npx --yes --package sentinel-protocol@latest sentinel init --profile minimal --force
 cp ~/.sentinel/sentinel.yaml /tmp/sentinel-minimal.yaml
 
 # Generate paranoid config
-npx --yes --package sentinel-protocol sentinel init --profile paranoid --force
+npx --yes --package sentinel-protocol@latest sentinel init --profile paranoid --force
 cp ~/.sentinel/sentinel.yaml /tmp/sentinel-paranoid.yaml
 
 # Compare engines
@@ -1606,13 +1610,13 @@ Full adapter source: [`python/sentinel_protocol_adapters.py`](python/sentinel_pr
 
 ```bash
 # Run automated adversarial evaluation
-npx --yes --package sentinel-protocol sentinel red-team run \
+npx --yes --package sentinel-protocol@latest sentinel red-team run \
   --url http://127.0.0.1:8787 \
   --target openai \
   --out ./red-team-report.json
 
 # Generate HTML report
-npx --yes --package sentinel-protocol sentinel red-team run \
+npx --yes --package sentinel-protocol@latest sentinel red-team run \
   --url http://127.0.0.1:8787 \
   --target openai \
   --report html \
@@ -1626,22 +1630,22 @@ npx --yes --package sentinel-protocol sentinel red-team run \
 
 ```bash
 # EU AI Act Article 12
-npx --yes --package sentinel-protocol sentinel compliance report \
+npx --yes --package sentinel-protocol@latest sentinel compliance report \
   --framework eu-ai-act-article-12 \
   --out ./eu-ai-act-evidence.json
 
 # SOC2
-npx --yes --package sentinel-protocol sentinel compliance report \
+npx --yes --package sentinel-protocol@latest sentinel compliance report \
   --framework soc2 \
   --out ./soc2-evidence.json
 
 # GDPR
-npx --yes --package sentinel-protocol sentinel compliance report \
+npx --yes --package sentinel-protocol@latest sentinel compliance report \
   --framework gdpr \
   --out ./gdpr-evidence.json
 
 # HIPAA
-npx --yes --package sentinel-protocol sentinel compliance report \
+npx --yes --package sentinel-protocol@latest sentinel compliance report \
   --framework hipaa \
   --out ./hipaa-evidence.json
 ```
@@ -1672,7 +1676,7 @@ npm run benchmark:datasets
 
 ```bash
 # Replay a decision with different thresholds (what-if analysis)
-npx --yes --package sentinel-protocol sentinel forensic replay \
+npx --yes --package sentinel-protocol@latest sentinel forensic replay \
   --snapshot <snapshot-id> \
   --overrides '{"injection_threshold": 0.6}'
 
