@@ -1,6 +1,15 @@
 const { EvidenceVault } = require('../../src/governance/evidence-vault');
 
 describe('EvidenceVault', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-01-02T00:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test('appends evidence entries with chain hash continuity', () => {
     const vault = new EvidenceVault({
       enabled: true,
