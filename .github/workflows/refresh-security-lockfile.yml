@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - agent/security-dependency-remediation
+    paths:
+      - package.json
+      - .github/workflows/refresh-security-lockfile.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate-lockfile:
@@ -34,12 +37,16 @@ jobs:
             console.log(`${name}=${versions.join(',') || 'missing'}`);
           }
           NODE
-      - name: Upload generated lockfile
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-lockfile
-          path: package-lock.json
-          if-no-files-found: error
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
+      - name: Commit generated lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo "package-lock.json is already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "build: refresh security lockfile"
+          git push origin HEAD:${GITHUB_REF_NAME}
