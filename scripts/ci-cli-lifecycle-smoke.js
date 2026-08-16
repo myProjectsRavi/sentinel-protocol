@@ -175,12 +175,16 @@ async function main() {
       output: firstOutput,
     });
 
-    // Existing-user path: simulate local customization, then rerun the exact
-    // same bootstrap command. A current-version config must not be rewritten
-    // or reset by the selected bootstrap profile.
-    const customMarker = '# ci-existing-user-config-must-survive\n';
+    // Existing-user path: simulate a persisted behavioral customization and a
+    // human comment, then rerun the exact same bootstrap command. The current
+    // config must drive runtime behavior and must not be rewritten by the
+    // initialization profile carried in the command.
     const firstConfig = fs.readFileSync(configPath, 'utf8');
-    const customizedConfig = `${firstConfig.trimEnd()}\n${customMarker}`;
+    if (!/^mode:\s*monitor\s*$/m.test(firstConfig)) {
+      throw new Error('fresh minimal bootstrap did not persist mode: monitor as expected');
+    }
+    const customMarker = '# ci-existing-user-config-must-survive\n';
+    const customizedConfig = `${firstConfig.replace(/^mode:\s*monitor\s*$/m, 'mode: warn').trimEnd()}\n${customMarker}`;
     fs.writeFileSync(configPath, customizedConfig, 'utf8');
 
     const secondOutput = [];
@@ -189,7 +193,13 @@ async function main() {
       env,
       output: secondOutput,
     });
-    await waitForRunning(second, statusPath, secondOutput);
+    const secondRunningStatus = await waitForRunning(second, statusPath, secondOutput);
+
+    if (secondRunningStatus.configured_mode !== 'warn') {
+      throw new Error(
+        `repeat bootstrap ignored persisted runtime mode: expected configured_mode=warn, got ${secondRunningStatus.configured_mode}`
+      );
+    }
 
     const duringSecondRun = fs.readFileSync(configPath, 'utf8');
     if (duringSecondRun !== customizedConfig) {
