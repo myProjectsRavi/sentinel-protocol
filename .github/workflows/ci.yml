@@ -28,9 +28,25 @@ jobs:
       - run: npm run reliability -- --duration 4 --connections 20 --chaos-requests 16 --timeout-requests 10 --websocket-requests 8
       - run: npm audit --omit=dev --audit-level=high
 
+  cli-lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run ci:cli:lifecycle
+
   quality-gates:
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, cli-lifecycle]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
