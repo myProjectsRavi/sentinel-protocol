@@ -1,6 +1,6 @@
 {
   "name": "sentinel-protocol",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "The Reference Architecture for Local AI Governance & Firewalling. Secure, deterministic protection for Agents, MCP, and LLMs.",
   "keywords": [
     "ai-security",
@@ -48,7 +48,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "sentinel": "cli/sentinel.js"
+    "sentinel": "cli/npm-entry.js"
   },
   "engines": {
     "node": ">=20.10.0"
