@@ -1,0 +1,45 @@
+name: refresh-security-lockfile
+
+on:
+  push:
+    branches:
+      - agent/security-dependency-remediation
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Resolve security-patched lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Report resolved security versions
+        run: |
+          node <<'NODE'
+          const lock = require('./package-lock.json');
+          const names = ['express', 'body-parser', 'qs', 'uuid', 'protobufjs', 'sharp'];
+          for (const name of names) {
+            const versions = [...new Set(
+              Object.entries(lock.packages)
+                .filter(([path]) => path === `node_modules/${name}` || path.endsWith(`/node_modules/${name}`))
+                .map(([, meta]) => meta.version)
+                .filter(Boolean)
+            )].sort();
+            console.log(`${name}=${versions.join(',') || 'missing'}`);
+          }
+          NODE
+      - name: Upload generated lockfile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-lockfile
+          path: package-lock.json
+          if-no-files-found: error
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
