@@ -43,7 +43,7 @@ async function waitForExit(child, timeoutMs = 15000) {
       } catch {
         // best effort
       }
-      reject(new Error('sentinel start process did not exit after stop'));
+      reject(new Error('sentinel process did not exit after stop'));
     }, timeoutMs);
     child.once('close', (code) => {
       clearTimeout(timer);
@@ -56,8 +56,54 @@ async function waitForExit(child, timeoutMs = 15000) {
   });
 }
 
+function spawnSentinel(installedBin, args, { cwd, env, output }) {
+  const child = spawn(installedBin, args, {
+    cwd,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  child.stdout.on('data', (chunk) => output.push(chunk.toString('utf8')));
+  child.stderr.on('data', (chunk) => output.push(chunk.toString('utf8')));
+  return child;
+}
+
+async function waitForRunning(child, statusPath, output) {
+  return waitFor(() => {
+    if (Number.isInteger(child.exitCode)) {
+      throw new Error(`sentinel exited early with ${child.exitCode}: ${output.join('')}`);
+    }
+    if (!fs.existsSync(statusPath)) {
+      return null;
+    }
+    const status = readJson(statusPath);
+    return status.service_status === 'running' ? status : null;
+  }, 90000, 'running status');
+}
+
+async function stopAndVerify(installedBin, child, { cwd, env, statusPath, output }) {
+  runChecked(installedBin, ['stop'], { cwd, env });
+  const exitCode = await waitForExit(child);
+  if (exitCode !== 0) {
+    throw new Error(`sentinel process exited with ${exitCode}: ${output.join('')}`);
+  }
+
+  await waitFor(() => {
+    if (!fs.existsSync(statusPath)) {
+      return null;
+    }
+    const status = readJson(statusPath);
+    return status.service_status === 'stopped' ? status : null;
+  }, 15000, 'stopped status');
+
+  const stoppedStatus = JSON.parse(runChecked(installedBin, ['status', '--json'], { cwd, env }));
+  if (stoppedStatus.service_status !== 'stopped') {
+    throw new Error(`status --json expected stopped after stop, got ${stoppedStatus.service_status}`);
+  }
+}
+
 async function main() {
   const root = process.cwd();
+  const packageVersion = require(path.join(root, 'package.json')).version;
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sentinel-cli-lifecycle-'));
   const sentinelHome = path.join(workDir, 'sentinel-home');
   const appDir = path.join(workDir, 'app');
@@ -82,78 +128,87 @@ async function main() {
     runChecked('npm', ['init', '--yes'], { cwd: appDir, env });
     runChecked('npm', ['install', '--no-audit', '--no-fund', tarballPath], { cwd: appDir, env });
 
-    const installedCli = path.join(appDir, 'node_modules', 'sentinel-protocol', 'cli', 'sentinel.js');
-    if (!fs.existsSync(installedCli)) {
-      throw new Error(`installed Sentinel CLI missing: ${installedCli}`);
+    const installedBin = path.join(appDir, 'node_modules', '.bin', 'sentinel');
+    if (!fs.existsSync(installedBin)) {
+      throw new Error(`installed Sentinel npm bin missing: ${installedBin}`);
+    }
+
+    const reportedVersion = runChecked(installedBin, ['--version'], { cwd: appDir, env }).trim();
+    if (reportedVersion !== packageVersion) {
+      throw new Error(`installed npm bin version mismatch: expected ${packageVersion}, got ${reportedVersion}`);
     }
 
     const configPath = path.join(sentinelHome, 'sentinel.yaml');
-    runChecked(process.execPath, [installedCli, 'init', '--config', configPath, '--force', '--yes', '--profile', 'minimal'], {
+    const statusPath = path.join(sentinelHome, 'status.json');
+    const bootstrapArgs = [
+      'bootstrap',
+      '--config',
+      configPath,
+      '--profile',
+      'minimal',
+      '--dashboard',
+      '--port',
+      '0',
+      '--shutdown-timeout-ms',
+      '15000',
+    ];
+
+    // New-user path: the packaged npm bin must initialize and run with the
+    // same one-command bootstrap contract documented for npx users.
+    const firstOutput = [];
+    const first = spawnSentinel(installedBin, bootstrapArgs, {
       cwd: appDir,
       env,
+      output: firstOutput,
     });
+    const runningStatus = await waitForRunning(first, statusPath, firstOutput);
     if (!fs.existsSync(configPath)) {
-      throw new Error('sentinel init did not create config');
-    }
-
-    const output = [];
-    const child = spawn(
-      process.execPath,
-      [installedCli, 'start', '--config', configPath, '--dry-run', '--skip-doctor', '--port', '0'],
-      {
-        cwd: appDir,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    );
-    child.stdout.on('data', (chunk) => output.push(chunk.toString('utf8')));
-    child.stderr.on('data', (chunk) => output.push(chunk.toString('utf8')));
-
-    const statusPath = path.join(sentinelHome, 'status.json');
-    await waitFor(() => {
-      if (Number.isInteger(child.exitCode)) {
-        throw new Error(`sentinel start exited early with ${child.exitCode}: ${output.join('')}`);
-      }
-      if (!fs.existsSync(statusPath)) {
-        return null;
-      }
-      const status = readJson(statusPath);
-      return status.service_status === 'running' ? status : null;
-    }, 90000, 'running status');
-
-    const statusStdout = runChecked(process.execPath, [installedCli, 'status', '--json'], { cwd: appDir, env });
-    const runningStatus = JSON.parse(statusStdout);
-    if (runningStatus.service_status !== 'running') {
-      throw new Error(`status --json expected running, got ${runningStatus.service_status}`);
-    }
-    if (runningStatus.effective_mode !== 'monitor') {
-      throw new Error(`dry-run expected effective_mode=monitor, got ${runningStatus.effective_mode}`);
+      throw new Error('first bootstrap did not create config');
     }
     if (!Number.isInteger(Number(runningStatus.pid)) || Number(runningStatus.pid) <= 0) {
-      throw new Error('status --json did not expose a valid pid');
+      throw new Error('bootstrap status did not expose a valid pid');
+    }
+    await stopAndVerify(installedBin, first, {
+      cwd: appDir,
+      env,
+      statusPath,
+      output: firstOutput,
+    });
+
+    // Existing-user path: simulate local customization, then rerun the exact
+    // same bootstrap command. A current-version config must not be rewritten
+    // or reset by the selected bootstrap profile.
+    const customMarker = '# ci-existing-user-config-must-survive\n';
+    const firstConfig = fs.readFileSync(configPath, 'utf8');
+    const customizedConfig = `${firstConfig.trimEnd()}\n${customMarker}`;
+    fs.writeFileSync(configPath, customizedConfig, 'utf8');
+
+    const secondOutput = [];
+    const second = spawnSentinel(installedBin, bootstrapArgs, {
+      cwd: appDir,
+      env,
+      output: secondOutput,
+    });
+    await waitForRunning(second, statusPath, secondOutput);
+
+    const duringSecondRun = fs.readFileSync(configPath, 'utf8');
+    if (duringSecondRun !== customizedConfig) {
+      throw new Error('repeat bootstrap rewrote an existing current-version config');
     }
 
-    runChecked(process.execPath, [installedCli, 'stop'], { cwd: appDir, env });
-    const exitCode = await waitForExit(child);
-    if (exitCode !== 0) {
-      throw new Error(`sentinel start process exited with ${exitCode}: ${output.join('')}`);
+    await stopAndVerify(installedBin, second, {
+      cwd: appDir,
+      env,
+      statusPath,
+      output: secondOutput,
+    });
+
+    const afterSecondRun = fs.readFileSync(configPath, 'utf8');
+    if (afterSecondRun !== customizedConfig) {
+      throw new Error('repeat bootstrap did not preserve existing config after shutdown');
     }
 
-    await waitFor(() => {
-      if (!fs.existsSync(statusPath)) {
-        return null;
-      }
-      const status = readJson(statusPath);
-      return status.service_status === 'stopped' ? status : null;
-    }, 15000, 'stopped status');
-
-    const stoppedStdout = runChecked(process.execPath, [installedCli, 'status', '--json'], { cwd: appDir, env });
-    const stoppedStatus = JSON.parse(stoppedStdout);
-    if (stoppedStatus.service_status !== 'stopped') {
-      throw new Error(`status --json expected stopped after stop, got ${stoppedStatus.service_status}`);
-    }
-
-    process.stdout.write('CLI lifecycle smoke passed.\n');
+    process.stdout.write(`CLI npm bootstrap/update smoke passed for sentinel-protocol@${packageVersion}.\n`);
   } finally {
     try {
       fs.unlinkSync(tarballPath);
