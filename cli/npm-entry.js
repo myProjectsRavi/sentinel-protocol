@@ -57,10 +57,11 @@ if (process.argv[2] !== 'bootstrap') {
       persistedProfile = applyConfigProfile(normalized, profileName);
       writeYamlConfig(bootstrapPath, persistedProfile.config);
     } else {
-      // Existing-user contract: preserve the user's configuration. Only the
-      // explicit, versioned migration pipeline may write changes, and it
-      // creates a backup before doing so. The requested profile is still
-      // applied in memory by startServer for this invocation.
+      // Existing-user contract: preserve the user's configuration and runtime
+      // behavior. Only the explicit versioned migration pipeline may write
+      // changes, and it creates a backup before doing so. --profile is an
+      // initialization/reset choice for bootstrap; existing users can still
+      // use `sentinel start --profile ...` for an intentional runtime override.
       existingLoad = loadAndValidateConfig({
         configPath: bootstrapPath,
         allowMigration: true,
@@ -74,7 +75,7 @@ if (process.argv[2] !== 'bootstrap') {
       port: options.port,
       modeOverride: options.mode,
       dashboardEnabled: options.dashboard === true ? true : undefined,
-      profile: profileName,
+      profile: persistedProfile ? profileName : undefined,
       shutdownTimeoutMs:
         Number.isFinite(shutdownTimeoutMs) && shutdownTimeoutMs > 0 ? shutdownTimeoutMs : 15000,
       runDoctor: true,
@@ -87,16 +88,11 @@ if (process.argv[2] !== 'bootstrap') {
         `Bootstrap profile: ${persistedProfile.profile} (${persistedProfile.enabledRuntimeEngines}/${persistedProfile.totalRuntimeEngines} runtime engines enabled)`
       );
     } else {
-      console.log(`Preserved existing config: ${bootstrapPath}`);
+      console.log(`Preserved existing config and runtime settings: ${bootstrapPath}`);
       if (existingLoad?.migration?.migrated) {
         console.log(
           `Migrated config ${existingLoad.migration.fromVersion} -> ${existingLoad.migration.toVersion}` +
             (existingLoad.backupPath ? ` (backup: ${existingLoad.backupPath})` : '')
-        );
-      }
-      if (startResult.loaded?.profile?.name) {
-        console.log(
-          `Runtime profile: ${startResult.loaded.profile.name} (${startResult.loaded.profile.enabledRuntimeEngines}/${startResult.loaded.profile.totalRuntimeEngines} runtime engines enabled)`
         );
       }
     }
@@ -121,7 +117,7 @@ if (process.argv[2] !== 'bootstrap') {
     .option('--force', 'Overwrite existing config and persist the selected profile')
     .option(
       '--profile <name>',
-      'Runtime profile: minimal|standard|paranoid (persisted only for first/forced bootstrap)',
+      'Initialization profile: minimal|standard|paranoid (used only for first/forced bootstrap)',
       'minimal'
     )
     .option('--port <port>', 'Port override')
