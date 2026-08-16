@@ -51,4 +51,10 @@ npx --yes --package sentinel-protocol@latest sentinel start --profile standard -
 npx --yes --package sentinel-protocol@latest sentinel --version
 ```
 
-For release publication, Sentinel's GitHub workflow validates the tag/package version identity, tests the packed npm artifact through both fresh and repeat bootstrap paths, publishes the immutable npm version, and verifies that npm's `latest` dist-tag resolves to the newly published version.
+## Automatic GitHub/npm release synchronization
+
+A stable version bump in `package.json` is Sentinel's release intent. After that version reaches `main`, the release-sync workflow waits for both CI and the adversarial security scan to succeed on the exact same `main` commit. It then reruns release-specific package and performance validation, creates the matching `v<version>` Git tag and GitHub Release without moving an existing tag, publishes the npm package, and verifies that npm's `latest` dist-tag resolves to the same version.
+
+Normal `main` commits that do not change the package version are a fast no-op, so Sentinel does not publish a new npm artifact for every commit. If an automatic run ever needs to be recovered, the same workflow can be started manually with `workflow_dispatch`; it still requires the current `main` SHA to have green CI and security-scan evidence before it can release.
+
+The canonical install/update command therefore stays stable while GitHub Release, the npm package version, and npm `latest` are kept synchronized automatically for every intentional version bump.
