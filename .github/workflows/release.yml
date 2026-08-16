@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.14.0
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
@@ -66,14 +66,16 @@ jobs:
           published="$(npm view "${PACKAGE_NAME}@${VERSION}" version 2>/dev/null || true)"
           latest="$(npm view "${PACKAGE_NAME}@latest" version 2>/dev/null || true)"
 
+          if [[ "${published}" == "${VERSION}" && "${latest}" != "${VERSION}" ]]; then
+            echo "${PACKAGE_NAME}@${VERSION} already exists, but latest points to ${latest:-missing}. Trusted Publishing cannot repair npm dist-tags; refusing to guess." >&2
+            exit 1
+          fi
+
           if [[ "${published}" == "${VERSION}" ]]; then
-            if [[ "${latest}" != "${VERSION}" ]]; then
-              echo "${PACKAGE_NAME}@${VERSION} already exists, but latest points to ${latest:-missing}; refusing to guess at dist-tag repair." >&2
-              exit 1
-            fi
-            echo "${PACKAGE_NAME}@${VERSION} is already published and latest. Nothing to synchronize."
-            echo "release=false" >> "${GITHUB_OUTPUT}"
-            exit 0
+            echo "npm already contains ${PACKAGE_NAME}@${VERSION}; GitHub release synchronization will still be verified/repaired."
+            echo "publish_needed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "publish_needed=true" >> "${GITHUB_OUTPUT}"
           fi
 
           echo "release=true" >> "${GITHUB_OUTPUT}"
@@ -81,18 +83,6 @@ jobs:
           echo "sha=${RELEASE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
           echo "RELEASE_SHA=${RELEASE_SHA}" >> "${GITHUB_ENV}"
-
-      - name: Require npm publishing credential
-        if: steps.release.outputs.release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "NPM_TOKEN repository secret is required for Sentinel npm publishing." >&2
-            exit 1
-          fi
 
       - name: Require green CI and security scan on the exact release commit
         if: steps.release.outputs.release == 'true'
@@ -142,6 +132,31 @@ jobs:
           require_success "ci.yml" "CI"
           require_success "security-scan.yml" "security scan"
 
+      - name: Verify existing release tag identity
+        if: steps.release.outputs.release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          tag_lines="$(git ls-remote origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}" || true)"
+
+          if [[ -z "${tag_lines}" ]]; then
+            echo "No existing ${TAG}; it will be created only after npm is synchronized."
+            exit 0
+          fi
+
+          tag_sha="$(printf '%s\n' "${tag_lines}" | awk '$2 ~ /\^\{\}$/ {print $1; exit}')"
+          if [[ -z "${tag_sha}" ]]; then
+            tag_sha="$(printf '%s\n' "${tag_lines}" | awk 'NR == 1 {print $1}')"
+          fi
+
+          if [[ "${tag_sha}" != "${RELEASE_SHA}" ]]; then
+            echo "Existing tag ${TAG} points to ${tag_sha}, expected ${RELEASE_SHA}; refusing to move an immutable release tag." >&2
+            exit 1
+          fi
+
+          echo "Existing ${TAG} already points to the exact release commit."
+
       - name: Install release dependencies
         if: steps.release.outputs.release == 'true'
         run: npm ci
@@ -181,6 +196,22 @@ jobs:
             sbom.cyclonedx.json
             sbom.spdx.json
             dist/*.vsix
+
+      - name: Enable npm Trusted Publishing client
+        if: steps.release.outputs.release == 'true' && steps.release.outputs.publish_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          node --version
+          npm --version
+
+      - name: Publish npm package with Trusted Publishing
+        if: steps.release.outputs.release == 'true' && steps.release.outputs.publish_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm publish --access public
 
       - name: Create or verify GitHub tag and release
         if: steps.release.outputs.release == 'true'
@@ -226,15 +257,6 @@ jobs:
           else
             gh release create "${TAG}" --target "${RELEASE_SHA}" --title "Sentinel Protocol ${TAG}" --notes-file "${notes}"
           fi
-
-      - name: Publish npm package
-        if: steps.release.outputs.release == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm publish --provenance --access public
 
       - name: Verify GitHub and npm are synchronized
         if: steps.release.outputs.release == 'true'
